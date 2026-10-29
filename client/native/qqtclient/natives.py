@@ -147,6 +147,9 @@ def build_natives(runtime: UIRuntime, resources: Resources, audio: Audio) -> dic
     def Win_SetImg(widget, image):
         widget.image = image or None
 
+    def Win_SetDragImg(_path, image):
+        runtime.drag_image = str(image or "")
+
     @with_widget()
     def Win_SetValue(widget, value, channel=CHANNEL_VALUE):
         if channel == CHANNEL_ALPHA_SPEED:

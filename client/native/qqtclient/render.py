@@ -107,13 +107,19 @@ class Renderer:
             self.text_cache[key] = surface
         return surface
 
-    def draw(self, root: Widget, focus: Widget | None) -> None:
+    def draw(self, root: Widget, focus: Widget | None, drag: tuple[str, tuple[int, int]] | None = None) -> None:
+        """drag: the dragged item's image and the mouse position."""
         self.screen.fill((0, 0, 0))
         if self.underlay is not None:
             self.underlay(self.screen)
         self._draw(root, 0, 0, 1.0, focus)
         if self.overlay is not None:
             self.overlay(self.screen)
+        if drag is not None:
+            frames = self.sprites.get(drag[0])
+            if frames and frames[0][0] is not None:
+                image = frames[0][0]
+                self.screen.blit(image, (drag[1][0] - image.get_width() // 2, drag[1][1] - image.get_height() // 2))
 
     def _draw(self, widget: Widget, parent_x: int, parent_y: int, parent_alpha: float, focus: Widget | None) -> None:
         if not widget.visible:
@@ -135,8 +141,11 @@ class Renderer:
             self._draw_number(widget, x, y, alpha)
         elif widget.type == "PICLABEL":
             self._draw_glyph_frames(widget, x, y, alpha)
-        elif widget.type == "DYLABEL" and not widget.text.strip("\n"):
-            pass  # a tip box without text draws nothing, not even its image (0x1001132C)
+        elif widget.type == "DYLABEL":
+            # A tip box without text draws nothing, not even its image (0x1001132C).
+            if widget.text.strip("\n"):
+                self._draw_tip_box(widget, x, y, alpha)
+                self._draw_text(widget, x, y, alpha, False)
         else:
             if widget.image:
                 self._draw_image(widget, x, y, alpha)
@@ -274,7 +283,7 @@ class Renderer:
         # lines that do not fit the box are not drawn.
         rowspace = int(widget.attr("rowspace", 0) or 0)
         line_height = size + rowspace
-        if wrapped and box.height > 0:
+        if wrapped and box.height > 0 and widget.type != "DYLABEL":
             lines = lines[:max((box.height + rowspace) // line_height, 0)]
         total = line_height * len(lines) - rowspace
         style = widget.text_style
@@ -303,6 +312,32 @@ class Renderer:
                     self.screen.blit(outline, (position[0] + dx, position[1] + dy))
             rendered.set_alpha(int(a * alpha) if a else int(255 * alpha))
             self.screen.blit(rendered, position)
+
+    def _draw_tip_box(self, widget: Widget, x: int, y: int, alpha: float) -> None:
+        """DYLABEL grows with its text: the image's top and bottom thirds are
+        drawn as they are and the middle third is stretched between them
+        (0x1001132C slices at 1/3). The box spans the caption's margin above
+        and below the text; that the margins are equal is inferred."""
+        frames = self.sprites.get(widget.image) if widget.image else None
+        if not frames or frames[0][0] is None:
+            return
+        image = frames[0][0]
+        cx, cy, cw, _ = widget.caption_rect or (0, 0, widget.w, 0)
+        size = max(widget.text_size, 9)
+        rowspace = int(widget.attr("rowspace", 0) or 0)
+        lines = self._wrap(widget.text, size, cw or widget.w)
+        height = len(lines) * (size + rowspace) - rowspace + 2 * cy
+        width, source_height = image.get_size()
+        third = source_height // 3
+        height = max(height, 2 * third)
+        image.set_alpha(int(255 * alpha))
+        self.screen.blit(image, (x, y), pygame.Rect(0, 0, width, third))
+        middle = height - 2 * third
+        if middle > 0:
+            strip = image.subsurface(pygame.Rect(0, third, width, source_height - 2 * third))
+            self.screen.blit(pygame.transform.scale(strip, (width, middle)), (x, y + third))
+        self.screen.blit(image, (x, y + height - third), pygame.Rect(0, source_height - third, width, third))
+        image.set_alpha(255)
 
     @staticmethod
     def _wrap(text: str, size: int, width: int) -> list[str]:

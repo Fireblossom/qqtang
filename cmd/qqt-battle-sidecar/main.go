@@ -34,6 +34,13 @@ type player struct {
 	Team byte   `json:"team"`
 	// AI marks an offline opponent driven by the sidecar's wander policy.
 	AI bool `json:"ai"`
+	// Props brought from the room (online, item rooms only).
+	Prepared []preparedView `json:"prepared,omitempty"`
+}
+
+type preparedView struct {
+	Item  uint32 `json:"item"`
+	Count int16  `json:"count"`
 }
 
 type command struct {
@@ -62,6 +69,8 @@ type action struct {
 	Move byte   `json:"move"`
 	Bomb bool   `json:"bomb"`
 	Use  uint8  `json:"use"`
+	// A prop brought from the room (item ID 20001..22999) to use.
+	Prop uint32 `json:"prop"`
 }
 
 type cell struct {
@@ -149,9 +158,11 @@ type stateView struct {
 	Outcome outcomeView  `json:"outcome"`
 
 	// Online mode only.
-	Begin  *beginView  `json:"begin,omitempty"`
-	Net    *netView    `json:"net,omitempty"`
-	TCPOut []tcpPacket `json:"tcp_out,omitempty"`
+	Begin *beginView `json:"begin,omitempty"`
+	Net   *netView   `json:"net,omitempty"`
+	// The local player's room props left, in GAME_BEGIN order.
+	Prepared []preparedView `json:"prepared,omitempty"`
+	TCPOut   []tcpPacket    `json:"tcp_out,omitempty"`
 }
 
 func main() {
@@ -211,7 +222,7 @@ func runOnline(init command, lines *bufio.Scanner, out *json.Encoder) error {
 	}
 	defer match.close()
 	state := view(match.runtime, nil)
-	state.Begin, state.Net = &begin, match.netView()
+	state.Begin, state.Net, state.Prepared = &begin, match.netView(), match.preparedView()
 	if err := out.Encode(state); err != nil {
 		return err
 	}
@@ -228,7 +239,7 @@ func runOnline(init command, lines *bufio.Scanner, out *json.Encoder) error {
 			return err
 		}
 		state := view(match.runtime, events)
-		state.Net, state.TCPOut = match.netView(), match.takeTCP()
+		state.Net, state.TCPOut, state.Prepared = match.netView(), match.takeTCP(), match.preparedView()
 		if err := out.Encode(state); err != nil {
 			return err
 		}

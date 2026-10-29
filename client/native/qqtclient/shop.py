@@ -391,9 +391,6 @@ def build_shop_natives(runtime: UIRuntime, session: Session, resources: Resource
     def IsBook(_item_id):
         return 0
 
-    def GetStorage():
-        return []
-
     def RequestSettleStorage():
         pass
 

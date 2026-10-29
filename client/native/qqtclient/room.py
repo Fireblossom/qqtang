@@ -24,7 +24,6 @@ from .script import call_script, log
 from .session import Session
 
 DEFAULT_ROOM_NAME = "一起来玩吧"
-EQUIP_SLOTS = 7  # uiMain.defRoomEquipCnt
 CHAT_LIST = "UI.room.chatArea.chatPanel.chatList"
 SYSTEM_CHAT_COLOR = (255, 255, 0)
 CHAT_COLOR = (255, 255, 255)
@@ -220,6 +219,14 @@ def build_room_natives(runtime: UIRuntime, session: Session, avatars: AvatarCach
             script("ui_UpdateGameType", game_type)
         script("ui_NotifyMapChange", map_id)
 
+    def on_room_type(packet) -> None:
+        game_type, _continue_id = room.parse_change_room_type_notify(packet.payload)
+        if state.snapshot is None or game_type == state.snapshot.game_type:
+            return
+        state.snapshot.game_type = game_type
+        if in_room_screen():
+            script("ui_UpdateGameType", game_type)
+
     def on_modify_room(packet) -> None:
         name, flag, password = room.parse_modify_room_notify(packet.payload)
         if state.snapshot is None:
@@ -302,6 +309,8 @@ def build_room_natives(runtime: UIRuntime, session: Session, avatars: AvatarCach
         room.READY_NOTIFY_COMMAND: member_update("status"),
         room.MODIFY_ROOM_INFO_NOTIFY_COMMAND: on_map,
         room.MODIFY_ROOM_NOTIFY_COMMAND: on_modify_room,
+        room.CHANGE_ROOM_TYPE_NOTIFY_COMMAND: on_room_type,
+        room.CHANGE_ROOM_TYPE_COMMAND: ignore,
         room.SET_SEAT_STATUS_NOTIFY_COMMAND: on_seat_status,
         room.ROOM_CHAT_NOTIFY_COMMAND: on_chat,
         room.KICK_OFF_NOTIFY_COMMAND: on_kicked,
@@ -407,11 +416,14 @@ def build_room_natives(runtime: UIRuntime, session: Session, avatars: AvatarCach
             state.snapshot.map_id = int(map_id)
             script("ui_NotifyMapChange", int(map_id))
 
-    def ChangeRoomType(game_type):
+    def ChangeRoomType(game_type, continue_id=0):
+        """The owner's mode change (竞技无道具 0, 道具 1, 探险 2); peers get
+        NOTIFY 0x00D1."""
         if state.snapshot is None:
             return
-        state.snapshot.game_type = int(game_type)
-        session.game_type = int(game_type)
+        if session.send(room.CHANGE_ROOM_TYPE_COMMAND, room.build_change_room_type_request(session.uin, int(game_type), int(continue_id))):
+            state.snapshot.game_type = int(game_type)
+            session.game_type = int(game_type)
 
     def UserClickSeatInRoom(index, button):
         """Button 0: the owner kicks the seat's player or opens/locks an empty
@@ -447,10 +459,6 @@ def build_room_natives(runtime: UIRuntime, session: Session, avatars: AvatarCach
 
     def fetch_SectionMode():
         return session.profile.section_mode if session.profile else 0
-
-    def GetEquipedProp():
-        empty = types.SimpleNamespace(m_nItemID=0, m_iNumOfItem=0)
-        return [types.SimpleNamespace(m_stItem=empty) for _ in range(EQUIP_SLOTS)]
 
     def GetChatBgList():
         return []

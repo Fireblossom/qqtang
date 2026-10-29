@@ -68,6 +68,8 @@ class OnlineBattle:
                    for player in begin_info["players"]]
         log(f"[match] game {begin_info['game_id']} map {begin_info['map_id']}, arbitrator {begin_info['arbitrator']}, "
             f"players " + ", ".join(f"{player['id']}:{player['name']}" for player in players))
+        if state.get("prepared"):
+            log("[match] room props: " + ", ".join(f"{entry['item']}x{entry['count']}" for entry in state["prepared"]))
         if begin_info["arbitrator"] != self.local_id:
             log("[match] another player is the arbitrator; only arbitrating clients are fully supported so far")
         self.scene = BattleScene(resources, renderer.sprites, AvatarCache(resources), sidecar, begin_info["map_id"], players,

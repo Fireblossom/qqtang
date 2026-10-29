@@ -10,11 +10,11 @@
 | 账号密码登录 | 可用：`QQTAUTH1` 挑战应答后请求目录，拿到区服列表 |
 | 选区界面 | 可用：显示分区和负载，点分区或“快速加入”进区 |
 | 大厅 | 部分可用：房间格子分页、玩家列表、分区名称，每 5 秒刷新房间、每 10 秒刷新玩家；建房、点房间进入、快速加入；大厅聊天、悄悄话（对指定玩家）和小喇叭。家族聊天、斜杠命令（邀请、屏蔽等）、好友列表尚未实现 |
-| 房间 | 部分可用：座位和人物（按队伍染色）、房主、准备/取消准备、房主开始、换角色、换队伍颜色、选地图、开关空位、踢人、房间聊天和头顶气泡、离开房间；人物穿着各自已装备的服装（对战里也一样）；开局后进入对战，结束后回到房间。改房间属性已接通但未实测；装备道具栏、聊天室背景、婚礼未实现 |
-| 对战 | 普通规则地图可玩：地图、人物行走、放泡、爆炸和连锁、炸墙和推箱子、道具出现与拾取、被困和阵亡、计时、玩家列表、胜负提示。离线练习可用；联网时可作为房主与服务端 AI 对战（本客户端担任仲裁方），对局由服务端判定胜负后显示结算画面并回到房间。对战中可使用捡到的道具（1～7 键、Ctrl、Tab）。与其他真人玩家同局、从房间带入的道具尚未实现 |
+| 房间 | 部分可用：座位和人物（按队伍染色）、房主、准备/取消准备、房主开始、换角色、换队伍颜色、选地图、开关空位、踢人、房间聊天和头顶气泡、离开房间；人物穿着各自已装备的服装（对战里也一样）；切换竞技无道具、道具和探险模式；装备道具栏（"我的背包"里双击或拖动道具装上，右键卸下，格子顺序存在客户端目录的 `profile/<号码>.ini`）；开局后进入对战，结束后回到房间。改房间属性已接通但未实测；聊天室背景、婚礼未实现 |
+| 对战 | 普通规则地图可玩：地图、人物行走、放泡、爆炸和连锁、炸墙和推箱子、道具出现与拾取、被困和阵亡、计时、玩家列表、胜负提示。离线练习可用；联网时可作为房主与服务端 AI 对战（本客户端担任仲裁方），对局由服务端判定胜负后显示结算画面并回到房间。对战中可使用捡到的道具（1～7 键、Ctrl、Tab）；道具场里可使用从房间带入的道具（服务端只允许道具场带入，一个人在道具场不能补 AI，需要两个真人）。与其他真人玩家同局时只有房主（仲裁方）完整可用 |
 | 商城 | 部分可用：进出商城、六个大类和子类的商品分页、糖币购买（扣款后物品进背包）、道具箱分页、试穿预览（换角色、换颜色、动作）、保存装备（`ITEM_STATUS_CHANGE`）。服务端只结算糖币，Q 币、Q 点、酷比宝石、赠送、修理、锻造合成、水果机、任务和密保验证都未实现 |
 
-原版脚本共用到 347 个宿主函数，已实现 163 个。运行 `tools/native_coverage.py` 可按界面列出尚未实现的函数。除此之外，服务器消息到达时宿主要回调脚本里的 `Notify*`、`ui_*` 等函数（约 150 种），目前接通了登录的 `LoginOK`、`LoginFailed`，大厅的 `updateRoom`、`updatePlayer`、`ui_sectSetBtnState`、`NotifyBroadcast`（小喇叭），以及房间的 `ui_NotifyRoomSeatChange`、`ui_NotifyRoomID`、`ui_NotifyMapChange`、`NotifyRoomPropChange`、`ui_UpdateGameType`、`ui_createRoomOK`、`ui_playerChat`。对战画面和游戏逻辑不在界面脚本里，需要另外实现。
+原版脚本共用到 346 个宿主函数，已实现 165 个。运行 `tools/native_coverage.py` 可按界面列出尚未实现的函数。除此之外，服务器消息到达时宿主要回调脚本里的 `Notify*`、`ui_*` 等函数（约 150 种），目前接通了登录的 `LoginOK`、`LoginFailed`，大厅的 `updateRoom`、`updatePlayer`、`ui_sectSetBtnState`、`NotifyBroadcast`（小喇叭），以及房间的 `ui_NotifyRoomSeatChange`、`ui_NotifyRoomID`、`ui_NotifyMapChange`、`NotifyRoomPropChange`、`ui_UpdateGameType`、`ui_createRoomOK`、`ui_playerChat`。对战画面和游戏逻辑不在界面脚本里，需要另外实现。
 
 ## 工作方式
 
@@ -38,6 +38,7 @@
    - `avatar.py`：按 `object/player/player<角色>.ini` 叠加部件画人物，并按 `colorlist.dat` 给队伍颜色染色；
    - `battle/`：对战。`mapfile.py` 读地图和地图元素属性，`sidecar.py` 驱动规则辅助进程，`scene.py` 绘制对战画面和处理键盘，`practice.py` 离线练习，`online.py` 联网对局（TCP 一侧）；
    - `chat.py`：大厅聊天、悄悄话和小喇叭；
+   - `props.py`：房间的装备道具栏和道具仓库；
    - `shop.py`：商城。商品目录读客户端自己的 `config/Commodity.ini`（服务端只校验版本号，不下发目录）；购买走独立的商城端口，装备变更和背包更新走游戏连接；
    - `net/`：协议实现，均与服务端 Go 代码逐字段对应：`qqtea.py` 加密，`accountauth.py` 账号校验，`game.py` 游戏包信封和连接，`directory.py` 目录区服信息，`player.py` 进区登录，`lobby.py` 房间和玩家列表，`room.py` 建房、进房和房间内的请求与通知，`chat.py` 聊天，`shop.py` 商城列表、购买、物品状态和背包更新。
 
@@ -85,7 +86,7 @@ curl -X PUT -H 'Content-Type: application/json' -d '{"quantity":1,"available_per
 
 对战协议和规则引擎的调研见 `docs/match-protocol.md` 和 `docs/battle-engine.md`。开发中踩过的坑和做事方法上的教训见 `docs/lessons.md`。退出时会把运行中实际调用到的未实现函数及首次参数写入 `generated/missing-natives.json`。
 
-自动化调试参数：`--headless`、`--exit-after MS`、`--screenshot PATH`、`--click X,Y@MS`、`--type TEXT@MS`、`--key NAME@MS`、`--hold NAME@FROM:TO`、`--call EXPR@MS`（直接调用宿主函数）。例如无界面跑一局联网对战：
+自动化调试参数：`--headless`、`--exit-after MS`、`--screenshot PATH`、`--click X,Y@MS`、`--rclick X,Y@MS`、`--drag X1,Y1:X2,Y2@MS`、`--type TEXT@MS`、`--key NAME@MS`、`--hold NAME@FROM:TO`、`--call EXPR@MS`（直接调用宿主函数）。例如无界面跑一局联网对战：
 
 ```sh
 .venv/bin/python -m qqtclient --client-root <客户端目录> --headless --screen login \
@@ -126,7 +127,10 @@ CGO_ENABLED=1 go build -tags onnxruntime -o qqt-server ./cmd/qqt-server
 - `TABWIN`（`0x10004C98`）：控件本身 1×1，`hotrect` 是点击区，`hotcover` 总是画在 `hotrect` 处，未选中画第 0 帧、选中画第 1 帧；点击后同组（`groupid`）其他标签取消选中。
 - 底图对齐 `bkImgFlag`（存于控件 `+0xC4`，绘制在 `0x10029A37`）只看低 3 位：等于 1（`dt_center`）时按 DIMG 画布尺寸（不是帧尺寸）水平、竖直都居中，等于 5（`dt_center|dt_vcenter`）时只把底边对齐控件底边，其余不移动；帧偏移照常另加。道具箱的 `picture` 是放在格子中心的 1×1 控件，靠这条规则把图标居中。
 - 房间人物服装（`Client.exe` `room_changePlayer` → `0x00458240`）：队伍和角色都没变时什么都不做；否则重建人物，再取座位信息（`+0x54` 物品个数，`+0x56` 起每项 0x12 字节的物品结构），对角色字节（+7）等于新角色的每件物品回调脚本 `useCommItem(座位号, 物品编号, 特效, 颜色)`，脚本再对人物部件调用 `room_playerWear`。不看物品状态，未装备的物品角色字节为 0，不会匹配。角色为 -1 表示清空座位。
-- `DYLABEL`（`0x1001132C`）是随文字增高的提示框；没有文字时什么都不画，连底图也不画。有文字时底图按行数分三段拉伸，宿主目前仍按原尺寸画。
+- `DYLABEL`（`0x1001132C`）是随文字增高的提示框；没有文字时什么都不画，连底图也不画。有文字时底图按 1/3 分成上中下三段，中段拉伸到文字高度。宿主让框的上下边距都等于标题区的 y，这一点是推断的。
+- 控件回调序号表在 `gameUI.dll` `0x100471D8`（`OnClick` 7、`OnRBtnUp` 8、`OnDBClick` 17、`OnRClick` 29、`OnDragItemDrop` 36、`OnBeginItemDrag` 37……），之后是控件类型名。双击的第二下由 `WM_LBUTTONDBLCLK` 触发 `OnDBClick`，不算一次按下，所以它的抬起不会再触发 `OnClick`；宿主按 Windows 默认的 500 毫秒和 4 像素判断双击。拖放：在带 `dragtype` 的控件上按住并移动超过 4 像素开始拖动（`OnBeginItemDrag`，图片由 `Win_SetDragImg` 指定），松开时落点控件有 `dragtype` 就收到 `OnDragItemDrop`。哪些拖放类型可以互相接收没有追到。`tipwidget` 在悬停时显示、移开时隐藏，这是根据提示控件默认隐藏推断的。
+- 房间装备道具栏在 `QQTSection.dll` 的游戏数据对象里（类 ID 在 `0x10054630` 注册，接口虚表 `0x10054928`；`Client.exe` 的 `EquipOneProp` 通过 GUID `0x0079A908` 取到这个接口再调用 `+0x304`）。7 格放在 `+0xBF0C`，只接受 20001～22999 号道具。`EquipOneProp`（`0x1002B37A`）：格子 -1 表示放进第一个空格，满了就替换第 0 格；道具 0 表示卸下；已经在栏里的道具会被挪到目标格。每次装上或卸下都发 `ITEM_STATUS_CHANGE`（状态 1 或 0，角色 0，`0x1002B508`），并把 7 格写进客户端目录的 `profile/<号码>.ini`（`0x1002B81C`）。登录时（`0x1002B8A3`）状态为 1 的道具回到文件里保存的格子，其余放进第一个既空着、又没被保存给其他已装备道具的格子；没有文件就按物品顺序放。仓库列表（`0x1002B683`）包含 20001～22999、30001～31999 和状态不为 4 的 24001～24499 号物品，最多 500 项。脚本调用的 `ChangePosition` 在原版里没有注册。
+- 改房间模式由 `ChangeRoomType` 发送 `0x00D0`（号码、时间、模式、关卡编号），其他人收到 `0x00D1`。道具场必须用道具场地图（如 16、113～117、214），服务端只在道具场把可带入的道具作为 `GAME_BEGIN` 里玩家的 `NewItems` 下发。对战中使用发 `0x1174`，服务端确认后向所有人广播 `0x1175`，并用 `0x00D9` 更新剩余数量。宿主把带入的道具固定放在状态栏前几格，捡到的道具接在后面；原版的排法没有追到，因为设置格子的代码（`0x005DAC82`）有一个调用方在加了虚拟机保护的代码里。万能药剂（20020）按说明清除减速和强制滑行，礼花只是效果，宿主不画。
 - 登录成功后宿主调用脚本的 `NotifyMyUin(号码)`；脚本自己的 `uin` 平时由登录按钮设置，`go2shop` 等会把它传回宿主。
 - 商城：`fetchCommItem` 把商品记录里的物品结构原样交给脚本；脚本在期限 ≥ 0 时显示"使用时间"，否则显示"道具数量"。服务端生成的 `Commodity.ini` 全部写 `AVAILPERIOD = 0`，所以确认框都显示"使用时间: 0 天"。道具箱的页码就是商城当前大类，物品所属大类按 `itemCFG.py` 的 `itemType`。
 - `Win_SetValue` 的 41 号通道是每帧透明度变化量，901 号通道是淡入（1）或淡出（2）；其余通道编号见 `uiConst` 的 `value_channel_*`。

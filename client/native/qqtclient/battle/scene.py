@@ -158,6 +158,7 @@ class BattleScene:
         self.held: list[int] = []
         self.bomb_pressed = False
         self.use_pressed = 0  # held-item action to use on the next step
+        self.prop_pressed = 0  # room prop (item ID) to use on the next step
         self.selected_slot = 0
         self.shown_slots: list[tuple[int, int]] | None = None
         self.accumulated_ms = 0.0
@@ -199,9 +200,9 @@ class BattleScene:
             elif event.key in BOMB_KEYS:
                 self.bomb_pressed = True
             elif event.key in SLOT_KEYS:
-                self.use_pressed = self._slots()[SLOT_KEYS[event.key]][0]
+                self._press_use(self._slots()[SLOT_KEYS[event.key]][0])
             elif event.key in USE_KEYS:
-                self.use_pressed = self._smart_use()
+                self._press_use(self._smart_use())
             elif event.key in SWITCH_KEYS:
                 self._switch_slot()
         elif event.type == pygame.KEYUP and event.key in KEY_MOVES:
@@ -212,11 +213,24 @@ class BattleScene:
     def _local_actor(self) -> dict[str, Any] | None:
         return next((actor for actor in self.state["actors"] if actor["id"] == self.local_id), None)
 
+    def _press_use(self, value: int) -> None:
+        """Slot values above 255 are props brought from the room (item IDs)."""
+        if value > 0xFF:
+            self.prop_pressed = value
+        else:
+            self.use_pressed = value
+
     def _slots(self) -> list[tuple[int, int]]:
-        """The local player's seven held-item slots as (action, count)."""
+        """The local player's seven item slots as (action or item, count).
+        Room props keep the first slots in GAME_BEGIN order (an empty slot
+        once used up) and the held-item slots follow them; the native
+        arrangement is inferred, its slot writer (0x005DAC82) is only reached
+        from protected code."""
+        prepared = [(entry["item"], entry["count"]) if entry["count"] > 0 else (0, 0)
+                    for entry in self.state.get("prepared") or ()][:7]
         actor = self._local_actor()
-        slots = [(action, count) if count else (0, 0) for action, count in (actor.get("held") or ())] if actor else []
-        return (slots + [(0, 0)] * 7)[:7]
+        held = [(action, count) if count else (0, 0) for action, count in (actor.get("held") or ())] if actor else []
+        return (prepared + held + [(0, 0)] * 7)[:7]
 
     def _smart_use(self) -> int:
         """Ctrl: the needle when trapped, otherwise the selected slot. Inferred
@@ -267,8 +281,8 @@ class BattleScene:
             return
         self.accumulated_ms -= ticks * TICK_MS
         action = {"id": self.local_id, "move": self.held[-1] if self.held else MOVE_NONE, "bomb": self.bomb_pressed,
-                  "use": self.use_pressed}
-        self.bomb_pressed, self.use_pressed = False, 0
+                  "use": self.use_pressed, "prop": self.prop_pressed}
+        self.bomb_pressed, self.use_pressed, self.prop_pressed = False, 0, 0
         previous = {actor["id"]: (actor["x"], actor["y"]) for actor in self.state["actors"]}
         previous_clock = self.clock
         tcp, self.pending_tcp = self.pending_tcp, []

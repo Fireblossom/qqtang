@@ -71,6 +71,7 @@ class Widget:
         self.text_size = int(attr("textsize", 12) or 12)
         self.text_width = int(attr("textwidth", 0) or 0)
         self.text_height = int(attr("textheight", 0) or 0)
+        self.drag_type = int(attr("dragtype", 0) or 0)
         self.text_style = int(attr("textstyle", 0) or 0)
         self.max_char = int(attr("maxchar", 0) or 0)
         self.edit_method = int(attr("editmethod", 0) or 0)

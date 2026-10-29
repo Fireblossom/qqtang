@@ -20,6 +20,7 @@ from qqtclient import dimg  # noqa: E402
 from qqtclient.avatar import tint  # noqa: E402
 from qqtclient.natives import build_natives  # noqa: E402
 from qqtclient.render import Renderer, cell_width  # noqa: E402
+from qqtclient.props import place_saved  # noqa: E402
 from qqtclient.runtime import UIRuntime  # noqa: E402
 from qqtclient.script import MissingNative, MissingReport, call_script, new_namespace, py2_div, py2_len, script_key  # noqa: E402
 from qqtclient.widgets import STATE_DISABLED, STATE_HOVER, STATE_NORMAL, STATE_PRESSED, Widget, build  # noqa: E402
@@ -214,6 +215,26 @@ class TextLayoutTest(unittest.TestCase):
         self.assertEqual(Renderer._wrap("1000 糖块", 12, 48), ["1000 糖", "块"])
         self.assertEqual(Renderer._wrap("ab\ncd", 12, 0), ["ab", "cd"])
         self.assertEqual(Renderer._wrap("糖", 12, 11), [])
+
+
+class PropBarTest(unittest.TestCase):
+    """QQTSection.dll 0x1002B8A3: rebuilding the room prop bar at login."""
+
+    @staticmethod
+    def item(item_id: int, status: int = 1) -> types.SimpleNamespace:
+        return types.SimpleNamespace(item_id=item_id, status=status)
+
+    def test_saved_slots_are_kept(self) -> None:
+        items = [self.item(20030), self.item(20020), self.item(20033, status=0), self.item(13013)]
+        self.assertEqual(place_saved(items, [0, 20020, 0, 20030, 0, 0, 0]), [0, 20020, 0, 20030, 0, 0, 0])
+
+    def test_without_a_file_props_fill_in_inventory_order(self) -> None:
+        self.assertEqual(place_saved([self.item(20030), self.item(20020)], None), [20030, 20020, 0, 0, 0, 0, 0])
+
+    def test_new_props_skip_slots_saved_for_others(self) -> None:
+        # 20027 was not saved: it may not take slot 0, which is saved for 20020.
+        items = [self.item(20027), self.item(20020)]
+        self.assertEqual(place_saved(items, [20020, 0, 0, 0, 0, 0, 0]), [20020, 20027, 0, 0, 0, 0, 0])
 
 
 class TabTest(unittest.TestCase):

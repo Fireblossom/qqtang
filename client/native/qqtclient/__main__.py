@@ -27,6 +27,8 @@ def parse_args() -> argparse.Namespace:
     automation.add_argument("--exit-after", type=int, metavar="MS", help="quit after this many milliseconds")
     automation.add_argument("--screenshot", type=pathlib.Path, help="save the last frame here on exit")
     automation.add_argument("--click", action="append", default=[], metavar="X,Y@MS", help="left-click at X,Y after MS milliseconds")
+    automation.add_argument("--rclick", action="append", default=[], metavar="X,Y@MS", help="right-click at X,Y after MS milliseconds")
+    automation.add_argument("--drag", action="append", default=[], metavar="X1,Y1:X2,Y2@MS", help="drag with the left button after MS milliseconds")
     automation.add_argument("--type", action="append", default=[], metavar="TEXT@MS", help="type TEXT after MS milliseconds")
     automation.add_argument("--key", action="append", default=[], metavar="NAME@MS", help="press a key (pygame name, e.g. tab, return) after MS milliseconds")
     automation.add_argument("--hold", action="append", default=[], metavar="NAME@FROM:TO", help="hold a key down from FROM to TO milliseconds")
@@ -39,13 +41,28 @@ def scheduled_events(args: argparse.Namespace) -> list[tuple[int, list]]:
     import pygame
 
     events: list[tuple[int, list]] = []
-    for spec in args.click:
-        position, _, at = spec.partition("@")
-        x, y = (int(value) for value in position.split(","))
-        events.append((int(at or 0), [
-            pygame.event.Event(pygame.MOUSEMOTION, pos=(x, y), rel=(0, 0), buttons=(0, 0, 0)),
-            pygame.event.Event(pygame.MOUSEBUTTONDOWN, pos=(x, y), button=1),
-            pygame.event.Event(pygame.MOUSEBUTTONUP, pos=(x, y), button=1),
+    for button, specs in ((1, args.click), (3, args.rclick)):
+        for spec in specs:
+            position, _, at = spec.partition("@")
+            x, y = (int(value) for value in position.split(","))
+            events.append((int(at or 0), [
+                pygame.event.Event(pygame.MOUSEMOTION, pos=(x, y), rel=(0, 0), buttons=(0, 0, 0)),
+                pygame.event.Event(pygame.MOUSEBUTTONDOWN, pos=(x, y), button=button),
+                pygame.event.Event(pygame.MOUSEBUTTONUP, pos=(x, y), button=button),
+            ]))
+    for spec in args.drag:
+        span, _, at = spec.partition("@")
+        (x1, y1), (x2, y2) = (tuple(int(value) for value in point.split(",")) for point in span.split(":"))
+        start = int(at or 0)
+        middle = ((x1 + x2) // 2, (y1 + y2) // 2)
+        events.append((start, [
+            pygame.event.Event(pygame.MOUSEMOTION, pos=(x1, y1), rel=(0, 0), buttons=(0, 0, 0)),
+            pygame.event.Event(pygame.MOUSEBUTTONDOWN, pos=(x1, y1), button=1),
+        ]))
+        events.append((start + 100, [pygame.event.Event(pygame.MOUSEMOTION, pos=middle, rel=(0, 0), buttons=(1, 0, 0))]))
+        events.append((start + 200, [
+            pygame.event.Event(pygame.MOUSEMOTION, pos=(x2, y2), rel=(0, 0), buttons=(1, 0, 0)),
+            pygame.event.Event(pygame.MOUSEBUTTONUP, pos=(x2, y2), button=1),
         ]))
     for spec in args.type:
         text, _, at = spec.rpartition("@")
@@ -77,6 +94,7 @@ def main() -> int:
     from .runtime import UIRuntime
     from .script import MissingReport, ScriptLoader, new_namespace
     from .chat import build_chat_natives
+    from .props import build_props_natives
     from .shop import build_shop_natives
     from .lobby import build_lobby_natives
     from .room import build_room_natives
@@ -105,6 +123,7 @@ def main() -> int:
     namespace.update(build_session_natives(runtime, session))
     namespace.update(build_lobby_natives(runtime, session))
     namespace.update(build_chat_natives(runtime, session))
+    namespace.update(build_props_natives(runtime, session))
     renderer = Renderer(screen, resources)
 
     def start_battle(begin: bytes, context) -> None:
@@ -154,7 +173,8 @@ def main() -> int:
                 runtime.activity.tick(elapsed)
                 if getattr(runtime.activity, "finished", False):
                     runtime.activity = None
-            renderer.draw(runtime.root, runtime.focus)
+            drag = (runtime.drag_image, runtime.mouse_pos) if runtime.dragging is not None and runtime.drag_image else None
+            renderer.draw(runtime.root, runtime.focus, drag)
             pygame.display.flip()
             if args.exit_after is not None and now >= args.exit_after:
                 break

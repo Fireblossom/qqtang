@@ -45,6 +45,7 @@ const (
 	// Trapped players die when their bubble pops. The server uses 6 s for its
 	// AIs; native clients time it themselves.
 	defaultTrapMS = 6000
+	curePropID    = 20020 // 万能药剂
 	// Default bubble appearance (PLAYER_USE_BOMB.BombID) and its GameTime
 	// copied from a native capture, as the server's AIs send them.
 	defaultBombAppearance = 0xF20C7FFF
@@ -145,6 +146,10 @@ type onlineMatch struct {
 	fieldContacts map[fieldContactKey]bool
 	// Item uses (0x0FB0) already applied, by player, time and item.
 	itemUses map[[3]uint32]bool
+	// The local player's room props (GAME_BEGIN NewItems) and the uses
+	// requested over TCP (0x1174) but not yet confirmed (0x1175).
+	prepared          []preparedView
+	preparedRequested map[uint32]uint32
 }
 
 type fieldContactKey struct {
@@ -185,7 +190,11 @@ func newOnlineMatch(init command) (*onlineMatch, beginView, error) {
 			return nil, beginView{}, err
 		}
 		participants = append(participants, participant)
-		view.Players = append(view.Players, player{ID: info.PlayerID, Role: uint16(info.RoleID), Team: info.TeamID})
+		entry := player{ID: info.PlayerID, Role: uint16(info.RoleID), Team: info.TeamID}
+		for _, item := range info.NewItems {
+			entry.Prepared = append(entry.Prepared, preparedView{Item: item.ItemID, Count: item.Quantity})
+		}
+		view.Players = append(view.Players, entry)
 		uin := options.UINs[strconv.Itoa(int(info.PlayerID))]
 		if uin == 0 {
 			// Server AIs are announced as UIN 1 900 000 000 + PlayerID.
@@ -238,6 +247,12 @@ func newOnlineMatch(init command) (*onlineMatch, beginView, error) {
 		peerReady: map[uint16]bool{}, lastNumber: map[uint16]uint32{},
 		bombs: map[uint32]wireBomb{}, collected: map[pickupKey]uint16{},
 		fieldContacts: map[fieldContactKey]bool{}, itemUses: map[[3]uint32]bool{}, useRequested: map[uint8]uint32{},
+		preparedRequested: map[uint32]uint32{},
+	}
+	for _, entry := range view.Players {
+		if entry.ID == match.local {
+			match.prepared = append([]preparedView(nil), entry.Prepared...)
+		}
 	}
 	go match.receive()
 	match.logf("game %d map %d: local %d, arbitrator %d, %d players", begin.GameID, begin.MapID, match.local, match.arbitrator, len(begin.Players))
@@ -311,6 +326,9 @@ func (match *onlineMatch) step(step command) ([]battleengine.Event, error) {
 			match.bombPressed = match.bombPressed || entry.Bomb
 			if entry.Use != 0 {
 				match.requestItemUse(entry.Use)
+			}
+			if entry.Prop != 0 {
+				match.requestPreparedUse(entry.Prop)
 			}
 		}
 	}
@@ -752,6 +770,8 @@ func (match *onlineMatch) handleTCP(packet tcpPacket) {
 			}
 		case game.NotifyPlayerUseItem:
 			match.applyItemUse(notify.Body)
+		case game.NotifyPreparedUseProp:
+			match.applyPreparedUse(notify.Body)
 		}
 	}
 }
@@ -831,6 +851,60 @@ func (match *onlineMatch) requestItemUse(action uint8) {
 	}
 	match.useRequested[action] = now
 	match.mirror(game.RequestUseItem, body)
+}
+
+// requestPreparedUse asks the server to use one of the local player's room
+// props; the server consumes it and answers with 0x1175 to every client.
+func (match *onlineMatch) requestPreparedUse(item uint32) {
+	actor, ok := actorByID(match.engine.Actors(), match.local)
+	if !ok || actor.State != battleengine.ActorActive || match.preparedCount(item) <= 0 {
+		return
+	}
+	now := match.engine.ElapsedMS()
+	if requested, pending := match.preparedRequested[item]; pending && now-requested < 1000 {
+		return
+	}
+	use := game.PreparedUsePropEvent{PlayerID: match.local, ItemID: item, PosX: uint16(actor.Position.X), PosY: uint16(actor.Position.Y)}
+	body, err := use.MarshalNetworkBinary()
+	if err != nil {
+		return
+	}
+	match.preparedRequested[item] = now
+	match.mirror(game.RequestPreparedUseProp, body)
+}
+
+// applyPreparedUse applies a confirmed room-prop use (0x1175). Only the cure
+// (万能药剂) changes the battle; which statuses it ends is inferred from its
+// description. The fireworks (20058..20064) are effects only.
+func (match *onlineMatch) applyPreparedUse(body []byte) {
+	use, err := game.ParsePreparedUsePropEvent(game.GameEvent{Schema: game.NotifyPreparedUseProp, Body: body})
+	if err != nil {
+		return
+	}
+	if use.PlayerID == match.local {
+		delete(match.preparedRequested, use.ItemID)
+		for index := range match.prepared {
+			if match.prepared[index].Item == use.ItemID && match.prepared[index].Count > 0 {
+				match.prepared[index].Count--
+			}
+		}
+	}
+	if use.ItemID == curePropID {
+		match.engine.ClearHarmfulMovementStatus(use.PlayerID)
+	}
+}
+
+func (match *onlineMatch) preparedCount(item uint32) int16 {
+	for _, entry := range match.prepared {
+		if entry.Item == item {
+			return entry.Count
+		}
+	}
+	return 0
+}
+
+func (match *onlineMatch) preparedView() []preparedView {
+	return append([]preparedView(nil), match.prepared...)
 }
 
 // Publishing ----------------------------------------------------------------

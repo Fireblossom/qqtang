@@ -18,6 +18,10 @@ EDIT_CHAR_NUMBER = 4
 CHANNEL_ALPHA_SPEED = 41
 CHANNEL_ALPHA_DIRECTION = 901
 FADE_IN, FADE_OUT = 1, 2
+# Windows defaults: GetDoubleClickTime() and SM_CXDOUBLECLK / 2.
+DOUBLE_CLICK_S = 0.5
+DOUBLE_CLICK_PX = 2
+DRAG_THRESHOLD_PX = 4
 
 
 class UIRuntime:
@@ -30,6 +34,11 @@ class UIRuntime:
         self.current_screen: str | None = None
         self.focus: Widget | None = None
         self.pressed: Widget | None = None
+        self.last_press: tuple[float, tuple[int, int], Widget | None] = (0.0, (0, 0), None)
+        self.press_pos = (0, 0)
+        self.mouse_pos = (0, 0)
+        self.dragging: Widget | None = None
+        self.drag_image = ""  # Win_SetDragImg; drawn at the mouse while dragging
         self.hovered: Widget | None = None
         self.timers: dict[str, tuple[int, float]] = {}
         self.handler_paths: list[str] = []
@@ -217,11 +226,26 @@ class UIRuntime:
         if event.type == pygame.QUIT:
             self.quit_requested = True
         elif event.type == pygame.MOUSEMOTION:
+            self.mouse_pos = event.pos
             self._hover(self.hit_test(event.pos))
+            self._maybe_begin_drag(event.pos)
         elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
             target = self.hit_test(event.pos)
             self._hover(target)
+            now = time.monotonic()
+            last_time, last_pos, last_target = self.last_press
+            self.last_press = (now, event.pos, target)
+            # The second press of a double click arrives as WM_LBUTTONDBLCLK,
+            # which gameUI.dll turns into OnDBClick instead of a press, so its
+            # release clicks nothing.
+            if (target is not None and target is last_target and now - last_time <= DOUBLE_CLICK_S
+                    and abs(event.pos[0] - last_pos[0]) <= DOUBLE_CLICK_PX and abs(event.pos[1] - last_pos[1]) <= DOUBLE_CLICK_PX):
+                self.last_press = (0.0, (0, 0), None)
+                if target.enabled:
+                    self.call(target, "OnDBClick")
+                return
             self.pressed = target
+            self.press_pos = event.pos
             if target is not None:
                 target.pressed = True
                 # Any enabled widget takes focus when pressed, as native
@@ -232,10 +256,16 @@ class UIRuntime:
         elif event.type == pygame.MOUSEBUTTONUP and event.button == 1:
             target = self.hit_test(event.pos)
             pressed, self.pressed = self.pressed, None
+            dragged, self.dragging = self.dragging, None
+            self.drag_image = ""
             if pressed is not None:
                 pressed.pressed = False
-                if pressed is target and target.enabled:
-                    self.click(target)
+            if dragged is not None:
+                if target is not None and target.enabled and target.drag_type:
+                    self.call(target, "OnDragItemDrop")
+                self.call(dragged, "OnEndItemDrag")
+            elif pressed is not None and pressed is target and target.enabled:
+                self.click(target)
         elif event.type == pygame.MOUSEBUTTONUP and event.button == 3:
             target = self.hit_test(event.pos)
             if target is not None and target.enabled:
@@ -245,16 +275,38 @@ class UIRuntime:
         elif event.type == pygame.KEYDOWN:
             self._key(event)
 
+    def _maybe_begin_drag(self, position: tuple[int, int]) -> None:
+        """Widgets with a dragtype start a drag once the pressed mouse moves
+        past the Windows drag threshold (SM_CXDRAG); the release then drops
+        on the widget below instead of clicking. Which drag types accept
+        which is not traced: any widget with a dragtype gets the drop."""
+        source = self.pressed
+        if source is None or self.dragging is not None or not source.drag_type or not source.enabled:
+            return
+        if max(abs(position[0] - self.press_pos[0]), abs(position[1] - self.press_pos[1])) <= DRAG_THRESHOLD_PX:
+            return
+        self.dragging = source
+        self.call(source, "OnBeginItemDrag")
+
     def _hover(self, target: Widget | None) -> None:
         if target is self.hovered:
             return
+        # A widget's tipwidget is shown only while the widget is hovered; the
+        # scripts fill it in OnMouseMoveIn. Inferred from the tips starting
+        # hidden (e.g. uiSelRoom tipShop); the native lookup is not traced.
         if self.hovered is not None:
             self.hovered.hover = False
             self.call(self.hovered, "OnMouseMoveOut")
+            tip = self.find(self.hovered.attr("tipwidget", "") or None)
+            if tip is not None:
+                tip.visible = False
         self.hovered = target
         if target is not None:
             target.hover = True
             self.call(target, "OnMouseMoveIn")
+            tip = self.find(target.attr("tipwidget", "") or None)
+            if tip is not None:
+                tip.visible = True
 
     def click(self, widget: Widget) -> None:
         box = self.msgbox()

@@ -192,6 +192,8 @@ READY_COMMAND = 0x0072
 CANCEL_READY_COMMAND = 0x0073
 KICK_OFF_NOTIFY_COMMAND = 0x0074
 MODIFY_ROOM_INFO_COMMAND = 0x0078
+CHANGE_ROOM_TYPE_COMMAND = 0x00D0
+CHANGE_ROOM_TYPE_NOTIFY_COMMAND = 0x00D1
 MODIFY_ROOM_INFO_NOTIFY_COMMAND = 0x0079
 CHANGE_TEAM_NOTIFY_COMMAND = 0x007A
 CHANGE_ROLE_NOTIFY_COMMAND = 0x007B
@@ -244,6 +246,15 @@ def build_change_team_request(uin: int, team: int, now: int | None = None) -> by
 
 def build_modify_room_info_request(uin: int, map_id: int, game_type: int, continue_id: int, now: int | None = None) -> bytes:
     return _stamp(uin, now) + struct.pack(">HBI", map_id, game_type, continue_id)
+
+
+def build_change_room_type_request(uin: int, game_type: int, continue_id: int = 0, now: int | None = None) -> bytes:
+    return _stamp(uin, now) + struct.pack(">BI", game_type, continue_id)
+
+
+def parse_change_room_type_notify(payload: bytes) -> tuple[int, int]:
+    """(game type, continue ID)."""
+    return struct.unpack_from(">BI", payload, 0)
 
 
 def build_modify_room_request(uin: int, changes: int, name: str, flag: int, password: str, game_type: int,

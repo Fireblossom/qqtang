@@ -220,6 +220,14 @@ class ChatTest(unittest.TestCase):
         self.assertEqual(chat.parse_whisper(notify), chat.Whisper(1000001, "糖一", "嘘"))
 
 
+class RoomTypeTest(unittest.TestCase):
+    """internal/protocol/game/change_room_type.go."""
+
+    def test_change_room_type(self) -> None:
+        self.assertEqual(room.build_change_room_type_request(1000001, 1, now=5), bytes.fromhex("000f4241" "00000005" "01" "00000000"))
+        self.assertEqual(room.parse_change_room_type_notify(bytes.fromhex("02" "00000007")), (2, 7))
+
+
 class ShopTest(unittest.TestCase):
     """Layouts of internal/protocol/game/shop_list.go, shop_buy.go,
     item_status.go and item_update.go."""

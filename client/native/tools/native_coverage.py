@@ -19,7 +19,7 @@ import re
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 SCRIPTS = ROOT / "generated" / "scripts"
-NATIVE_MODULES = ("qqtclient/natives.py", "qqtclient/session.py", "qqtclient/lobby.py", "qqtclient/room.py", "qqtclient/chat.py", "qqtclient/shop.py")
+NATIVE_MODULES = ("qqtclient/natives.py", "qqtclient/session.py", "qqtclient/lobby.py", "qqtclient/room.py", "qqtclient/chat.py", "qqtclient/shop.py", "qqtclient/props.py")
 HELPERS = {"qqt_py2_div", "qqt_py2_cmp_key", "qqt_py2_compare", "qqt_py2_len", "unicode", "long", "xrange"}
 # Screens in the order a player reaches them; a native is listed under the first.
 SCREENS = ("uiLogo", "uiLogin", "uiSelSect", "uiSelRoom", "uiRoom", "uiGame", "uiShop", "uiMain", "uiFunc", "levelCFG", "uiWeb")

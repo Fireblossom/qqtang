@@ -39,3 +39,18 @@ func (engine *Engine) expireMovementStatuses() []Event {
 	}
 	return events
 }
+
+// ClearHarmfulMovementStatus ends a slow or forced-slide status on the
+// player, as a cure prop (万能药剂) does; a speed boost is kept. It reports
+// whether a status was cleared.
+func (engine *Engine) ClearHarmfulMovementStatus(playerID uint16) (Event, bool) {
+	index := engine.actorIndex(playerID)
+	if index < 0 {
+		return Event{}, false
+	}
+	actor := &engine.actors[index]
+	if actor.MovementStatus != MovementStatusSlow && actor.MovementStatus != MovementStatusForcedSlide {
+		return Event{}, false
+	}
+	return engine.clearMovementStatus(actor), true
+}

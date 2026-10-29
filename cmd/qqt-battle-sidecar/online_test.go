@@ -39,7 +39,7 @@ func testMatch(t *testing.T) *onlineMatch {
 		uins: map[uint16]uint32{1: 1000001, 2: 1900000002}, trapMS: defaultTrapMS, log: io.Discard,
 		peerReady: map[uint16]bool{}, lastNumber: map[uint16]uint32{}, bombs: map[uint32]wireBomb{},
 		collected: map[pickupKey]uint16{}, fieldContacts: map[fieldContactKey]bool{}, itemUses: map[[3]uint32]bool{},
-		useRequested: map[uint8]uint32{},
+		useRequested: map[uint8]uint32{}, preparedRequested: map[uint32]uint32{},
 	}
 }
 
@@ -100,5 +100,38 @@ func TestNeedleOnlyFromInsideABubble(t *testing.T) {
 	match.requestItemUse(64) // not held
 	if requests := match.takeTCP(); len(requests) != 0 {
 		t.Fatalf("requests without held items: %+v", requests)
+	}
+}
+
+func TestPreparedPropUseWaitsForServerConfirmation(t *testing.T) {
+	match := testMatch(t)
+	match.prepared = []preparedView{{Item: curePropID, Count: 2}}
+
+	match.requestPreparedUse(20030) // not brought into the match
+	match.requestPreparedUse(curePropID)
+	requests := match.takeTCP()
+	if len(requests) != 1 {
+		t.Fatalf("requests = %+v, want one REQUEST_PLAY", requests)
+	}
+	payload, _ := hex.DecodeString(requests[0].Payload)
+	event, err := game.ParseGameEventPayload(payload)
+	if err != nil || event.Schema != game.RequestPreparedUseProp {
+		t.Fatalf("request = %+v, %v; want 0x1174", event, err)
+	}
+	use, err := game.ParsePreparedUsePropEvent(event)
+	if err != nil || use.PlayerID != 1 || use.ItemID != curePropID {
+		t.Fatalf("use = %+v, %v", use, err)
+	}
+	match.requestPreparedUse(curePropID)
+	if len(match.takeTCP()) != 0 {
+		t.Fatal("a pending use was requested twice")
+	}
+
+	match.applyPreparedUse(event.Body) // the server's 0x1175 notification
+	if left := match.preparedCount(curePropID); left != 1 {
+		t.Fatalf("count after the confirmed use = %d, want 1", left)
+	}
+	if _, pending := match.preparedRequested[curePropID]; pending {
+		t.Fatal("confirmed use is still pending")
 	}
 }
