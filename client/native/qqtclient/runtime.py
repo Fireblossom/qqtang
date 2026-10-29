@@ -22,6 +22,8 @@ FADE_IN, FADE_OUT = 1, 2
 DOUBLE_CLICK_S = 0.5
 DOUBLE_CLICK_PX = 2
 DRAG_THRESHOLD_PX = 4
+WGTSTYLE_POPUP = 0x400
+VK_SHIFT, VK_CONTROL, VK_MENU = 16, 17, 18
 
 
 class UIRuntime:
@@ -39,6 +41,10 @@ class UIRuntime:
         self.mouse_pos = (0, 0)
         self.dragging: Widget | None = None
         self.drag_image = ""  # Win_SetDragImg; drawn at the mouse while dragging
+        # gameUI.dll counts the messages it dispatches ([0x10049928], read by
+        # Win_GetEventCnt) and hides the open popup widget on a press outside it.
+        self.event_count = 0
+        self.popup: Widget | None = None
         self.hovered: Widget | None = None
         self.timers: dict[str, tuple[int, float]] = {}
         self.handler_paths: list[str] = []
@@ -229,6 +235,7 @@ class UIRuntime:
         return ancestor
 
     def handle(self, event: pygame.event.Event) -> None:
+        self.event_count += 1
         if event.type == pygame.QUIT:
             self.quit_requested = True
         elif event.type == pygame.MOUSEMOTION:
@@ -236,6 +243,7 @@ class UIRuntime:
             self._hover(self.hit_test(event.pos))
             self._maybe_begin_drag(event.pos)
         elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+            self._close_popup(event.pos)
             target = self.hit_test(event.pos)
             self._hover(target)
             now = time.monotonic()
@@ -280,6 +288,49 @@ class UIRuntime:
             self._type_text(event.text)
         elif event.type == pygame.KEYDOWN:
             self._key(event)
+
+    def show(self, widget: Widget, shown: bool) -> None:
+        if widget.visible != shown:
+            widget.visible = shown
+            if shown and widget.style & WGTSTYLE_POPUP:
+                self.popup = widget
+            self.call(widget, "OnSelfShow" if shown else "OnSelfHide")
+
+    def _close_popup(self, position: tuple[int, int]) -> None:
+        """0x10030916: a press outside the open popup hides it first."""
+        popup = self.popup
+        if popup is None or not popup.visible:
+            return
+        inside = self._hit(popup, position) is not None or pygame.Rect(popup.hit_rect()).collidepoint(position)
+        if not inside:
+            self.popup = None
+            self.show(popup, False)
+
+    def _accelerator(self, event: pygame.event.Event) -> bool:
+        """The accel tables ((handler, virtual key, modifier key, ...)) of the
+        focused widget, its ancestors and the screen. Cmd counts as Ctrl."""
+        key = event.key
+        if pygame.K_a <= key <= pygame.K_z:
+            vk = ord("A") + key - pygame.K_a
+        elif pygame.K_0 <= key <= pygame.K_9:
+            vk = ord("0") + key - pygame.K_0
+        elif pygame.K_F1 <= key <= pygame.K_F12:
+            vk = 112 + key - pygame.K_F1
+        else:
+            return False
+        mod = event.mod if hasattr(event, "mod") else 0
+        modifier = VK_CONTROL if mod & (pygame.KMOD_CTRL | pygame.KMOD_META) else VK_SHIFT if mod & pygame.KMOD_SHIFT else VK_MENU if mod & pygame.KMOD_ALT else 0
+        chain = []
+        widget = self.focus or self.screen_widget()
+        while widget is not None:
+            chain.append(widget)
+            widget = widget.parent
+        for owner in chain:
+            for entry in owner.attr("accel", ()) or ():
+                if len(entry) >= 3 and int(entry[1]) == vk and int(entry[2]) == modifier and owner.handler(entry[0]):
+                    self.call(owner, entry[0])
+                    return True
+        return False
 
     def _maybe_begin_drag(self, position: tuple[int, int]) -> None:
         """Widgets with a dragtype start a drag once the pressed mouse moves
@@ -340,8 +391,8 @@ class UIRuntime:
     def set_focus(self, widget: Widget | None) -> None:
         self.focus = widget
 
-    def _type_text(self, text: str) -> None:
-        widget = self.focus
+    def _type_text(self, text: str, widget: Widget | None = None) -> None:
+        widget = widget or self.focus
         if widget is None or widget.type not in TEXT_INPUT_TYPES or not widget.editable:
             return
         if widget.edit_method in (EDIT_NUMBER, EDIT_CHAR_NUMBER):
@@ -351,6 +402,8 @@ class UIRuntime:
         widget.text += text
 
     def _key(self, event: pygame.event.Event) -> None:
+        if self._accelerator(event):
+            return
         widget = self.focus
         if event.key == pygame.K_BACKSPACE and widget is not None and widget.type in TEXT_INPUT_TYPES and widget.editable:
             widget.text = widget.text[:-1]

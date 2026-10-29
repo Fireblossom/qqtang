@@ -16,6 +16,7 @@ import pygame
 from .resources import Resources
 from .runtime import CHANNEL_ALPHA_DIRECTION, CHANNEL_ALPHA_SPEED, UIRuntime
 from .script import log
+from .widgets import TEXT_INPUT_TYPES, Widget
 
 CHANNEL_VALUE = 10
 CHANNEL_MAXVALUE = 12
@@ -99,10 +100,7 @@ def build_natives(runtime: UIRuntime, resources: Resources, audio: Audio) -> dic
 
     @with_widget()
     def Win_ShowWidget(widget, show=1):
-        shown = bool(show)
-        if widget.visible != shown:
-            widget.visible = shown
-            runtime.call(widget, "OnSelfShow" if shown else "OnSelfHide")
+        runtime.show(widget, bool(show))
 
     @with_widget(0)
     def Win_IsVisible(widget):
@@ -149,6 +147,42 @@ def build_natives(runtime: UIRuntime, resources: Resources, audio: Audio) -> dic
 
     def Win_SetDragImg(_path, image):
         runtime.drag_image = str(image or "")
+
+    def Win_GetEventCnt():
+        return runtime.event_count
+
+    def clipboard_text() -> str:
+        try:
+            return pygame.scrap.get_text() or ""
+        except pygame.error:
+            return ""
+
+    def set_clipboard(text: str) -> None:
+        try:
+            pygame.scrap.put_text(text)
+        except pygame.error:
+            pass
+
+    def editable_focus() -> Widget | None:
+        widget = runtime.focus
+        return widget if widget is not None and widget.type in TEXT_INPUT_TYPES else None
+
+    def Win_FocusOnCopy():
+        widget = editable_focus()
+        if widget is not None and not widget.password():
+            set_clipboard(widget.text)
+
+    def Win_FocusOnCut():
+        widget = editable_focus()
+        if widget is not None and widget.editable and not widget.password():
+            set_clipboard(widget.text)
+            widget.text = ""
+
+    def Win_FocusOnPaste():
+        runtime._type_text(clipboard_text().replace("\r", "").split("\n")[0])
+
+    def Win_FocusOnInsert(path, text):
+        runtime._type_text(str(text), find(path))
 
     @with_widget()
     def Win_SetValue(widget, value, channel=CHANNEL_VALUE):
