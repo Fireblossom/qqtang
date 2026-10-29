@@ -85,7 +85,7 @@ curl -X PUT -H 'Content-Type: application/json' -d '{"quantity":1,"available_per
 
 开局后规则辅助进程以联网模式运行：它按 GAME_BEGIN 的地图和种子建立与服务端相同的初始局面，自己收发 QQTPPP UDP 场景数据（登记、与每个对手握手、移动/放泡/被困等消息），并把需要走 TCP 的可靠副本（REQUEST_PLAY 0x0083）交给客户端发送。房主就是仲裁方，由本地引擎裁定爆炸、拾取、击杀和救援，并回应 AI 的拾取、被困和接触请求；服务端的 AI 依赖这些通知才能正常行动。服务端发来 GAME_OVER 后先显示 Win/Lose/Draw 卡片，再显示成绩表，10 秒后（或按回车、Esc、点击）回到房间。使用道具时客户端先发 REQUEST_USE_ITEM（0x0FAF），等服务端的 0x0FB0 回来才生效，与原版一致。
 
-对战协议和规则引擎的调研见 `docs/match-protocol.md` 和 `docs/battle-engine.md`。开发中踩过的坑和做事方法上的教训见 `docs/lessons.md`。退出时会把运行中实际调用到的未实现函数及首次参数写入 `generated/missing-natives.json`。
+对战协议和规则引擎的调研见 `docs/match-protocol.md` 和 `docs/battle-engine.md`，其他对战玩法见 `docs/other-rules.md`，探险模式见 `docs/adventure.md`（两份都是只读调研，引用的 `/tmp/qqt-tools` 临时文件可能已不存在）。开发中踩过的坑和做事方法上的教训见 `docs/lessons.md`。退出时会把运行中实际调用到的未实现函数及首次参数写入 `generated/missing-natives.json`。
 
 自动化调试参数：`--headless`、`--exit-after MS`、`--screenshot PATH`、`--click X,Y@MS`、`--rclick X,Y@MS`、`--drag X1,Y1:X2,Y2@MS`、`--type TEXT@MS`、`--key NAME@MS`、`--hold NAME@FROM:TO`、`--call EXPR@MS`（直接调用宿主函数）。例如无界面跑一局联网对战：
 
