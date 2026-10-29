@@ -217,9 +217,15 @@ class UIRuntime:
             return None
         if not widget.static():
             return widget
+        # The walk (0x10027269) never ends at a screen: static containers
+        # such as TPoser (a full-screen static by default, e.g. uiSelRoom's
+        # chatArea over the mode tabs) let clicks through to their siblings.
+        # Inferred: the screens' state flags were not traced.
         ancestor = widget.parent
         while ancestor is not None and (not ancestor.visible or not ancestor.enabled or ancestor.static()):
             ancestor = ancestor.parent
+        if ancestor is not None and (ancestor.type == "SCREEN" or ancestor.parent is None):
+            return None
         return ancestor
 
     def handle(self, event: pygame.event.Event) -> None:

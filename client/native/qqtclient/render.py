@@ -158,6 +158,10 @@ class Renderer:
         callback = self.draw_callbacks.get(widget.attr("callbackdraw", ""))
         if callback is not None:
             callback(self.screen)
+        # A tab draws its children only while selected (0x10004D27); they
+        # stay visible and hit-testable.
+        if widget.type == "TABWIN" and not widget.checked:
+            return
         for child in widget.sorted_children():
             self._draw(child, x, y, alpha, focus)
 
