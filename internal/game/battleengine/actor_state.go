@@ -70,6 +70,9 @@ func (engine *Engine) applyFlameHazards() []Event {
 	if engine.rules.NativeOutcomeAuthority {
 		return nil
 	}
+	if local := engine.rules.LocalHitPlayerID; local != 0 {
+		return engine.applyFlameHazardsMatching(func(actor *Actor) bool { return actor.PlayerID == local })
+	}
 	return engine.applyFlameHazardsMatching(nil)
 }
 

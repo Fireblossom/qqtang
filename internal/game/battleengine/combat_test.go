@@ -1261,3 +1261,29 @@ func hasEvent(events []Event, kind EventKind, targetID uint16) bool {
 	}
 	return false
 }
+
+func TestLocalHitPlayerLimitsFlameHitsToLocalActor(t *testing.T) {
+	config := testConfig()
+	config.Rules.LocalHitPlayerID = 1
+	engine := mustEngine(t, config)
+	engine.elapsedMS = 100
+	engine.bombs = []Bomb{{ID: 1, OwnerID: 2, Cell: Cell{Row: 1, Col: 2}, Power: 2, ExplodeAtMS: 100}}
+	engine.nextBombID = 2
+	events, err := engine.Step(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if engine.actors[0].State != ActorTrapped || !hasEvent(events, EventActorTrapped, 1) {
+		t.Fatalf("local actor was not trapped: state=%d events=%+v", engine.actors[0].State, events)
+	}
+	if engine.actors[1].State != ActorActive {
+		t.Fatalf("remote actor was trapped by local flame resolution: state=%d", engine.actors[1].State)
+	}
+	// The remote player's own report traps it.
+	if _, changed, err := engine.ApplyVerifiedActorHit(2, engine.actors[1].Position, false); err != nil || !changed {
+		t.Fatalf("verified remote hit: changed=%t err=%v", changed, err)
+	}
+	if engine.actors[1].State != ActorTrapped {
+		t.Fatalf("remote actor state after its report = %d", engine.actors[1].State)
+	}
+}

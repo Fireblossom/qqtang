@@ -34,3 +34,7 @@
 __pycache__/
 *.py[cod]
 .idea/
+
+# Native client: scripts and caches derived from the user-supplied client.
+/client/native/generated/
+/client/native/.venv/

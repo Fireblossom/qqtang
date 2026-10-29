@@ -345,6 +345,11 @@ type Rules struct {
 	// notification. Offline replay and RL leave this false and simulate the
 	// complete battle.
 	NativeOutcomeAuthority bool
+	// LocalHitPlayerID, when non-zero, limits flame hits to that actor. A
+	// networked client simulates every participant but, like Client.exe,
+	// decides only its own player's hits; every other actor is trapped by its
+	// own PLAYER_BE_EXPLODED report through ApplyVerifiedActorHit.
+	LocalHitPlayerID uint16
 	// RecordItemEffects captures event-local before/after evidence only for
 	// diagnostic matches. It does not alter physics, visibility or rewards.
 	RecordItemEffects bool

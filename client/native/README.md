@@ -1,0 +1,149 @@
+# 原生客户端（macOS 实验版）
+
+用 Python 3 重新实现原版客户端的宿主程序，直接运行原版界面脚本，可在 Apple Silicon Mac 上原生运行。原版 `Client.exe` 不参与运行；画面、音效和界面逻辑都从用户自备的原版客户端读取。
+
+## 当前进度
+
+| 阶段 | 状态 |
+| --- | --- |
+| 开场画面、登录界面 | 可显示、输入、点击 |
+| 账号密码登录 | 可用：`QQTAUTH1` 挑战应答后请求目录，拿到区服列表 |
+| 选区界面 | 可用：显示分区和负载，点分区或“快速加入”进区 |
+| 大厅 | 部分可用：房间格子分页、玩家列表、分区名称，每 5 秒刷新房间、每 10 秒刷新玩家；建房、点房间进入、快速加入；大厅聊天、悄悄话（对指定玩家）和小喇叭。家族聊天、斜杠命令（邀请、屏蔽等）、好友列表尚未实现 |
+| 房间 | 部分可用：座位和人物（按队伍染色）、房主、准备/取消准备、房主开始、换角色、换队伍颜色、选地图、开关空位、踢人、房间聊天和头顶气泡、离开房间；开局后进入对战，结束后回到房间。改房间属性已接通但未实测；装备道具栏、人物服装、聊天室背景、婚礼未实现 |
+| 对战 | 普通规则地图可玩：地图、人物行走、放泡、爆炸和连锁、炸墙和推箱子、道具出现与拾取、被困和阵亡、计时、玩家列表、胜负提示。离线练习可用；联网时可作为房主与服务端 AI 对战（本客户端担任仲裁方），对局由服务端判定胜负后显示结算画面并回到房间。对战中可使用捡到的道具（1～7 键、Ctrl、Tab）。与其他真人玩家同局、从房间带入的道具尚未实现 |
+| 商城 | 部分可用：进出商城、六个大类和子类的商品分页、糖币购买（扣款后物品进背包）、道具箱分页、试穿预览（换角色、换颜色、动作）、保存装备（`ITEM_STATUS_CHANGE`）。服务端只结算糖币，Q 币、Q 点、酷比宝石、赠送、修理、锻造合成、水果机、任务和密保验证都未实现 |
+
+原版脚本共用到 347 个宿主函数，已实现 163 个。运行 `tools/native_coverage.py` 可按界面列出尚未实现的函数。除此之外，服务器消息到达时宿主要回调脚本里的 `Notify*`、`ui_*` 等函数（约 150 种），目前接通了登录的 `LoginOK`、`LoginFailed`，大厅的 `updateRoom`、`updatePlayer`、`ui_sectSetBtnState`、`NotifyBroadcast`（小喇叭），以及房间的 `ui_NotifyRoomSeatChange`、`ui_NotifyRoomID`、`ui_NotifyMapChange`、`NotifyRoomPropChange`、`ui_UpdateGameType`、`ui_createRoomOK`、`ui_playerChat`。对战画面和游戏逻辑不在界面脚本里，需要另外实现。
+
+## 工作方式
+
+原版界面逻辑是 `res/uiRes/*.pyc` 等 16 个 Python 2.3 字节码文件，由 `Client.exe` 通过 boost.python 注入原生函数（`Win_*`、`Login` 等）后执行。本目录分两部分：
+
+1. `tools/prepare-ui.sh`：把字节码反编译并转换成 Python 3，输出到 `generated/scripts/`。
+   - uncompyle6 还原 Python 2 源码；
+   - lib2to3 转换语法；
+   - 绕过 uncompyle6 3.9.3 的一个缺陷：连续 5 个以上常量组成的列表会被输出成常量表下标（例如 `RoleNameList`、`allMapTypeList`、等级积分表），转换时对 Python 2 字节码关闭这种合并；
+   - AST 处理补齐 Python 2 语义：GBK 字节串解码为文本，`/` 改为 `qqt_py2_div`（整数相除向下取整），`list.sort(cmp)` 改为 `key=qqt_py2_cmp_key(cmp)`，`len()` 改为 `qqt_py2_len`（文本按 GBK 字节数计，脚本用它算文字宽度，如 `len(name) * 6`）；
+   - `uiMain` 用 `MyExecFile` 执行的是 `object/itemCFG.py`、`object/commodityCFG.py`、`map/mapDesc.py` 三个源文件，转换时直接读这三个 GBK 源码。同名 `.pyc` 是 2007 年的旧编译结果（记录的源文件时间与 `.py` 不符，Python 2.3 会忽略它），发布包只更新了源码：物品表 2947 项、商品表 2978 项、地图 381 张，均为版本 848，与 `config/Commodity.ini` 一致。
+2. `qqtclient/`：宿主程序。
+   - `script.py`：脚本共享命名空间；脚本有独立的 `sys`，未实现的原生函数返回 0 并记录到报告；
+   - `widgets.py`：由界面类构建控件树；
+   - `render.py`：用 pygame 绘制 DIMG 图片和文字；
+   - `runtime.py`：界面切换、焦点、定时器、输入、系统消息框，以及网络线程回到界面线程的调用队列；
+   - `natives.py`：控件、音频、文件系统等本地原生函数；
+   - `session.py`：登录、选区、进区和游戏连接；其他模块通过 `Session.handlers` 注册收包处理，通过 `on_entered`、`on_disconnected` 响应进区和断线；
+   - `lobby.py`：大厅的房间分页、玩家列表和定时刷新；
+   - `room.py`：建房、进房、快速加入和房间界面；本地状态只在服务端通知到达后改变；
+   - `avatar.py`：按 `object/player/player<角色>.ini` 叠加部件画人物，并按 `colorlist.dat` 给队伍颜色染色；
+   - `battle/`：对战。`mapfile.py` 读地图和地图元素属性，`sidecar.py` 驱动规则辅助进程，`scene.py` 绘制对战画面和处理键盘，`practice.py` 离线练习，`online.py` 联网对局（TCP 一侧）；
+   - `chat.py`：大厅聊天、悄悄话和小喇叭；
+   - `shop.py`：商城。商品目录读客户端自己的 `config/Commodity.ini`（服务端只校验版本号，不下发目录）；购买走独立的商城端口，装备变更和背包更新走游戏连接；
+   - `net/`：协议实现，均与服务端 Go 代码逐字段对应：`qqtea.py` 加密，`accountauth.py` 账号校验，`game.py` 游戏包信封和连接，`directory.py` 目录区服信息，`player.py` 进区登录，`lobby.py` 房间和玩家列表，`room.py` 建房、进房和房间内的请求与通知，`chat.py` 聊天，`shop.py` 商城列表、购买、物品状态和背包更新。
+
+反编译和转换的结果来自原版客户端，`generated/` 已加入 `.gitignore`，不得提交。
+
+## 使用
+
+需要 [uv](https://docs.astral.sh/uv/)（转换脚本用它固定 Python 3.12 和反编译器版本）以及原版客户端目录，例如发布包里的 `QQTang-Local/runtime/client-patched`。
+
+```sh
+cd client/native
+tools/prepare-ui.sh <客户端目录>
+uv venv --python 3.12 .venv
+uv pip install --python .venv/bin/python -r requirements.txt
+.venv/bin/python -m qqtclient --client-root <客户端目录> [--server 127.0.0.1]
+```
+
+网络会拦截 TLS 时，脚本已对 uv 启用 `--system-certs`；手动执行 `uv` 命令时同样加上该参数。
+
+客户端以客户端目录为工作目录运行，和原版一样，脚本每次启动会重写其中的 `devConfig.txt`。上次登录的 QQ 号保存在 `~/Library/Application Support/QQTangNative/state.json`。
+
+`--screen login` 可跳过开场画面。
+
+### 离线练习
+
+对战规则由仓库中的 Go 程序 `cmd/qqt-battle-sidecar` 演算（复用服务端的 `internal/game/battleengine`，与服务端 AI 用的规则一致），客户端以子进程方式启动它。先用 Go 编译：
+
+```sh
+tools/build-sidecar.sh          # 输出 generated/bin/qqt-battle-sidecar
+.venv/bin/python -m qqtclient --client-root <客户端目录> --practice 211 --opponents 2
+```
+
+方向键移动，空格放泡，1～7 键使用状态栏对应格的道具，Ctrl 使用选中的道具（被困时优先用针自救），Tab 切换选中格；对局结束后回车再来一局，Esc 退出。对手只会随机走动和偶尔放泡。目前只支持普通规则（native rule 1）的地图，例如 211 景阳岗；踢炸弹、抢包子、比武等地图会被规则引擎拒绝。
+
+### 联网对战（与服务端 AI）
+
+在房间里选普通规则地图（如 211 景阳岗）后由房主开始。只有一名真人时，服务端要求房主背包里有 AI 卡（物品 30099）才会补满 AI；本地测试服务端可以用 GM 接口发放：
+
+```sh
+curl -X PUT -H 'Content-Type: application/json' -d '{"quantity":1,"available_period":4294967295}' \
+  http://127.0.0.1:18100/gm/api/accounts/1000001/inventory/30099
+```
+
+开局后规则辅助进程以联网模式运行：它按 GAME_BEGIN 的地图和种子建立与服务端相同的初始局面，自己收发 QQTPPP UDP 场景数据（登记、与每个对手握手、移动/放泡/被困等消息），并把需要走 TCP 的可靠副本（REQUEST_PLAY 0x0083）交给客户端发送。房主就是仲裁方，由本地引擎裁定爆炸、拾取、击杀和救援，并回应 AI 的拾取、被困和接触请求；服务端的 AI 依赖这些通知才能正常行动。服务端发来 GAME_OVER 后先显示 Win/Lose/Draw 卡片，再显示成绩表，10 秒后（或按回车、Esc、点击）回到房间。使用道具时客户端先发 REQUEST_USE_ITEM（0x0FAF），等服务端的 0x0FB0 回来才生效，与原版一致。
+
+对战协议和规则引擎的调研见 `docs/match-protocol.md` 和 `docs/battle-engine.md`。开发中踩过的坑和做事方法上的教训见 `docs/lessons.md`。退出时会把运行中实际调用到的未实现函数及首次参数写入 `generated/missing-natives.json`。
+
+自动化调试参数：`--headless`、`--exit-after MS`、`--screenshot PATH`、`--click X,Y@MS`、`--type TEXT@MS`、`--key NAME@MS`、`--hold NAME@FROM:TO`、`--call EXPR@MS`（直接调用宿主函数）。例如无界面跑一局联网对战：
+
+```sh
+.venv/bin/python -m qqtclient --client-root <客户端目录> --headless --screen login \
+  --call "Login(1000001,0,'123456')@500" --call "request_LoginSection(1000001,0,0,0)@2000" \
+  --call "CreateRoom('test',0,1,'')@4000" --call "UserSelMapInRoom(211)@5500" --call "UserReady()@6500" \
+  --exit-after 60000 --screenshot /tmp/battle.png
+```
+
+### 服务端
+
+客户端连接本仓库的服务端，默认 `127.0.0.1`。登录依次使用三条 TCP 连接：
+
+1. 18000：账号密码校验，服务端按来源 IP 和 QQ 号记下授权；
+2. 18080：目录请求 0x0133，把授权转为进区许可并返回频道和分区；
+3. 分区服务器（默认 18000）：进区登录 0x0064，之后大厅请求都走这条连接。
+
+服务端可在 macOS 上原生构建：
+
+```sh
+CGO_ENABLED=1 go build -tags onnxruntime -o qqt-server ./cmd/qqt-server
+```
+
+在发布包目录下运行时，ONNX Runtime 需使用官方 osx-arm64 1.29.0 版 `libonnxruntime.1.29.0.dylib`，并在配置的 `competitive_ai.shared_library_path` 中填写其路径（服务端目前不会在 macOS 上自动查找运行库）。默认测试账号为 `1000001`、`1000002`，初始密码 `123456`。
+
+## 测试
+
+```sh
+.venv/bin/python -m unittest discover -s tests
+```
+
+测试不需要原版客户端、服务端或显示器。
+
+## 已确认的原版约定
+
+- `framescheme` 每行 8 个数，是禁用、悬停、按下、正常四种状态各自的起止帧；第二行用于勾选状态。未写方案的按钮按正常、悬停、按下、禁用的顺序取第 0～3 帧。
+- `NUMLABEL`（`gameUI.dll` `0x10018CFC`）用单帧数字条图绘制，字形顺序为 `0123456789/:-+.`：第 i 个字形是条图上 `x = i × textwidth` 处 `textwidth × textheight` 的格子（不是图宽均分），每个字符（包括不画的空格）前进 `textsize`，`textstyle` 含 `dt_center` 时整串水平居中。`PICLABEL` 每帧一个字形，顺序相同，字距为 `textsize`。
+- 文字排版按宋体点阵（`0x10021E86`、折行 `0x10021C74`）：GBK 单字节字符宽为字号的一半，双字节字符为两倍于此；每行最多 `控件宽 ÷ (字号 ÷ 2)` 个字节，逐字符折行；行距为 `textsize + rowspace`（默认 12 和 0）；超出控件高度的行不画，宽度容不下一个汉字的控件什么都不画。宿主用系统字体画字，比宋体宽时把整行水平压缩到宋体宽度。所以价格框（48 像素宽）里的"1000 糖块"只显示"1000 糖"，原版用这份商品表也是如此。`textLineType` 是线型（原价的删除线），与折行无关。
+- `TABWIN`（`0x10004C98`）：控件本身 1×1，`hotrect` 是点击区，`hotcover` 总是画在 `hotrect` 处，未选中画第 0 帧、选中画第 1 帧；点击后同组（`groupid`）其他标签取消选中。
+- 底图对齐 `bkImgFlag`（存于控件 `+0xC4`，绘制在 `0x10029A37`）只看低 3 位：等于 1（`dt_center`）时按 DIMG 画布尺寸（不是帧尺寸）水平、竖直都居中，等于 5（`dt_center|dt_vcenter`）时只把底边对齐控件底边，其余不移动；帧偏移照常另加。道具箱的 `picture` 是放在格子中心的 1×1 控件，靠这条规则把图标居中。
+- `DYLABEL`（`0x1001132C`）是随文字增高的提示框；没有文字时什么都不画，连底图也不画。有文字时底图按行数分三段拉伸，宿主目前仍按原尺寸画。
+- 登录成功后宿主调用脚本的 `NotifyMyUin(号码)`；脚本自己的 `uin` 平时由登录按钮设置，`go2shop` 等会把它传回宿主。
+- 商城：`fetchCommItem` 把商品记录里的物品结构原样交给脚本；脚本在期限 ≥ 0 时显示"使用时间"，否则显示"道具数量"。服务端生成的 `Commodity.ini` 全部写 `AVAILPERIOD = 0`，所以确认框都显示"使用时间: 0 天"。道具箱的页码就是商城当前大类，物品所属大类按 `itemCFG.py` 的 `itemType`。
+- `Win_SetValue` 的 41 号通道是每帧透明度变化量，901 号通道是淡入（1）或淡出（2）；其余通道编号见 `uiConst` 的 `value_channel_*`。
+- 事件处理函数的参数按需传入：`OnClick(this)` 收到控件路径，`OnInit()` 不收参数。
+- 脚本按 Windows 路径处理文件，宿主把 macOS 文件系统映射为 `Z:` 盘（与 Wine 相同）。
+- 进区成功后由宿主切到大厅（`Client.exe` 中的 `GotoUIScreen('selRoom')`），脚本没有对应回调。
+- 大厅每页 8 个房间格子，房间号从 `MinRoomID + 页码 × 8` 开始；服务端只返回已有房间，其余格子显示为空位。玩家列表第 0 项总是自己（`Sect.meGetPlayerInfo`）。
+- 测试向量：房间列表请求与 `internal/protocol/game/room_test.go` 中抓包的明文逐字节一致；进房、快速加入回包和进房通知的测试数据 `tests/data/room_vectors.txt` 由服务端的 Go 编码函数生成。
+- 建房成功只返回房间号，客户端随后用该房间号发 `EnterRoom` 取得完整房间快照（服务端按"已在房间中"处理）。脚本给的房间名为空时，宿主使用"一起来玩吧"。
+- `GetSeatInfo().seatStatus` 在脚本中是 0 空位、1 关闭（显示 STOP）、2 有人，与两种协议编码都不同。
+- 房主的"开始"和其他人的"准备"都调用 `UserReady(0)`，由宿主按身份发开始或准备/取消准备。
+- 位置类原生函数（`Win_Move2Pos`、`Win_GetX/Y`、`Win_SetRect`/`Win_GetRect` 的 winrect）使用屏幕坐标。
+- 按下任何可用控件都会取得焦点：队伍颜色、座位等按钮在 `OnClick` 里用 `Win_GetFocusPath` 取自己的序号。
+- 命中检测按 `gameUI.dll` 的实现（虚函数 `+0xB4`，基类 `0x1002912C`）：隐藏或禁用的控件连同子控件一起跳过，点击落到下面的控件；子控件从最上层往下检查；任何可见、启用的控件都会接住点击，不要求有 `OnClick`；Static 控件把点击交给最近的可见、启用、非 Static 祖先。
+- 切换界面时宿主先调用所有子控件的 `OnInit`，再调用界面本身的；房间座位在自己的 `OnInit` 中上报人物位置。
+- 对战画面：场地 600×520 画在 (10, 27)，外框 `object/ui/game/gametop.img`、`gameleft.img` 由宿主绘制；地图元素图片按 `mapElem.py` 的 `offset` 向左上偏移（墙比格子高，向上伸出）；先画地板，再逐行画墙和该行的人物，使下一行的墙能挡住上一行的人。火焰图 `flame1` 为中心，`flame2..5` 为臂、`flame6..9` 为臂端，方向依次为右、上、左、下。开局时宿主调用 `ui_SetGameMode(0)`、`ui_InitPVEBoss()`、`game_setMapID(地图)`，每秒写 `UI.game.playerListDlg.time`；右侧玩家栏里的头像、名字和状态由宿主自己画。被困时画角色的整身被困造型 `cloth<站立衣服编号>_trigger.img`（如角色 1 的 `cloth10101_trigger.img`，23 帧），阵亡时画 `cloth<编号>_die.img`；ini 中 `[trigger]`、`[die]` 段写的衣服编号没有对应图片。被困的糖浆团是 `object/misc/misc111`：先播 `_stand`（5 帧，糖浆成形）再循环 `_trigger`（13 帧），这是根据素材判断的，未在 Client.exe 中找到直接引用。
+- 默认按键（`0x0048AE40` 填写，Windows VK 码，存为 26 字节数组）：方向键移动，空格放泡，Tab 切换道具，Ctrl 使用道具，回车聊天，1～7 使用道具 0～6，8、9、0、小键盘减号、I、O、P 为商店 0～6，F12 系统菜单，F1 帮助，Q 快速回复。Ctrl 和 Tab 具体如何选格未追到，目前按"使用选中格、被困时用针"实现。
+- 状态栏右侧 7 格（`baseItemIcon0..6`、`itemNum0..6`）是对战中持有道具的 7 个槽位，由 `0x005DAC82` 设置图标：动作 41 用 `res/uiRes/icon/item/item21.img`，42 用 `item23.img`，其余用 `item<动作编号>.img`；编号在 20000～23000 的从房间带入的道具也放在这 7 格里。
+- 场景对象编号为 `类型 << 24 | 编号 << 8 | 动作`（`0x00427050` 取类型，`0x00447750` 把类型映射为 player、bomb、item、mapElem、flame、misc、cap……目录；动作 1 为 stand，2 为 trigger，与 `object/player/player.py` 的 actStand、actTrigger 一致）。
+- 结算画面素材（`object/misc/misc<N>_stand.img`）：295/296/297 为 Draw/Lose/Win 卡片，300 为成绩表底图（胜负、昵称、杀敌数、救人数、等级、特殊荣誉，8 行），311/312/313 为大号"胜利/失败/平局"，314/315/316 为小号，302 救人、303 杀敌、306 奖励、307 得分为数据框标签，301/308/309/310 为数字字体。卡片和表格的摆放位置是自定的，未对照原版。
+- 人物部件绘制顺序（由后到前）：npack、foot、leg、body、cloth、head、face、hair；方向帧 0 右、1 上、2 左、3 下。普通图即红队配色；其他队伍用 `_m` 灰度图按 `colorlist.dat` 的色相染色，保持 HLS 亮度。

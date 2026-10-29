@@ -1,0 +1,1245 @@
+package main
+
+// Online mode: one live competitive match against the server.
+//
+// The engine simulates every participant as a human actor. The local player
+// is driven by the client's key actions; everyone else follows the scene
+// facts that arrive on the QQTPPP UDP channel (PLAYER_MOVE paths, bubble
+// placements, hit and death reports). The sidecar owns that UDP socket. TCP
+// stays with the Python client, which forwards the in-match notifications it
+// receives and sends the reliable REQUEST_PLAY (0x0083) mirrors returned in
+// tcp_out.
+//
+// When the local player is the arbitrator (the room owner, which is always
+// the case in a room filled with server AIs), the local engine decides every
+// shared outcome and publishes it: explosions (0x0FA4), pickups (0x0FAD),
+// kills (0x0FA9), rescues (0x0FAB) and the bird's item supply (0x0FAE). The
+// server's AIs depend on these notifications and on the reliable mirror of
+// their own hit reports (0x0FA5).
+//
+// See client/native/docs/match-protocol.md for the wire formats.
+
+import (
+	"encoding/hex"
+	"errors"
+	"fmt"
+	"io"
+	"net"
+	"os"
+	"sort"
+	"strconv"
+	"time"
+
+	"qqtang/internal/game/battleengine"
+	"qqtang/internal/game/mapdata"
+	"qqtang/internal/protocol/game"
+)
+
+const (
+	requestPlayCommand = 0x0083
+	// Native clients repeat the room-peer rendezvous about every 3 s while
+	// negotiating; the server's mode-0 lease is 15 s.
+	rendezvousInterval = 3 * time.Second
+	presenceInterval   = time.Second
+	movementHeartbeat  = 150
+	// Trapped players die when their bubble pops. The server uses 6 s for its
+	// AIs; native clients time it themselves.
+	defaultTrapMS = 6000
+	// Default bubble appearance (PLAYER_USE_BOMB.BombID) and its GameTime
+	// copied from a native capture, as the server's AIs send them.
+	defaultBombAppearance = 0xF20C7FFF
+	bombGameTime          = 0xFFFF0065
+	maxCatchUpTicks       = 50
+	tickMS                = 20 // the live server's world tick
+)
+
+type onlineInit struct {
+	Begin         string            `json:"begin"` // hex GameBegin 0x0089 payload
+	LocalID       uint16            `json:"local_id"`
+	LocalUIN      uint32            `json:"local_uin"`
+	ServerHost    string            `json:"server_host"`
+	ServerUDPPort int               `json:"server_udp_port"`
+	UINs          map[string]uint32 `json:"uins"` // by player ID
+	FreeRule      bool              `json:"free_rule"`
+	TrapMS        uint32            `json:"trap_ms"`
+}
+
+type tcpPacket struct {
+	Command uint16 `json:"cmd"`
+	Payload string `json:"payload"` // hex
+}
+
+type beginView struct {
+	GameID     uint32   `json:"game_id"`
+	MapID      uint32   `json:"map_id"`
+	Arbitrator uint16   `json:"arbitrator"`
+	Players    []player `json:"players"`
+}
+
+type netView struct {
+	Presence   bool   `json:"presence"`
+	PeersReady int    `json:"peers_ready"`
+	Peers      int    `json:"peers"`
+	Arbitrator uint16 `json:"arbitrator"`
+	Received   int    `json:"received"`
+}
+
+// wireBomb is how peers name a bubble: owner, placement time and cell.
+type wireBomb struct {
+	owner    uint16
+	placedAt uint32
+	cell     battleengine.Cell
+}
+
+type movementProjection struct {
+	initialized      bool
+	sequence         uint16
+	moving           bool
+	direction        battleengine.Direction
+	speed            byte
+	path             battleengine.NativeMovementProjection
+	lastSentAt       uint32
+	lastSentPosition battleengine.Position
+}
+
+type onlineMatch struct {
+	runtime    *battleengine.Runtime
+	engine     *battleengine.Engine
+	begin      game.GameBeginData
+	local      uint16
+	localUIN   uint32
+	arbitrator uint16
+	uins       map[uint16]uint32
+	trapMS     uint32
+	started    time.Time
+	log        io.Writer
+
+	conn            *net.UDPConn
+	inbound         chan []byte
+	controlNumber   uint32
+	multicastNumber uint32
+	presence        bool
+	lastPresence    time.Time
+	lastRendezvous  time.Time
+	peerReady       map[uint16]bool
+	lastNumber      map[uint16]uint32
+	received        int
+
+	// A bubble key press waits here for the next engine tick; the client
+	// steps every frame but the engine only on 20 ms boundaries.
+	bombPressed bool
+	// Held-item uses requested over TCP and not yet confirmed, by action:
+	// the scene clock of the request.
+	useRequested map[uint8]uint32
+
+	messageSeq uint32
+	outbound   []game.BattleMessageData
+	tcpOut     []tcpPacket
+
+	bombs     map[uint32]wireBomb // by engine bomb ID
+	movement  movementProjection
+	trappedAt uint32 // local player, engine clock; 0 when free
+	// Explosion and pickup bookkeeping for arbitration.
+	collected map[pickupKey]uint16 // by scene ID and cell: who collected it
+	// Banana/glue field objects (actions 42/43) that already caught someone.
+	fieldContacts map[fieldContactKey]bool
+	// Item uses (0x0FB0) already applied, by player, time and item.
+	itemUses map[[3]uint32]bool
+}
+
+type fieldContactKey struct {
+	player uint16
+	action uint8
+	cell   battleengine.Cell
+}
+
+type pickupKey struct {
+	scene uint32
+	cell  battleengine.Cell
+}
+
+func newOnlineMatch(init command) (*onlineMatch, beginView, error) {
+	options := init.Online
+	payload, err := hex.DecodeString(options.Begin)
+	if err != nil {
+		return nil, beginView{}, fmt.Errorf("game begin: %w", err)
+	}
+	begin, err := game.ParseLengthPrefixedGameBeginDataNetwork(payload)
+	if err != nil {
+		return nil, beginView{}, fmt.Errorf("game begin: %w", err)
+	}
+	catalog, err := mapdata.LoadCatalog(init.ClientRoot)
+	if err != nil {
+		return nil, beginView{}, err
+	}
+	entry, ok := catalog.CompetitiveMap(begin.MapID)
+	if !ok {
+		return nil, beginView{}, fmt.Errorf("map %d is not a competitive map", begin.MapID)
+	}
+	view := beginView{GameID: begin.GameID, MapID: begin.MapID, Arbitrator: begin.ArbitratorPlayerID}
+	participants := make([]battleengine.Participant, 0, len(begin.Players))
+	uins := make(map[uint16]uint32, len(begin.Players))
+	for _, info := range begin.Players {
+		participant, err := battleengine.ParticipantFromNativeRole(info.PlayerID, uint16(info.RoleID), info.TeamID, battleengine.ParticipantHuman)
+		if err != nil {
+			return nil, beginView{}, err
+		}
+		participants = append(participants, participant)
+		view.Players = append(view.Players, player{ID: info.PlayerID, Role: uint16(info.RoleID), Team: info.TeamID})
+		uin := options.UINs[strconv.Itoa(int(info.PlayerID))]
+		if uin == 0 {
+			// Server AIs are announced as UIN 1 900 000 000 + PlayerID.
+			uin = 1_900_000_000 + uint32(info.PlayerID)
+		}
+		uins[info.PlayerID] = uin
+	}
+	if _, present := uins[options.LocalID]; !present {
+		return nil, beginView{}, fmt.Errorf("local player %d is not in the match", options.LocalID)
+	}
+	uins[options.LocalID] = options.LocalUIN
+	config, err := battleengine.ConfigFromCompetitiveMap(entry, battleengine.CompetitiveMapConfigOptions{
+		SimulationSeed: uint64(begin.SpawnSeed)<<32 | uint64(begin.ItemSeed),
+		SpawnSeed:      begin.SpawnSeed, ItemSeed: begin.ItemSeed,
+		SpawnMode:            battleengine.NativeSpawnModeForMap(entry, options.FreeRule),
+		Rules:                battleengine.Rules{TickMS: tickMS, LocalHitPlayerID: options.LocalID},
+		Participants:         participants,
+		RecordedWallItems:    wallItems(begin.NewItems),
+		RecordedDelayedItems: wallItems(begin.Items),
+		UseRecordedWallItems: true,
+	})
+	if err != nil {
+		return nil, beginView{}, err
+	}
+	engine, err := battleengine.New(config)
+	if err != nil {
+		return nil, beginView{}, err
+	}
+	runtime, err := battleengine.NewRuntime(engine, nil)
+	if err != nil {
+		return nil, beginView{}, err
+	}
+	address, err := net.ResolveUDPAddr("udp4", net.JoinHostPort(options.ServerHost, strconv.Itoa(options.ServerUDPPort)))
+	if err != nil {
+		return nil, beginView{}, err
+	}
+	conn, err := net.DialUDP("udp4", nil, address)
+	if err != nil {
+		return nil, beginView{}, err
+	}
+	trapMS := options.TrapMS
+	if trapMS == 0 {
+		trapMS = defaultTrapMS
+	}
+	match := &onlineMatch{
+		runtime: runtime, engine: engine, begin: begin,
+		local: options.LocalID, localUIN: options.LocalUIN, arbitrator: begin.ArbitratorPlayerID,
+		uins: uins, trapMS: trapMS, started: time.Now(), log: os.Stderr,
+		conn: conn, inbound: make(chan []byte, 256),
+		peerReady: map[uint16]bool{}, lastNumber: map[uint16]uint32{},
+		bombs: map[uint32]wireBomb{}, collected: map[pickupKey]uint16{},
+		fieldContacts: map[fieldContactKey]bool{}, itemUses: map[[3]uint32]bool{}, useRequested: map[uint8]uint32{},
+	}
+	go match.receive()
+	match.logf("game %d map %d: local %d, arbitrator %d, %d players", begin.GameID, begin.MapID, match.local, match.arbitrator, len(begin.Players))
+	return match, view, nil
+}
+
+func wallItems(items []game.GameItemType) []mapdata.CompetitiveWallItem {
+	result := make([]mapdata.CompetitiveWallItem, 0, len(items))
+	for _, item := range items {
+		if item.ItemID != 0 && item.Quantity > 0 {
+			result = append(result, mapdata.CompetitiveWallItem{SceneID: item.ItemID, Quantity: item.Quantity})
+		}
+	}
+	return result
+}
+
+func (match *onlineMatch) logf(format string, args ...any) {
+	fmt.Fprintf(match.log, "[sidecar] "+format+"\n", args...)
+}
+
+func (match *onlineMatch) close() {
+	_ = match.conn.Close()
+}
+
+func (match *onlineMatch) receive() {
+	buffer := make([]byte, 2048)
+	for {
+		size, err := match.conn.Read(buffer)
+		if errors.Is(err, net.ErrClosed) {
+			return
+		}
+		if err != nil {
+			// A connected UDP socket reports ICMP port-unreachable as a read
+			// error; the server may simply not be listening yet.
+			continue
+		}
+		match.inbound <- append([]byte(nil), buffer[:size]...)
+	}
+}
+
+// sceneClock is the scene time the engine should have reached: the 3 s
+// Ready/Go countdown runs from GAME_BEGIN, then fixed 20 ms ticks.
+func (match *onlineMatch) sceneClock() uint32 {
+	elapsed := uint32(time.Since(match.started) / time.Millisecond)
+	if elapsed < battleengine.NativeRoundStartClockMS {
+		return battleengine.NativeRoundStartClockMS
+	}
+	return battleengine.NativeRoundStartClockMS + (elapsed-battleengine.NativeRoundStartClockMS)/tickMS*tickMS
+}
+
+func (match *onlineMatch) clientTag() uint32 {
+	return uint32(time.Since(match.started) / time.Millisecond)
+}
+
+// step handles the TCP notifications forwarded by the client, drains the
+// UDP socket, advances the engine to the wall clock and publishes the local
+// facts. It returns the engine events of this call.
+func (match *onlineMatch) step(step command) ([]battleengine.Event, error) {
+	for _, packet := range step.TCP {
+		match.handleTCP(packet)
+	}
+	match.negotiate()
+	var events []battleengine.Event
+	events = append(events, match.drain()...)
+	// A held item is not used directly: its use is a TCP request (0x0FAF)
+	// and takes effect when the server's 0x0FB0 comes back (handleTCP).
+	local := battleengine.Action{PlayerID: match.local}
+	for _, entry := range step.Actions {
+		if entry.ID == match.local {
+			local.Move = battleengine.Direction(entry.Move)
+			match.bombPressed = match.bombPressed || entry.Bomb
+			if entry.Use != 0 {
+				match.requestItemUse(entry.Use)
+			}
+		}
+	}
+	target := match.sceneClock()
+	if target <= battleengine.NativeRoundStartClockMS {
+		match.bombPressed = false // Ready/Go: no control yet
+	}
+	for ticks := 0; ticks < maxCatchUpTicks && match.engine.ElapsedMS() < target && !match.engine.Terminal().Ended; ticks++ {
+		before := match.runtime.EngineSnapshot()
+		action := local
+		action.PlaceBomb, match.bombPressed = match.bombPressed, false
+		var actions []battleengine.Action
+		if action.PlayerID != 0 && match.localActive() {
+			actions = []battleengine.Action{action}
+		}
+		tickEvents, err := match.runtime.Step(actions)
+		if err != nil {
+			return events, err
+		}
+		after := match.runtime.EngineSnapshot()
+		match.publishMovement(before, after, action)
+		tickEvents = append(tickEvents, match.expireLocalTrap()...)
+		match.publishEvents(after, tickEvents)
+		events = append(events, tickEvents...)
+	}
+	match.flush()
+	return events, nil
+}
+
+func (match *onlineMatch) localActive() bool {
+	for _, actor := range match.engine.Actors() {
+		if actor.PlayerID == match.local {
+			return actor.State == battleengine.ActorActive
+		}
+	}
+	return false
+}
+
+func (match *onlineMatch) netView() *netView {
+	ready := 0
+	for _, ok := range match.peerReady {
+		if ok {
+			ready++
+		}
+	}
+	return &netView{Presence: match.presence, PeersReady: ready, Peers: len(match.uins) - 1, Arbitrator: match.arbitrator, Received: match.received}
+}
+
+func (match *onlineMatch) takeTCP() []tcpPacket {
+	out := match.tcpOut
+	match.tcpOut = nil
+	return out
+}
+
+// UDP control ---------------------------------------------------------------
+
+func (match *onlineMatch) localEndpoint() game.LegacyUDPEndpoint {
+	var endpoint game.LegacyUDPEndpoint
+	if address, ok := match.conn.LocalAddr().(*net.UDPAddr); ok {
+		copy(endpoint.IPv4[:], address.IP.To4())
+		endpoint.Port = uint16(address.Port)
+	}
+	return endpoint
+}
+
+func (match *onlineMatch) header(kind game.LegacyUDPMessageType, number uint32) game.LegacyUDPControlHeader {
+	return game.LegacyUDPControlHeader{PacketNumber: number, PlayerID: match.local, UIN: match.localUIN, Type: kind}
+}
+
+func (match *onlineMatch) sendControl(packet game.LegacyUDPControlPacket) {
+	data, err := packet.Encode()
+	if err != nil {
+		match.logf("encode UDP type %d: %v", packet.Header.Type, err)
+		return
+	}
+	_, _ = match.conn.Write(data)
+}
+
+// negotiate registers the presence endpoint (Type 1) and repeats a room-peer
+// rendezvous (Type 3) with every other participant until it answers. For
+// server AIs the server answers the rendezvous itself; their policies stay
+// frozen until every human has completed it.
+func (match *onlineMatch) negotiate() {
+	now := time.Now()
+	if !match.presence && now.Sub(match.lastPresence) >= presenceInterval {
+		match.lastPresence = now
+		match.controlNumber++
+		endpoint := match.localEndpoint()
+		match.sendControl(game.LegacyUDPControlPacket{Header: match.header(game.LegacyUDPPresenceType, match.controlNumber), Presence: &endpoint})
+		return
+	}
+	if !match.presence || now.Sub(match.lastRendezvous) < rendezvousInterval {
+		return
+	}
+	match.lastRendezvous = now
+	endpoint := match.localEndpoint()
+	for _, playerID := range match.peerIDs() {
+		if match.peerReady[playerID] {
+			continue
+		}
+		match.controlNumber++
+		match.sendControl(game.LegacyUDPControlPacket{
+			Header:   match.header(game.LegacyUDPRoomPeerType, match.controlNumber),
+			RoomPeer: &game.LegacyUDPRoomPeerPayload{TargetPlayerID: playerID, TargetUIN: match.uins[playerID], Endpoint: endpoint},
+		})
+	}
+}
+
+func (match *onlineMatch) peerIDs() []uint16 {
+	ids := make([]uint16, 0, len(match.uins))
+	for playerID := range match.uins {
+		if playerID != match.local {
+			ids = append(ids, playerID)
+		}
+	}
+	sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
+	return ids
+}
+
+func (match *onlineMatch) drain() []battleengine.Event {
+	var events []battleengine.Event
+	for {
+		select {
+		case data := <-match.inbound:
+			events = append(events, match.handleDatagram(data)...)
+		default:
+			return events
+		}
+	}
+}
+
+func (match *onlineMatch) handleDatagram(data []byte) []battleengine.Event {
+	packet, err := game.DecodeLegacyUDPControlPacket(data)
+	if err != nil {
+		return nil
+	}
+	switch {
+	case packet.Presence != nil:
+		if !match.presence {
+			match.logf("UDP presence registered")
+		}
+		match.presence = true
+		match.lastRendezvous = time.Time{}
+	case packet.RoomPeer != nil:
+		if !match.peerReady[packet.Header.PlayerID] {
+			match.logf("UDP peer %d ready", packet.Header.PlayerID)
+		}
+		match.peerReady[packet.Header.PlayerID] = true
+	case packet.Multicast != nil:
+		sender := packet.Header.PlayerID
+		if last, seen := match.lastNumber[sender]; seen && int32(packet.Header.PacketNumber-last) <= 0 {
+			return nil
+		}
+		match.lastNumber[sender] = packet.Header.PacketNumber
+		batch, err := game.DecodeQQTPPPGameplayBatch(packet.Multicast.Data)
+		if err != nil || batch.GameID != match.begin.GameID {
+			return nil
+		}
+		var events []battleengine.Event
+		for _, entry := range batch.Entries {
+			if entry.Package.PlayerID != sender {
+				continue
+			}
+			for _, message := range entry.Package.Messages {
+				match.received++
+				applied := match.applyRemote(sender, message)
+				match.forgetPickups(applied)
+				events = append(events, applied...)
+			}
+		}
+		return events
+	}
+	return nil
+}
+
+// Remote scene facts --------------------------------------------------------
+
+func (match *onlineMatch) applyRemote(sender uint16, message game.BattleMessageData) []battleengine.Event {
+	if message.DataID > 0xffff {
+		return nil
+	}
+	schema := uint16(message.DataID)
+	event := game.GameEvent{Schema: schema, Body: message.Data}
+	switch schema {
+	case game.PlayerMoveSchema:
+		movement, err := game.ParsePlayerMove(message.Data)
+		if err != nil {
+			return nil
+		}
+		for _, entry := range movement.Entries {
+			if entry.PlayerID != sender {
+				continue
+			}
+			move := entry.Move
+			_ = match.runtime.ReconcileHumanMovementPath(sender, battleengine.NativeHumanMovement{
+				Sequence: move.Sequence, TimeMS: move.TimeStamp,
+				Current:   battleengine.Position{X: int32(move.CurrentPosX), Y: int32(move.CurrentPosY)},
+				Corner:    battleengine.Position{X: int32(move.CornerPosX), Y: int32(move.CornerPosY)},
+				End:       battleengine.Position{X: int32(move.EndPosX), Y: int32(move.EndPosY)},
+				Direction: battleDirection(move.WalkAndDirection), Speed: move.Speed,
+				Moving: move.WalkAndDirection&0x10 != 0, Forced: move.WalkAndDirection&0x20 != 0,
+			})
+		}
+	case game.PlayerUseBomb, game.NotifyPlayerUseBomb:
+		placed, err := game.ParsePlayerUseBombEvent(game.GameEvent{Schema: game.PlayerUseBomb, Body: message.Data})
+		if err != nil || placed.PlayerID != sender {
+			return nil
+		}
+		cell := battleengine.Cell{Row: int16(placed.Row), Col: int16(placed.Column)}
+		placedAt := max(placed.ClientTime, battleengine.NativeRoundStartClockMS)
+		accepted, err := match.runtime.AcceptHumanBombPlacement(sender, cell, placed.Power, placed.Property, placedAt)
+		if err != nil {
+			match.logf("bomb from %d rejected: %v", sender, err)
+			return nil
+		}
+		match.bombs[accepted.BombID] = wireBomb{owner: sender, placedAt: placed.ClientTime, cell: cell}
+		return []battleengine.Event{accepted}
+	case game.PlayerBeExploded:
+		hit, err := game.ParsePlayerExplodedEvent(event)
+		if err != nil || hit.PlayerID != sender {
+			return nil
+		}
+		accepted, changed, err := match.runtime.AcceptNativeActorHitFrom(hit.PlayerID, 0, battleengine.Position{X: int32(hit.PosX), Y: int32(hit.PosY)}, hit.IsAvatar)
+		if err != nil {
+			match.logf("hit of %d rejected: %v", hit.PlayerID, err)
+		}
+		if match.isArbitrator() {
+			// The server commits a server AI's hit only from the arbitrator's
+			// reliable copy of its exact report.
+			match.mirror(schema, message.Data)
+		}
+		if changed {
+			return []battleengine.Event{accepted}
+		}
+	case game.NotifyPlayerDieEvent:
+		death, err := game.ParsePlayerDeathEvent(event)
+		if err != nil || (death.PlayerID != sender && sender != match.arbitrator) {
+			return nil
+		}
+		events, err := match.runtime.AcceptNativeElimination(death.PlayerID, 0, pickupsFromItems(death.Items))
+		if err != nil {
+			match.logf("death of %d rejected: %v", death.PlayerID, err)
+		}
+		return events
+	case game.RequestGetItem:
+		if match.isArbitrator() {
+			return match.arbitratePickup(event)
+		}
+	case game.RequestKillPlayer, game.RequestSavePlayer:
+		if match.isArbitrator() {
+			return match.arbitrateContact(event)
+		}
+	case game.NotifyPlayerKilled:
+		killed, err := game.ParsePlayerKilledEvent(event)
+		if err != nil || sender != match.arbitrator {
+			return nil
+		}
+		events, _ := match.runtime.AcceptNativeElimination(killed.DestinationPlayerID, killed.PlayerID, pickupsFromItems(killed.Items))
+		return events
+	case game.NotifyPlayerSaved:
+		saved, err := game.ParsePlayerInteractionEvent(event)
+		if err != nil || sender != match.arbitrator {
+			return nil
+		}
+		accepted, changed, _ := match.runtime.AcceptNativeRescue(saved.PlayerID, saved.DestinationPlayerID, battleengine.Position{X: int32(saved.PosX), Y: int32(saved.PosY)})
+		if changed {
+			return []battleengine.Event{accepted}
+		}
+	case game.NotifyPlayerGetItem:
+		item, err := game.ParsePlayerItemEvent(event)
+		if err != nil || sender != match.arbitrator || item.PlayerID == 0xffff {
+			return nil
+		}
+		accepted, err := match.runtime.AcceptNativePickup(item.PlayerID, item.ItemID, battleengine.Position{X: int32(item.PosX), Y: int32(item.PosY)})
+		if err == nil {
+			return []battleengine.Event{accepted}
+		}
+	case game.NotifyPlayerUseItem:
+		// The server publishes its AIs' item uses on the scene channel; human
+		// uses arrive as TCP notifications (handleTCP).
+		if len(message.Data) >= 2 && uint16(message.Data[0])<<8|uint16(message.Data[1]) == sender {
+			match.applyItemUse(message.Data)
+		}
+	case game.NotifyBombExplode:
+		if sender != match.arbitrator || match.isArbitrator() {
+			return nil
+		}
+		return match.applyExplosion(event)
+	}
+	return nil
+}
+
+func (match *onlineMatch) applyExplosion(event game.GameEvent) []battleengine.Event {
+	explosion, err := game.ParseBombExplodeEvent(event)
+	if err != nil {
+		return nil
+	}
+	bombs := make([]battleengine.VerifiedExplodedBomb, 0, len(explosion.Bombs))
+	for _, bomb := range explosion.Bombs {
+		cell := battleengine.Cell{Row: int16(bomb.Row), Col: int16(bomb.Column)}
+		var bombID uint32
+		for id, known := range match.bombs {
+			if known.owner == bomb.PlayerID && known.placedAt == bomb.ClientTime && known.cell == cell {
+				bombID = id
+			}
+		}
+		bombs = append(bombs, battleengine.VerifiedExplodedBomb{
+			BombID: bombID, OwnerID: bomb.PlayerID, Cell: cell,
+			BlastRowMin: int16(bomb.RowMin), BlastRowMax: int16(bomb.RowMax), BlastColMin: int16(bomb.ColumnMin), BlastColMax: int16(bomb.ColumnMax),
+		})
+	}
+	hits := make([]battleengine.VerifiedMapElementHit, 0, len(explosion.MapElems))
+	for _, element := range explosion.MapElems {
+		hits = append(hits, battleengine.VerifiedMapElementHit{MapElementID: uint32(element.MapElementID), Cell: battleengine.Cell{Row: int16(element.Row), Col: int16(element.Column)}})
+	}
+	items := make([]battleengine.Pickup, 0, len(explosion.Items))
+	for _, item := range explosion.Items {
+		items = append(items, battleengine.Pickup{SceneID: item.ItemID, Cell: battleengine.Cell{Row: int16(item.Row), Col: int16(item.Column)}, State: battleengine.PickupAvailable})
+	}
+	events, err := match.runtime.AcceptNativeBombExplosionAt(explosion.ClientTime, bombs, hits, items)
+	if err != nil {
+		match.logf("explosion rejected: %v", err)
+	}
+	return events
+}
+
+// forgetPickups drops the collection record of a cell when a new item
+// appears there (revealed, dropped by the bird or by a dying player).
+func (match *onlineMatch) forgetPickups(events []battleengine.Event) {
+	for _, event := range events {
+		switch event.Kind {
+		case battleengine.EventPickupRevealed, battleengine.EventPickupDispatched, battleengine.EventPickupDropped:
+			delete(match.collected, pickupKey{scene: event.SceneID, cell: event.Cell})
+		}
+	}
+}
+
+func (match *onlineMatch) isArbitrator() bool {
+	return match.arbitrator == match.local
+}
+
+// arbitratePickup answers a 0x0FAC request. The local engine collects items
+// (and springs bananas and glue) on contact and announces that at once
+// (publishEvents), so a request for something the engine already gave to the
+// same player needs no answer. Otherwise the item is granted if it is still
+// there and refused (PlayerID 0xffff) if not.
+func (match *onlineMatch) arbitratePickup(event game.GameEvent) []battleengine.Event {
+	request, err := game.ParsePlayerItemEvent(event)
+	if err != nil {
+		return nil
+	}
+	position := battleengine.Position{X: int32(request.PosX), Y: int32(request.PosY)}
+	key := pickupKey{scene: request.ItemID, cell: position.Cell()}
+	answer := request
+	var events []battleengine.Event
+	if request.ItemID == 42 || request.ItemID == 43 {
+		// Stepping on a banana or glue placed with an item.
+		contact := fieldContactKey{player: request.PlayerID, action: uint8(request.ItemID), cell: position.Cell()}
+		if match.fieldContacts[contact] {
+			return nil
+		}
+		accepted, err := match.runtime.AcceptNativeFieldObjectContact(request.PlayerID, uint8(request.ItemID), position)
+		if err != nil {
+			answer.PlayerID = 0xffff
+			match.logf("field object %d at %d,%d for %d refused: %v", request.ItemID, contact.cell.Row, contact.cell.Col, request.PlayerID, err)
+		} else {
+			match.fieldContacts[contact] = true
+			events = accepted
+		}
+		match.publishItem(answer)
+		return events
+	}
+	if owner, done := match.collected[key]; done {
+		if owner == request.PlayerID {
+			return nil
+		}
+		answer.PlayerID = 0xffff
+		match.logf("pickup %d at %d,%d by %d refused: taken by %d", request.ItemID, key.cell.Row, key.cell.Col, request.PlayerID, owner)
+	} else if accepted, err := match.runtime.AcceptNativePickup(request.PlayerID, request.ItemID, position); err == nil {
+		match.collected[key] = request.PlayerID
+		events = append(events, accepted)
+	} else {
+		answer.PlayerID = 0xffff
+		match.logf("pickup %d at %d,%d by %d refused at %d: %v", request.ItemID, key.cell.Row, key.cell.Col, request.PlayerID, match.engine.ElapsedMS(), err)
+	}
+	match.publishItem(answer)
+	return events
+}
+
+// arbitrateContact answers a kill (0x0FA8) or rescue (0x0FAA) request when
+// the local engine has not resolved that contact on its own yet.
+func (match *onlineMatch) arbitrateContact(event game.GameEvent) []battleengine.Event {
+	request, err := game.ParsePlayerInteractionEvent(event)
+	if err != nil {
+		return nil
+	}
+	target, ok := actorByID(match.engine.Actors(), request.DestinationPlayerID)
+	if !ok || target.State != battleengine.ActorTrapped {
+		return nil
+	}
+	position := battleengine.Position{X: int32(request.PosX), Y: int32(request.PosY)}
+	var events []battleengine.Event
+	if event.Schema == game.RequestSavePlayer {
+		accepted, changed, err := match.runtime.AcceptNativeRescue(request.PlayerID, request.DestinationPlayerID, position)
+		if err != nil || !changed {
+			return nil
+		}
+		events = []battleengine.Event{accepted}
+	} else if events, err = match.runtime.AcceptNativeElimination(request.DestinationPlayerID, request.PlayerID, nil); err != nil {
+		return nil
+	}
+	match.publishEvents(match.engine, events)
+	return events
+}
+
+// TCP notifications ---------------------------------------------------------
+
+const (
+	notifyUDPOKCommand     = 0x0087
+	gameEventNotifyCommand = 0x0084
+)
+
+func (match *onlineMatch) handleTCP(packet tcpPacket) {
+	payload, err := hex.DecodeString(packet.Payload)
+	if err != nil {
+		return
+	}
+	switch packet.Command {
+	case gameEventNotifyCommand:
+		notify, err := game.ParseNotifyGameEventPayload(payload)
+		if err != nil {
+			return
+		}
+		switch notify.Schema {
+		case game.NotifyChangeArbitrator:
+			if len(notify.Body) >= 2 {
+				match.arbitrator = uint16(notify.Body[0])<<8 | uint16(notify.Body[1])
+				match.logf("arbitrator is now %d", match.arbitrator)
+			}
+		case game.NotifyPlayerUseItem:
+			match.applyItemUse(notify.Body)
+		}
+	}
+}
+
+// applyItemUse applies another player's held-item use (banana, glue, dart,
+// ...), which the server validates and broadcasts as 0x0FB0.
+func (match *onlineMatch) applyItemUse(body []byte) {
+	use, err := game.ParseWorldUseItemEvent(game.GameEvent{Schema: game.NotifyPlayerUseItem, Body: body})
+	if err != nil || use.ItemID > 0xff {
+		return
+	}
+	if use.PlayerID == match.local {
+		delete(match.useRequested, uint8(use.ItemID))
+	}
+	key := [3]uint32{uint32(use.PlayerID), use.ClientTime, use.ItemID}
+	if match.itemUses[key] {
+		return
+	}
+	match.itemUses[key] = true
+	var targetBombID uint32
+	if (use.ItemID == 44 || use.ItemID == 46) && use.Flag4 != 0 && use.Flag2 <= 0xffff {
+		// Flag1 packs direction, power, row and column of the targeted bubble;
+		// Flag2 and Flag3 are its owner and placement time.
+		cell := battleengine.Cell{Row: int16((use.Flag1 >> 8) & 0xff), Col: int16(use.Flag1 & 0xff)}
+		for id, known := range match.bombs {
+			if known.owner == uint16(use.Flag2) && known.placedAt == use.Flag3 && known.cell == cell {
+				targetBombID = id
+			}
+		}
+	}
+	events, err := match.runtime.AcceptNativeBattleAction(use.PlayerID, byte(use.ItemID), battleengine.Position{X: int32(use.PosX), Y: int32(use.PosY)}, targetBombID)
+	if err != nil {
+		match.logf("item %d used by %d rejected: %v", use.ItemID, use.PlayerID, err)
+		return
+	}
+	match.publishEvents(match.engine, events)
+}
+
+// requestItemUse asks the server to use one of the local player's held
+// items. Throws (44/46) carry their target: direction, bubble power, row and
+// column in Flag1, and the targeted bubble's owner and placement time.
+func (match *onlineMatch) requestItemUse(action uint8) {
+	actor, ok := actorByID(match.engine.Actors(), match.local)
+	// The needle (63) only frees a trapped player; nothing else works
+	// from inside a bubble.
+	if !ok || actor.State == battleengine.ActorEliminated || (actor.State == battleengine.ActorTrapped) != (action == 63) {
+		return
+	}
+	held := false
+	for _, slot := range actor.HeldActions {
+		held = held || (slot.ActionID == action && slot.Count > 0)
+	}
+	now := match.engine.ElapsedMS()
+	if requested, pending := match.useRequested[action]; !held || pending && now-requested < 1000 {
+		return
+	}
+	use := game.WorldUseItemEvent{
+		PlayerID: match.local, ClientTime: now, ItemID: uint32(action),
+		PosX: uint16(actor.Position.X), PosY: uint16(actor.Position.Y),
+	}
+	if action == 44 || action == 46 {
+		cell, bombID, reachable := match.engine.NativeActionProjectileTarget(match.local)
+		if !reachable {
+			return
+		}
+		use.Flag1 = uint32(nativeWalkDirection(actor.Facing))<<24 | uint32(uint16(cell.Row)&0xff)<<8 | uint32(uint16(cell.Col)&0xff)
+		use.Flag2 = ^uint32(0)
+		if bomb, found := bombByID(match.engine.Bombs(), bombID); found && bombID != 0 {
+			known := match.bombs[bombID]
+			use.Flag1 |= uint32(bomb.Power+1) << 16
+			use.Flag2, use.Flag3, use.Flag4 = uint32(known.owner), known.placedAt, 1
+		}
+	}
+	body, err := use.MarshalNetworkBinary()
+	if err != nil {
+		return
+	}
+	match.useRequested[action] = now
+	match.mirror(game.RequestUseItem, body)
+}
+
+// Publishing ----------------------------------------------------------------
+
+// queue adds one local scene message to the next Type-2 batch.
+func (match *onlineMatch) queue(schema uint16, timeMS, gameTime uint32, body []byte) {
+	match.messageSeq++
+	match.outbound = append(match.outbound, game.BattleMessageData{
+		Time: timeMS, DataID: uint32(schema), Sequence: match.messageSeq, Data: body, GameTime: gameTime,
+	})
+}
+
+// mirror sends the reliable REQUEST_PLAY copy of a scene message.
+func (match *onlineMatch) mirror(schema uint16, body []byte) {
+	payload, err := game.MarshalGameEventPayload(match.localUIN, match.clientTag(), schema, body)
+	if err != nil {
+		match.logf("mirror 0x%04X: %v", schema, err)
+		return
+	}
+	match.tcpOut = append(match.tcpOut, tcpPacket{Command: requestPlayCommand, Payload: hex.EncodeToString(payload)})
+}
+
+// flush sends the queued messages as one Type-2 multicast to every other
+// participant, one 0x0FBD package per message.
+func (match *onlineMatch) flush() {
+	if len(match.outbound) == 0 {
+		return
+	}
+	messages := match.outbound
+	match.outbound = nil
+	if !match.presence {
+		return
+	}
+	targets := make([]game.LegacyUDPMulticastTarget, 0, len(match.uins))
+	for _, playerID := range match.peerIDs() {
+		targets = append(targets, game.LegacyUDPMulticastTarget{PlayerID: playerID, UIN: match.uins[playerID]})
+	}
+	if len(targets) == 0 {
+		return
+	}
+	for start := 0; start < len(messages); start += 16 {
+		chunk := messages[start:min(start+16, len(messages))]
+		batch := game.GameplayBatch{GameID: match.begin.GameID}
+		for _, message := range chunk {
+			batch.Entries = append(batch.Entries, game.GameplayBatchEntry{Index: uint16(message.Sequence), Package: game.GameplayDataPackage{
+				PlayerID: match.local, Time: message.Time, GameID: match.begin.GameID,
+				MessageIndexes: []uint32{message.Sequence}, Messages: []game.BattleMessageData{message},
+			}})
+		}
+		data, err := game.EncodeQQTPPPGameplayBatch(batch)
+		if err != nil {
+			match.logf("encode batch: %v", err)
+			continue
+		}
+		match.multicastNumber++
+		match.sendControl(game.LegacyUDPControlPacket{
+			Header:    match.header(game.LegacyUDPMulticastType, match.multicastNumber),
+			Multicast: &game.LegacyUDPMulticastPayload{Targets: targets, Data: data},
+		})
+	}
+}
+
+func (match *onlineMatch) publishItem(item game.PlayerItemEvent) {
+	body, err := item.MarshalNetworkBinary()
+	if err != nil {
+		return
+	}
+	now := match.engine.ElapsedMS()
+	match.queue(game.NotifyPlayerGetItem, now, now, body)
+	if item.PlayerID != 0xffff {
+		match.mirror(game.NotifyPlayerGetItem, body)
+	}
+}
+
+// expireLocalTrap pops the local player's bubble after trapMS: the player
+// dies (PLAYER_DIE), which is what lets the server end the round.
+func (match *onlineMatch) expireLocalTrap() []battleengine.Event {
+	actor, ok := actorByID(match.engine.Actors(), match.local)
+	if !ok || actor.State != battleengine.ActorTrapped {
+		match.trappedAt = 0
+		return nil
+	}
+	now := match.engine.ElapsedMS()
+	if match.trappedAt == 0 {
+		match.trappedAt = now
+	}
+	if now-match.trappedAt < match.trapMS || match.engine.Terminal().Ended {
+		return nil
+	}
+	events, err := match.engine.ConfirmTrappedDeath(match.local)
+	if err != nil {
+		match.logf("local trap death: %v", err)
+		return nil
+	}
+	return events
+}
+
+// publishEvents turns the engine events of one tick into scene messages.
+// The local player's own facts are always published; shared outcomes only
+// by the arbitrator.
+func (match *onlineMatch) publishEvents(after *battleengine.Engine, events []battleengine.Event) {
+	now := after.ElapsedMS()
+	arbitrator := match.isArbitrator()
+	var explosion game.BombExplodeEvent
+	var dispatched []game.GameItem
+	drops := map[uint16][]game.GameItem{}
+	for _, event := range events {
+		if event.Kind == battleengine.EventPickupDropped {
+			drops[event.PlayerID] = append(drops[event.PlayerID], game.GameItem{ItemID: event.SceneID, Row: byte(event.Cell.Row), Col: byte(event.Cell.Col)})
+		}
+	}
+	for _, event := range events {
+		switch event.Kind {
+		case battleengine.EventPickupRevealed, battleengine.EventPickupDropped:
+			match.forgetPickups([]battleengine.Event{event})
+		case battleengine.EventBombPlaced:
+			if event.PlayerID != match.local {
+				continue
+			}
+			bomb, ok := bombByID(after.Bombs(), event.BombID)
+			if !ok {
+				continue
+			}
+			match.bombs[event.BombID] = wireBomb{owner: match.local, placedAt: event.TimeMS, cell: event.Cell}
+			property := byte(0)
+			if bomb.SceneFourEffect {
+				property = 1
+			}
+			body, err := (game.PlayerUseBombEvent{
+				PlayerID: match.local, ClientTime: event.TimeMS, BombID: defaultBombAppearance,
+				Row: byte(event.Cell.Row), Column: byte(event.Cell.Col), Power: uint16(bomb.Power) + 1, Property: property,
+			}).MarshalNetworkBinary()
+			if err == nil {
+				match.queue(game.PlayerUseBomb, event.TimeMS, bombGameTime, body)
+				match.mirror(game.PlayerUseBomb, body)
+			}
+		case battleengine.EventBombExploded:
+			if !arbitrator {
+				continue
+			}
+			known := match.bombs[event.BombID]
+			placedAt := known.placedAt
+			if known.owner == 0 {
+				placedAt = event.TimeMS
+			}
+			explosion.Bombs = append(explosion.Bombs, game.ExplodedBomb{
+				PlayerID: event.PlayerID, ClientTime: placedAt, BombID: 0xff,
+				Row: byte(event.Cell.Row), Column: byte(event.Cell.Col),
+				RowMin: byte(event.BlastRowMin), RowMax: byte(event.BlastRowMax), ColumnMin: byte(event.BlastColMin), ColumnMax: byte(event.BlastColMax),
+			})
+			delete(match.bombs, event.BombID)
+		case battleengine.EventCellDamaged, battleengine.EventCellDestroyed:
+			// Destroyed walls start their 500 ms retirement in the blast tick.
+			if arbitrator && event.ObjectID != 0 {
+				explosion.MapElems = append(explosion.MapElems, game.ExplodedMapElement{MapElementID: uint16(event.ObjectID), Row: byte(event.Cell.Row), Column: byte(event.Cell.Col)})
+			}
+		case battleengine.EventPickupDestroyed:
+			if arbitrator {
+				explosion.Items = append(explosion.Items, game.ExplodedItem{ItemID: event.SceneID, Row: byte(event.Cell.Row), Column: byte(event.Cell.Col)})
+			}
+		case battleengine.EventPickupDispatched:
+			match.forgetPickups([]battleengine.Event{event})
+			if arbitrator {
+				dispatched = append(dispatched, game.GameItem{ItemID: event.SceneID, Row: byte(event.Cell.Row), Col: byte(event.Cell.Col)})
+			}
+		case battleengine.EventActorTrapped:
+			if event.TargetID == match.local {
+				match.publishHit(event, false)
+			}
+		case battleengine.EventActorTransformationEnded:
+			if event.PlayerID == match.local && event.TransformationEnd == battleengine.TransformationEndHit {
+				match.publishHit(event, true)
+			}
+		case battleengine.EventPickupCollected:
+			key := pickupKey{scene: event.SceneID, cell: event.Cell}
+			if _, granted := match.collected[key]; granted {
+				continue // granted on request (arbitratePickup), already announced
+			}
+			match.collected[key] = event.PlayerID
+			if arbitrator {
+				position := event.Position
+				if actor, ok := actorByID(after.Actors(), event.PlayerID); ok && position == (battleengine.Position{}) {
+					position = actor.Position
+				}
+				match.publishItem(game.PlayerItemEvent{PlayerID: event.PlayerID, ClientTime: now, ItemID: event.SceneID, PosX: uint16(position.X), PosY: uint16(position.Y)})
+			}
+		case battleengine.EventFieldObjectTriggered:
+			if event.ActionID != 42 && event.ActionID != 43 {
+				continue
+			}
+			contact := fieldContactKey{player: event.TargetID, action: event.ActionID, cell: event.Cell}
+			if arbitrator && !match.fieldContacts[contact] {
+				match.publishItem(game.PlayerItemEvent{PlayerID: event.TargetID, ClientTime: now, ItemID: uint32(event.ActionID),
+					PosX: uint16(event.Position.X), PosY: uint16(event.Position.Y)})
+			}
+			match.fieldContacts[contact] = true
+		case battleengine.EventActorRescued:
+			// A needle self-rescue (PlayerID == TargetID) is already known to
+			// everyone from the item use.
+			if arbitrator && event.PlayerID != event.TargetID {
+				body, err := (game.PlayerInteractionEvent{PlayerID: event.PlayerID, ClientTime: now, DestinationPlayerID: event.TargetID,
+					PosX: uint16(event.Position.X), PosY: uint16(event.Position.Y)}).MarshalNetworkBinary()
+				if err == nil {
+					match.queue(game.NotifyPlayerSaved, now, now, body)
+					match.mirror(game.NotifyPlayerSaved, body)
+				}
+			}
+		case battleengine.EventActorEliminated:
+			match.publishElimination(event, drops[event.TargetID], arbitrator)
+		}
+	}
+	if len(explosion.Bombs) > 0 {
+		explosion.PlayerID, explosion.ClientTime = match.local, now
+		if body, err := explosion.MarshalNetworkBinary(); err == nil {
+			match.queue(game.NotifyBombExplode, now, now, body)
+			match.mirror(game.NotifyBombExplode, body)
+		} else {
+			match.logf("explosion: %v", err)
+		}
+	}
+	if len(dispatched) > 0 {
+		if body, err := (game.DispatchItemData{Time: now, Items: dispatched}).MarshalNetworkBinary(); err == nil {
+			match.queue(game.NotifyDispatchItem, now, now, body)
+			match.mirror(game.NotifyDispatchItem, body)
+		}
+	}
+}
+
+func (match *onlineMatch) publishHit(event battleengine.Event, isAvatar bool) {
+	position := event.Position
+	body, err := (game.PlayerExplodedEvent{PlayerID: match.local, ClientTime: event.TimeMS, PosX: uint16(position.X), PosY: uint16(position.Y), IsAvatar: isAvatar}).MarshalNetworkBinary()
+	if err != nil {
+		return
+	}
+	match.queue(game.PlayerBeExploded, event.TimeMS, event.TimeMS, body)
+	match.mirror(game.PlayerBeExploded, body)
+	// The native client stops and faces down with a forced movement flush.
+	match.movement.sequence++
+	match.movement.moving, match.movement.direction = false, battleengine.DirectionDown
+	match.movement.lastSentAt, match.movement.lastSentPosition = event.TimeMS, position
+	match.sendMove(game.PlayerMoveSequence{
+		Sequence: match.movement.sequence, TimeStamp: event.TimeMS,
+		CurrentPosX: uint16(position.X), CurrentPosY: uint16(position.Y), EndPosX: uint16(position.X), EndPosY: uint16(position.Y),
+		WalkAndDirection: nativeWalkDirection(battleengine.DirectionDown) | 0x20, Speed: match.movement.speed,
+	})
+}
+
+func (match *onlineMatch) publishElimination(event battleengine.Event, drops []game.GameItem, arbitrator bool) {
+	now := event.TimeMS
+	if drops == nil {
+		drops = []game.GameItem{}
+	}
+	if event.EliminationCause == battleengine.EliminationTrapDeath {
+		if event.TargetID != match.local {
+			return
+		}
+		body, err := (game.PlayerDeathEvent{PlayerID: match.local, ClientTime: now, PosX: uint16(event.Position.X), PosY: uint16(event.Position.Y), Items: drops}).MarshalNetworkBinary()
+		if err == nil {
+			match.queue(game.NotifyPlayerDieEvent, now, now, body)
+			match.mirror(game.NotifyPlayerDieEvent, body)
+		}
+		return
+	}
+	if !arbitrator || event.PlayerID == 0 {
+		return
+	}
+	body, err := (game.PlayerKilledEvent{
+		PlayerInteractionEvent: game.PlayerInteractionEvent{PlayerID: event.PlayerID, ClientTime: now, DestinationPlayerID: event.TargetID,
+			PosX: uint16(event.Position.X), PosY: uint16(event.Position.Y)},
+		Items: drops,
+	}).MarshalNetworkBinary()
+	if err == nil {
+		match.queue(game.NotifyPlayerKilled, now, now, body)
+		match.mirror(game.NotifyPlayerKilled, body)
+	}
+}
+
+// publishMovement emits PLAYER_MOVE samples for the local player the way the
+// server's AIs do (competitive_ai_runtime.go): on every segment boundary or
+// path change, plus a heartbeat every 150 ms. Ordinary movement is published
+// at the start of the tick, where the actor actually turns.
+func (match *onlineMatch) publishMovement(before, after *battleengine.Engine, action battleengine.Action) {
+	current, ok := actorByID(after.Actors(), match.local)
+	if !ok || current.State == battleengine.ActorEliminated {
+		return
+	}
+	moving, direction := movementIntent(action, current)
+	if before != nil && (!match.movement.initialized || match.movement.lastSentAt < before.ElapsedMS()) {
+		previous, previousOK := actorByID(before.Actors(), match.local)
+		beforeSpeed, _ := before.NativeEffectiveSpeedRate(match.local, direction)
+		afterSpeed, _ := after.NativeEffectiveSpeedRate(match.local, direction)
+		if previousOK && previous.State == battleengine.ActorActive && current.State == battleengine.ActorActive &&
+			previous.MovementStatus == current.MovementStatus && previous.TransformationSceneID == current.TransformationSceneID && beforeSpeed == afterSpeed {
+			match.sampleMovement(before, previous, moving, direction)
+			return
+		}
+	}
+	match.sampleMovement(after, current, moving, direction)
+}
+
+func (match *onlineMatch) sampleMovement(snapshot *battleengine.Engine, actor battleengine.Actor, moving bool, direction battleengine.Direction) {
+	projection := &match.movement
+	speed, ok := snapshot.NativeEffectiveSpeedRate(actor.PlayerID, direction)
+	if !ok {
+		return
+	}
+	boundary := !projection.initialized || moving != projection.moving || (moving && direction != projection.direction) || speed != projection.speed
+	if boundary {
+		projection.sequence++
+	}
+	path := battleengine.NativeMovementProjection{End: actor.Position}
+	if moving {
+		projected, err := snapshot.ProjectNativeMovement(actor.PlayerID, direction)
+		if err != nil {
+			return
+		}
+		path = projected
+		if !boundary && path.End == projection.path.End && !path.HasCorner {
+			path.Corner, path.HasCorner = projection.path.Corner, projection.path.HasCorner
+		}
+	}
+	now := snapshot.ElapsedMS()
+	pathChanged := path != projection.path
+	due := boundary || pathChanged || now-projection.lastSentAt >= movementHeartbeat
+	if !due || (!boundary && !pathChanged && projection.lastSentAt == now && projection.lastSentPosition == actor.Position) {
+		return
+	}
+	projection.initialized, projection.moving, projection.direction, projection.speed, projection.path = true, moving, direction, speed, path
+	projection.lastSentAt, projection.lastSentPosition = now, actor.Position
+	walk := nativeWalkDirection(direction)
+	if moving {
+		walk |= 0x10
+	}
+	grid := snapshot.Grid()
+	end := battleengine.Position{
+		X: clamp(path.End.X, int32(grid.Width)*battleengine.CellSizePixels-1),
+		Y: clamp(path.End.Y, int32(grid.Height)*battleengine.CellSizePixels-1),
+	}
+	var corner battleengine.Position
+	if path.HasCorner {
+		corner = path.Corner
+	}
+	match.sendMove(game.PlayerMoveSequence{
+		Sequence: projection.sequence, TimeStamp: now,
+		CurrentPosX: uint16(actor.Position.X), CurrentPosY: uint16(actor.Position.Y),
+		CornerPosX: uint16(corner.X), CornerPosY: uint16(corner.Y), EndPosX: uint16(end.X), EndPosY: uint16(end.Y),
+		WalkAndDirection: walk, Speed: speed,
+	})
+}
+
+func (match *onlineMatch) sendMove(move game.PlayerMoveSequence) {
+	body, err := (game.PlayerMove{PlayerID: match.local, Entries: []game.PlayerMoveEntry{{PlayerID: match.local, Move: move}}}).MarshalNetworkBinary()
+	if err != nil {
+		return
+	}
+	match.queue(game.PlayerMoveSchema, move.TimeStamp, move.TimeStamp, body)
+}
+
+func movementIntent(action battleengine.Action, actor battleengine.Actor) (bool, battleengine.Direction) {
+	if actor.State != battleengine.ActorActive || action.Move == battleengine.DirectionNone {
+		return actor.MovementStatus == battleengine.MovementStatusForcedSlide && actor.State == battleengine.ActorActive, actor.Facing
+	}
+	return true, actor.Facing
+}
+
+// Wire direction order is right, up, left, down.
+func nativeWalkDirection(direction battleengine.Direction) byte {
+	switch direction {
+	case battleengine.DirectionRight:
+		return 0
+	case battleengine.DirectionUp:
+		return 1
+	case battleengine.DirectionLeft:
+		return 2
+	default:
+		return 3
+	}
+}
+
+func battleDirection(walk byte) battleengine.Direction {
+	return [4]battleengine.Direction{battleengine.DirectionRight, battleengine.DirectionUp, battleengine.DirectionLeft, battleengine.DirectionDown}[walk&3]
+}
+
+func clamp(value, maximum int32) int32 {
+	return max(0, min(value, maximum))
+}
+
+func actorByID(actors []battleengine.Actor, playerID uint16) (battleengine.Actor, bool) {
+	for _, actor := range actors {
+		if actor.PlayerID == playerID {
+			return actor, true
+		}
+	}
+	return battleengine.Actor{}, false
+}
+
+func bombByID(bombs []battleengine.Bomb, bombID uint32) (battleengine.Bomb, bool) {
+	for _, bomb := range bombs {
+		if bomb.ID == bombID {
+			return bomb, true
+		}
+	}
+	return battleengine.Bomb{}, false
+}
+
+func pickupsFromItems(items []game.GameItem) []battleengine.Pickup {
+	pickups := make([]battleengine.Pickup, 0, len(items))
+	for _, item := range items {
+		pickups = append(pickups, battleengine.Pickup{SceneID: item.ItemID, Cell: battleengine.Cell{Row: int16(item.Row), Col: int16(item.Col)}, State: battleengine.PickupAvailable})
+	}
+	return pickups
+}

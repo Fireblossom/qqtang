@@ -185,6 +185,19 @@ func (engine *Engine) firstBombInFacingRay(actor *Actor) uint32 {
 	return bombID
 }
 
+// NativeActionProjectileTarget is the target an action 44/46 throw by the
+// player would have now: the first bubble on its facing ray (cell and bomb
+// ID), or the last reachable cell on a miss. ok is false when even the
+// adjacent cell is blocked. A networked client needs it to build its
+// REQUEST_USE_ITEM before the use is confirmed.
+func (engine *Engine) NativeActionProjectileTarget(playerID uint16) (cell Cell, bombID uint32, ok bool) {
+	index := engine.actorIndex(playerID)
+	if index < 0 {
+		return Cell{}, 0, false
+	}
+	return engine.nativeActionProjectileTarget(&engine.actors[index])
+}
+
 func (engine *Engine) nativeActionProjectileTarget(actor *Actor) (Cell, uint32, bool) {
 	dx, dy, ok := actor.Facing.delta()
 	if !ok || actor.Facing == DirectionNone {
