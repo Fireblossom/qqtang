@@ -95,6 +95,7 @@ def main() -> int:
     from .script import MissingReport, ScriptLoader, new_namespace
     from .chat import build_chat_natives
     from .props import build_props_natives
+    from .friend import build_friend_natives
     from .shop import build_shop_natives
     from .lobby import build_lobby_natives
     from .room import build_room_natives
@@ -124,6 +125,7 @@ def main() -> int:
     namespace.update(build_lobby_natives(runtime, session))
     namespace.update(build_chat_natives(runtime, session))
     namespace.update(build_props_natives(runtime, session))
+    namespace.update(build_friend_natives(runtime, session))  # wraps the lobby's player-list natives
     renderer = Renderer(screen, resources)
 
     def start_battle(begin: bytes, context) -> None:

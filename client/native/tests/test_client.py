@@ -18,6 +18,8 @@ import numpy as np  # noqa: E402
 
 from qqtclient import dimg  # noqa: E402
 from qqtclient.avatar import tint  # noqa: E402
+from qqtclient.friend import build_friend_natives  # noqa: E402
+from qqtclient.net import friend  # noqa: E402
 from qqtclient.natives import build_natives  # noqa: E402
 from qqtclient.render import Renderer, cell_width  # noqa: E402
 from qqtclient.props import place_saved  # noqa: E402
@@ -276,6 +278,90 @@ class AvatarTest(unittest.TestCase):
             self.assertGreater(pixel[2], pixel[0])  # blue hue
         grey = tint(mask, (0.0, 0.0, 0.8))
         self.assertEqual(grey[0, 0, :3].tolist(), [80, 80, 80])
+
+
+class FriendHostTest(unittest.TestCase):
+    def setUp(self) -> None:
+        self.calls: list[tuple] = []
+        self.sent: list[tuple[int, bytes]] = []
+        self.boxes: list[tuple] = []
+        lobby_players = [types.SimpleNamespace(m_dwPlayerUin=1000003, m_szPlayerNickname="糖三", m_dwExtItemID=[5],
+                                               m_dwKinIndex=0, m_nKinNameLen=0, m_szKinName="", m_stKinFlagID=None)]
+        namespace = {
+            "GetPlayerCnt": lambda mode=0: len(lobby_players),
+            "fetch_PlayerInfoInPlayerList": lambda index, mode=0: types.SimpleNamespace(m_nPlayerStatus=1, m_PlayerInfo=lobby_players[index]),
+            "Win_SetText": lambda path, text: self.calls.append(("Win_SetText", path, text)),
+        }
+        for name in ("updatePlayer", "startGlint", "endGlint", "ui_msgBox", "ReceivedRequestAddFriend", "go2playerInfo", "ui_getPlayerDetail"):
+            namespace[name] = lambda *args, name=name: self.calls.append((name, *args))
+        runtime = types.SimpleNamespace(namespace=namespace, show_msgbox=lambda *args: self.boxes.append(args))
+        self.session = types.SimpleNamespace(
+            uin=1000003, nickname="糖三", profile=types.SimpleNamespace(identity=0x2000), hall=None, handlers={},
+            on_entered=[], on_disconnected=[], send=lambda command, payload: self.sent.append((command, payload)) or True)
+        self.natives = build_friend_natives(runtime, self.session)
+
+    def deliver(self, command: int, payload: bytes, inner_sequence: int = 0) -> None:
+        self.session.handlers[command](types.SimpleNamespace(payload=payload, inner_sequence=inner_sequence))
+
+    def update(self, uin: int, online: bool, name: str = "") -> bytes:
+        return (struct.pack(">IIIB", 1000003, uin, 100, 1) + struct.pack(">30I", 7, *([0] * 29)) + bytes([online])
+                + name.encode("gbk").ljust(20, b"\0") + struct.pack(">BII", 1, 0, 0))
+
+    def test_roster_order_follows_updates(self) -> None:
+        roster = struct.pack(">HIHH", 0, 1000003, 200, 3) + struct.pack(">200I", 1000004, 1000005, 1000006, *([0] * 197))
+        self.deliver(friend.FRIEND_LIST_COMMAND, roster)
+        self.deliver(friend.FRIEND_UPDATE_COMMAND, self.update(1000005, True, "五"))
+        self.deliver(friend.FRIEND_UPDATE_COMMAND, self.update(1000004, False, "四"))
+        self.deliver(friend.FRIEND_UPDATE_COMMAND, self.update(1000009, True, "九"))  # not in the roster: ignored
+        uins = [self.natives["fetch_PlayerInfoInPlayerList"](index, 1).m_PlayerInfo.m_dwPlayerUin for index in range(3)]
+        self.assertEqual(uins, [1000005, 1000006, 1000004])
+        first = self.natives["fetch_PlayerInfoInPlayerList"](0, 1)
+        self.assertEqual((first.m_nPlayerStatus, first.m_PlayerInfo.m_szPlayerNickname, first.m_PlayerInfo.m_stGameInfo.m_dwPoint), (1, "五", 100))
+        self.assertEqual((self.natives["GetPlayerCnt"](1), self.natives["GetPlayerCnt"](0), self.natives["GetValidFriendsCount"]()), (3, 1, 3))
+        self.assertEqual((self.natives["getExtItem"](0, 0, 1), self.natives["getExtItem"](0, 0, 0)), (7, 5))
+        self.assertEqual((self.natives["GetAttribute"](1000004, 0), self.natives["GetAttribute"](1000009, 0), self.natives["GetAttribute"](0, 2)), (1, 0, 1))
+        self.assertEqual(self.calls.count(("updatePlayer",)), 3)
+
+    def test_application_goes_through_the_envelope(self) -> None:
+        word = "糖四".encode("gbk").ljust(21, b"\0") + "你好".encode("gbk")
+        self.deliver(friend.ADD_FRIEND_COMMAND, struct.pack(">IIIH", 1000004, 5, 1000003, len(word)) + word)
+        self.assertEqual((self.natives["GetLeaveWordCount"](), self.calls[-1]), (1, ("startGlint",)))
+        self.natives["GetLeaveWord"]()
+        self.assertEqual(self.calls[-4:], [("Win_SetText", "UI.friendDlg.name", "糖四"), ("Win_SetText", "UI.friendDlg.text", "你好"),
+                                           ("ReceivedRequestAddFriend", 1000004), ("endGlint",)])
+        self.natives["DoFriendTask"]("n", 0, 1000004, 6)
+        self.assertEqual(self.sent[-1][0], friend.ANSWER_FRIEND_COMMAND)
+        self.assertEqual(self.sent[-1][1][:6], struct.pack(">HI", friend.RESULT_REJECTED, 1000004))
+        self.assertEqual(self.sent[-1][1][10:], struct.pack(">I", 1000003))
+
+    def test_answers_become_messages(self) -> None:
+        self.natives["DoFriendTask"]("hi", 2, 1000003, 1)  # oneself: dropped
+        self.assertEqual(self.sent, [])
+        self.natives["DoFriendTask"]("hi", 2, 1000004, 1)
+        self.assertEqual(self.sent[-1][0], friend.ADD_FRIEND_COMMAND)
+        self.deliver(friend.ANSWER_FRIEND_COMMAND, struct.pack(">HIII", 1, 1000003, 5, 1000004), inner_sequence=9)
+        self.deliver(friend.ANSWER_FRIEND_COMMAND, struct.pack(">HIII", 0, 1000003, 5, 1000004))
+        self.assertEqual(self.sent[-1][0], friend.FRIEND_LIST_COMMAND)
+        self.natives["GetLeaveWord"]()
+        self.natives["GetLeaveWord"]()
+        self.assertEqual([box[0] for box in self.boxes], ["1000004玩家已经下线", "1000004[1000004]接受了您的添加好友的请求"])
+        self.assertEqual([(box[2], box[4]) for box in self.boxes], [(11, -3), (3, 0)])
+        self.assertIn(("ui_msgBox", 3), self.calls)
+
+    def test_find_friend_fills_the_detail(self) -> None:
+        self.natives["FindFriend"](9999)
+        self.assertEqual(self.sent, [])
+        payload = struct.pack(">HI", 0, 1000004) + "糖四".encode("gbk").ljust(20, b"\0")
+        payload += struct.pack(">HBBIIHHH", 4, 0, 0, 0, 1, 1, 1, 0) + bytes(20) + b"\x00"
+        payload += struct.pack(">6IHBI4I", 1, 2, 3, 0, 100, 0, 0, 1, 0, 0, 0, 0, 0) + struct.pack(">H", 0)
+        payload += struct.pack(">IH", 0, 0) + b"\xff" * 8 + struct.pack(">I", 0) + b"\x00"
+        self.deliver(friend.FIND_FRIEND_COMMAND, payload)
+        detail = self.natives["GetPlayerDetail"]()
+        # Offline and not a friend: QQTSection copies no name or location.
+        self.assertEqual((detail.m_dwFriendUin, detail.m_bStatus, detail.m_szPlayerName, detail.m_szSectionName), (1000004, 0, "", ""))
+        self.assertEqual((detail.m_stGameInfo.m_nWinNum, detail.m_stGameInfo.m_dwPoint, detail.m_stKinFlagID.m_iFlagID), (1, 100, -1))
+        self.assertEqual(self.calls[-2:], [("go2playerInfo", 1000004, 0), ("ui_getPlayerDetail",)])
+        self.assertEqual((self.natives["GetPlayerNickNamebyUin"](1000003, 0), self.natives["GetPlayerNickNamebyUin"](1000004, 0)), ("糖三", "1000004"))
 
 
 class ConversionTest(unittest.TestCase):

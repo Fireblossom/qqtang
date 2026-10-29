@@ -9,12 +9,12 @@
 | 开场画面、登录界面 | 可显示、输入、点击 |
 | 账号密码登录 | 可用：`QQTAUTH1` 挑战应答后请求目录，拿到区服列表 |
 | 选区界面 | 可用：显示分区和负载，点分区或“快速加入”进区 |
-| 大厅 | 部分可用：房间格子分页、玩家列表、分区名称，每 5 秒刷新房间、每 10 秒刷新玩家；建房、点房间进入、快速加入；大厅聊天、悄悄话（对指定玩家）和小喇叭。家族聊天、斜杠命令（邀请、屏蔽等）、好友列表尚未实现 |
+| 大厅 | 部分可用：房间格子分页、玩家列表、分区名称，每 5 秒刷新房间、每 10 秒刷新玩家；建房、点房间进入、快速加入；大厅聊天、悄悄话（对指定玩家）和小喇叭。好友：“好友”标签页（登录时恢复好友名单，好友上线排到前面、下线排到后面）、点玩家查看资料（在线状态、频道和小区、积分战绩）、加好友（附言）、同意或拒绝、删除好友，申请和结果经聊天栏的信封图标逐条查看。家族、家族聊天、斜杠命令（邀请、屏蔽等）、好友追踪尚未实现 |
 | 房间 | 部分可用：座位和人物（按队伍染色）、房主、准备/取消准备、房主开始、换角色、换队伍颜色、选地图、开关空位、踢人、房间聊天和头顶气泡、离开房间；人物穿着各自已装备的服装（对战里也一样）；切换竞技无道具、道具和探险模式；装备道具栏（"我的背包"里双击或拖动道具装上，右键卸下，格子顺序存在客户端目录的 `profile/<号码>.ini`）；开局后进入对战，结束后回到房间。改房间属性已接通但未实测；聊天室背景、婚礼未实现 |
 | 对战 | 普通规则地图可玩：地图、人物行走、放泡、爆炸和连锁、炸墙和推箱子、道具出现与拾取、被困和阵亡、计时、玩家列表、胜负提示。离线练习可用；联网时可作为房主与服务端 AI 对战（本客户端担任仲裁方），对局由服务端判定胜负后显示结算画面并回到房间。对战中可使用捡到的道具（1～7 键、Ctrl、Tab）；道具场里可使用从房间带入的道具（服务端只允许道具场带入，一个人在道具场不能补 AI，需要两个真人）。与其他真人玩家同局时只有房主（仲裁方）完整可用 |
 | 商城 | 部分可用：进出商城、六个大类和子类的商品分页、糖币购买（扣款后物品进背包）、道具箱分页、试穿预览（换角色、换颜色、动作）、保存装备（`ITEM_STATUS_CHANGE`）。服务端只结算糖币，Q 币、Q 点、酷比宝石、赠送、修理、锻造合成、水果机、任务和密保验证都未实现 |
 
-原版脚本共用到 346 个宿主函数，已实现 165 个。运行 `tools/native_coverage.py` 可按界面列出尚未实现的函数。除此之外，服务器消息到达时宿主要回调脚本里的 `Notify*`、`ui_*` 等函数（约 150 种），目前接通了登录的 `LoginOK`、`LoginFailed`，大厅的 `updateRoom`、`updatePlayer`、`ui_sectSetBtnState`、`NotifyBroadcast`（小喇叭），以及房间的 `ui_NotifyRoomSeatChange`、`ui_NotifyRoomID`、`ui_NotifyMapChange`、`NotifyRoomPropChange`、`ui_UpdateGameType`、`ui_createRoomOK`、`ui_playerChat`。对战画面和游戏逻辑不在界面脚本里，需要另外实现。
+原版脚本共用到 346 个宿主函数，已实现 183 个。运行 `tools/native_coverage.py` 可按界面列出尚未实现的函数。除此之外，服务器消息到达时宿主要回调脚本里的 `Notify*`、`ui_*` 等函数（约 150 种），目前接通了登录的 `LoginOK`、`LoginFailed`，大厅的 `updateRoom`、`ui_NotifyPlayerUpdate`、`ui_sectSetBtnState`、`NotifyBroadcast`（小喇叭），好友的 `updatePlayer`、`startGlint`/`endGlint`、`ReceivedRequestAddFriend`、`ui_msgBox`、`go2playerInfo`、`ui_getPlayerDetail`，以及房间的 `ui_NotifyRoomSeatChange`、`ui_NotifyRoomID`、`ui_NotifyMapChange`、`NotifyRoomPropChange`、`ui_UpdateGameType`、`ui_createRoomOK`、`ui_playerChat`。对战画面和游戏逻辑不在界面脚本里，需要另外实现。
 
 ## 工作方式
 
@@ -39,8 +39,9 @@
    - `battle/`：对战。`mapfile.py` 读地图和地图元素属性，`sidecar.py` 驱动规则辅助进程，`scene.py` 绘制对战画面和处理键盘，`practice.py` 离线练习，`online.py` 联网对局（TCP 一侧）；
    - `chat.py`：大厅聊天、悄悄话和小喇叭；
    - `props.py`：房间的装备道具栏和道具仓库；
+   - `friend.py`：好友名单（大厅“好友”标签页）、加好友和应答、删除好友、聊天栏信封里的好友消息、玩家资料（`FindFriend`）。它包装了 `lobby.py` 的玩家列表函数（模式 1 是好友），所以要在大厅模块之后注册；
    - `shop.py`：商城。商品目录读客户端自己的 `config/Commodity.ini`（服务端只校验版本号，不下发目录）；购买走独立的商城端口，装备变更和背包更新走游戏连接；
-   - `net/`：协议实现，均与服务端 Go 代码逐字段对应：`qqtea.py` 加密，`accountauth.py` 账号校验，`game.py` 游戏包信封和连接，`directory.py` 目录区服信息，`player.py` 进区登录，`lobby.py` 房间和玩家列表，`room.py` 建房、进房和房间内的请求与通知，`chat.py` 聊天，`shop.py` 商城列表、购买、物品状态和背包更新。
+   - `net/`：协议实现，均与服务端 Go 代码逐字段对应：`qqtea.py` 加密，`accountauth.py` 账号校验，`game.py` 游戏包信封和连接，`directory.py` 目录区服信息，`player.py` 进区登录，`lobby.py` 房间和玩家列表，`room.py` 建房、进房和房间内的请求与通知，`chat.py` 聊天，`shop.py` 商城列表、购买、物品状态和背包更新，`friend.py` 好友名单、好友申请和应答、查找玩家。
 
 反编译和转换的结果来自原版客户端，`generated/` 已加入 `.gitignore`，不得提交。
 
@@ -143,6 +144,19 @@ CGO_ENABLED=1 go build -tags onnxruntime -o qqt-server ./cmd/qqt-server
 - 测试向量：房间列表请求与 `internal/protocol/game/room_test.go` 中抓包的明文逐字节一致；进房、快速加入回包和进房通知的测试数据 `tests/data/room_vectors.txt` 由服务端的 Go 编码函数生成。
 - 建房成功只返回房间号，客户端随后用该房间号发 `EnterRoom` 取得完整房间快照（服务端按"已在房间中"处理）。脚本给的房间名为空时，宿主使用"一起来玩吧"。
 - `GetSeatInfo().seatStatus` 在脚本中是 0 空位、1 关闭（显示 STOP）、2 有人，与两种协议编码都不同。
+- 玩家列表刷新：`Client.exe` 的 `NotifyPlayerUpdate`（`0x0048ED30`）只在当前界面是 selRoom 时调用 `ui_NotifyPlayerUpdate()`，它同时重画引导栏列表（`updatePlayer`）和大厅右侧列表（`updatePlayer2`）。之前宿主只调用 `updatePlayer`，大厅列表进入后不再刷新。
+- 好友的逻辑在 `QQTSection.dll` 的 `CFriendHandler`，宿主函数都转到 `XSection` 接口（`Client.exe` 中 `DoFriendTask` `0x0054DCC0` 调 `+0x274`，`GetAttribute` 调 `+0x27C`，`GetValidFriendsCount` 调 `+0x280`）：
+  - `DoFriendTask(文字, 长度, QQ号, 操作)`：0 取名单，1 加好友，2 删除，3 追踪，5/7 屏蔽/取消屏蔽（发 `/m 号码`、`/u 号码`），6 应答（文字为 y/Y 时结果 0，n/N 时 0x33）。
+  - 加好友（`0x1000F51E`）：自己或已是好友时不发；附言前面放 21 字节的自己的昵称，长度加 0x15。收到申请时（`0x10017FCA`）前 20 字节是昵称，第 21 字节起是附言。
+  - 主分发（`0x100189CE`）只把 0xA2～0xA5 交给好友处理（`0x1000FAAA`）；0xA6 不处理。未关联请求的 0xA3 是别人的申请，关联请求的 0xA3 是自己申请的结果：0 成功，0x2C 消息失败，0x33 被拒绝，0x34 对方下线，0x35 名单已满，0x36 已是好友。本服务端改用 0xA6 回结果，宿主按这些含义显示。
+  - 0xA5（`0x10010EBD`）只更新名单里已有的号码；上线的好友移到最前，下线的移到最后。原版只在上线时更新昵称、性别、身份，其余从 `./data/<号码>-Friends.dat` 读；宿主没有这个缓存，每次都更新。名单变化后执行 `updatePlayer()`（`0x100110A9`），大厅列表要等下一次 `ui_NotifyPlayerUpdate` 才重画。
+  - `fetch_PlayerInfoInPlayerList(i, 1)`（`0x10010558`）：`m_nPlayerStatus` 是在线标志，家族字段取自大厅玩家列表。脚本不用这个状态，所以好友标签页里在线和离线看起来一样，只有顺序不同；在线状态在玩家资料里显示。
+  - `GetValidFriendsCount`（`0x10011154`）是 `min(名单上限, 当前人数)`，灰色遮罩盖住的是超过上限的好友，不是离线好友。`GetAttribute(号码, 0)` 是否好友，1 是否屏蔽，2 自己身份是否含 0x2000。
+  - `GetPlayerNickNamebyUin`（`0x1002D7DF`）查大厅玩家列表，查不到返回号码本身。
+- 聊天栏信封：好友申请和结果放进“留言”队列，信封闪烁（`startGlint`/`endGlint`，`Client.exe` `0x0052D1D0`），每点一次 `GetLeaveWord`（`QQTSection` `0x1002A206`）取一条：申请填好 `UI.friendDlg.name`、`.text` 后执行 `ReceivedRequestAddFriend(号码)`；其他消息用系统对话框显示，后面还有消息时句柄 -3、类型 11（“下一条”，脚本的 -3 分支再调 `GetLeaveWord`），最后一条句柄 0、类型 3（只有关闭）。文字：“%s[%u]接受了您的添加好友的请求”“%s[%u]拒绝了…”“%u玩家已经下线”“你的好友列表已满”“%u玩家已经在你的好友列表中”“消息传送失败”。
+- 系统对话框：`Client.exe` 显示 `UI.SysMsgbox` 后执行 `ui_msgBox(类型)`（`0x0048B320`），由脚本换按钮图片：1 同意/拒绝，0 确定/取消，11 下一条/关闭，其他只有关闭。
+- 查看玩家资料：`FindFriend` 只发号码 ≥ 10000 的查询（`0x0048EAB9`）。回包由 `QQTSection` `0x1001D126` 填进资料结构：状态字节原样作为 `m_bStatus`（脚本 1 在线、2 在房间、3 游戏中，本服务端只发 0 和 1）；在线时才填频道、小区、地区名（按分区号查目录）、昵称和房间名，离线时昵称和性别取自好友名单，不是好友就为空。随后 `FindFriendInfoRecv`（`0x0048EB20`）执行 `go2playerInfo(号码, 0)` 和 `ui_getPlayerDetail()`。
+- 好友关系在本服务端是单向的：A 的申请被 B 同意后只有 A 的名单里有 B。原版同意对话框的“同时添加对方为好友”默认勾选，同意时先向对方发一条反向申请。
 - 房主的"开始"和其他人的"准备"都调用 `UserReady(0)`，由宿主按身份发开始或准备/取消准备。
 - 位置类原生函数（`Win_Move2Pos`、`Win_GetX/Y`、`Win_SetRect`/`Win_GetRect` 的 winrect）使用屏幕坐标。
 - 按下任何可用控件都会取得焦点：队伍颜色、座位等按钮在 `OnClick` 里用 `Win_GetFocusPath` 取自己的序号。

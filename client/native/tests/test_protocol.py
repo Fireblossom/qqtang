@@ -11,7 +11,7 @@ import unittest
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
 
-from qqtclient.net import accountauth, chat, directory, game, lobby, match, player, qqtea, room, shop  # noqa: E402
+from qqtclient.net import accountauth, chat, directory, friend, game, lobby, match, player, qqtea, room, shop  # noqa: E402
 
 KEY = bytes(range(0x10, 0x20))
 
@@ -249,6 +249,65 @@ class ShopTest(unittest.TestCase):
         item = struct.pack(shop.ITEM_INFO_FORMAT, 13013, 1, 1, 2, 0, 0, 5, 0xFFFFFFFF)
         update = shop.parse_item_add(struct.pack(">IIIIH", 1000001, 5, 0, 13013, 1) + item)
         self.assertEqual((update.uin, update.commodity_id, update.items[0].item_id, update.items[0].status), (1000001, 13013, 13013, 1))
+
+
+class FriendTest(unittest.TestCase):
+    """Offsets of internal/protocol/game/friend.go and find_friend.go."""
+
+    def test_requests(self) -> None:
+        self.assertEqual(friend.build_friend_list(1000003, now=5), bytes.fromhex("000f4243" "00000005"))
+        add = friend.build_add_friend(1000003, 1000004, "糖三", "你好", now=5)
+        # DecodeLocalAddFriendRequest: UIN 0:4, time 4:8, target 8:12, length 12:14, word from 14.
+        self.assertEqual(add[:14], bytes.fromhex("000f4243" "00000005" "000f4244" "0019"))
+        self.assertEqual(add[14:], "糖三".encode("gbk").ljust(21, b"\0") + "你好".encode("gbk"))
+        self.assertEqual(friend.build_remove_friend(1000003, 1000004, now=5), bytes.fromhex("000f4243" "00000005" "000f4244"))
+        # DecodeLocalAnswerFriendRequest: result 0:2, requester 2:6, time 6:10, responder 10:14.
+        self.assertEqual(friend.build_answer_friend(1, 1000003, 1000004, now=5),
+                         bytes.fromhex("0001" "000f4243" "00000005" "000f4244"))
+        self.assertEqual(friend.build_find_friend(1000003, 1000004, now=5), bytes.fromhex("000f4243" "00000005" "000f4244"))
+
+    def test_friend_list(self) -> None:
+        # marshalFriendListPayload: result, owner, maximum, count, then 200 UIN slots (810 bytes).
+        payload = struct.pack(">HIHH", 0, 1000003, 200, 1) + struct.pack(">200I", 1000004, *([0] * 199))
+        self.assertEqual(len(payload), 810)
+        self.assertEqual(friend.parse_friend_list(payload), friend.FriendList(0, 1000003, 200, [1000004]))
+
+    def test_friend_update(self) -> None:
+        # FriendUpdate.MarshalNetworkBinary: 163 bytes.
+        payload = struct.pack(">IIIB", 1000003, 1000004, 1621150000, 2) + struct.pack(">30I", 11, 12, *([0] * 28))
+        payload += b"\x01" + "糖四".encode("gbk").ljust(20, b"\0") + struct.pack(">BII", 0, 8192, 7)
+        update = friend.parse_friend_update(payload)
+        self.assertEqual(update, friend.FriendUpdate(1000003, 1000004, 1621150000, [11, 12], True, "糖四", 0, 8192, 7))
+        with self.assertRaises(ValueError):
+            friend.parse_friend_update(payload[:-1])
+
+    def test_application_and_results(self) -> None:
+        # BuildLocalAddFriendRequestNotification relays the requester's word unchanged.
+        word = "糖三".encode("gbk").ljust(21, b"\0") + "你好".encode("gbk")
+        notify = struct.pack(">IIIH", 1000003, 5, 1000004, len(word)) + word
+        self.assertEqual(friend.parse_application(notify), friend.FriendApplication(1000003, 1000004, "糖三", "你好"))
+        self.assertEqual(friend.parse_application(struct.pack(">IIIH", 1000003, 5, 1000004, 4) + "糖三".encode("gbk")).text, "")
+        self.assertEqual(friend.parse_remove_result(struct.pack(">HII", 0, 1000003, 1000004)), (0, 1000004))
+        self.assertEqual(friend.parse_answer(struct.pack(">HIII", 1, 1000003, 5, 1000004)), friend.FriendAnswer(1, 1000003, 1000004))
+
+    def test_find_friend(self) -> None:
+        # FindFriendResponse.MarshalNetworkBinary.
+        payload = struct.pack(">HI", 0, 1000004) + "糖四".encode("gbk").ljust(20, b"\0")
+        payload += struct.pack(">HBBIIHHH", 4, 0, 0, 8192, 1, 1, 1, 7) + "一起来玩吧".encode("gbk").ljust(20, b"\0")
+        payload += b"\x01" + struct.pack(">6IHBI4I", 5200, 520, 52, 0, 1621150000, 99, 179, 1, 0, 520, 52, 5, 42)
+        payload += struct.pack(">H", 1) + struct.pack(">HIBBBBII", 99, 1, 1, 0, 0, 0, 5, 0xFFFFFFFF)
+        kin = "糖家".encode("gbk")
+        payload += struct.pack(">IH", 3, len(kin)) + kin + bytes.fromhex("00000003" "00000005") + struct.pack(">I", 9)
+        payload += b"\x01" + struct.pack(">BIHI", 2, 10, 1, 100)
+        found = friend.parse_find_friend(payload)
+        self.assertEqual((found.uin, found.nickname, found.player_id, found.identity, found.section_id, found.room_id, found.room_name),
+                         (1000004, "糖四", 4, 8192, 1, 7, "一起来玩吧"))
+        self.assertEqual((found.status, found.game_info.points, found.game_info.extended_points, found.items[0].item_id),
+                         (1, 1621150000, 42, 99))
+        self.assertEqual((found.kin_index, found.kin_name, found.kin_flag[4:], found.honor), (3, "糖家", bytes.fromhex("00000005"), 9))
+        with self.assertRaises(ValueError):
+            friend.parse_find_friend(payload + b"\0")
+        self.assertEqual(friend.parse_find_friend(struct.pack(">HI", 1, 1000004)).result, 1)
 
 
 class MatchTest(unittest.TestCase):

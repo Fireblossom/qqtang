@@ -98,7 +98,8 @@ def build_lobby_natives(runtime: UIRuntime, session: Session) -> dict[str, Calla
         # (Sect.meGetPlayerInfo reads entry 0).
         others = [player for player in lobby.parse_player_list(packet.payload) if player.uin != session.uin]
         state.players = ([local_player()] if session.profile else []) + others
-        script("updatePlayer")
+        # Client.exe NotifyPlayerUpdate (0x0048ED30) redraws both player lists.
+        script("ui_NotifyPlayerUpdate")
 
     def local_player() -> lobby.Player:
         profile = session.profile
