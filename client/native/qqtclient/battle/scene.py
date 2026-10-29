@@ -125,9 +125,12 @@ class BattleScene:
     the sidecar keeps its own clock, so it is stepped every frame."""
 
     def __init__(self, resources: Resources, sprites: SpriteCache, avatars: AvatarCache, sidecar: Sidecar,
-                 map_id: int, players: list[dict[str, Any]], local_id: int, state: dict[str, Any], realtime: bool = False):
+                 map_id: int, players: list[dict[str, Any]], local_id: int, state: dict[str, Any], realtime: bool = False,
+                 wear: dict[int, tuple[tuple[str, int], ...]] | None = None):
+        """wear: worn costume parts by PlayerID, as the room drew them."""
         self.resources, self.sprites, self.avatars, self.sidecar = resources, sprites, avatars, sidecar
         self.local_id = local_id
+        self.wear = wear or {}
         description = mapfile.load_descriptions(resources)[map_id]
         self.map = mapfile.parse_map(resources.read("map/" + description.file_name))
         self.elements = mapfile.load_elements(resources)
@@ -391,14 +394,14 @@ class BattleScene:
         else:
             self.trapped_at.pop(actor["id"], None)
         if actor["state"] == ACTOR_ELIMINATED:
-            image = self.avatars.get(role, actor["team"] - 1, "die", direction, int(dead_for // (DIE_MS // 4)))
+            image = self.avatars.get(role, actor["team"] - 1, "die", direction, int(dead_for // (DIE_MS // 4)), wear=self.wear.get(actor["id"], ()))
         elif actor["state"] == ACTOR_TRAPPED:
-            image = self.avatars.get(role, actor["team"] - 1, "trigger", direction, int(trapped_for // TRAPPED_FRAME_MS))
+            image = self.avatars.get(role, actor["team"] - 1, "trigger", direction, int(trapped_for // TRAPPED_FRAME_MS), wear=self.wear.get(actor["id"], ()))
         elif actor["id"] in self.walk_started:
             frame = (self.clock - self.walk_started[actor["id"]]) // WALK_FRAME_MS
-            image = self.avatars.get(role, actor["team"] - 1, "walk", direction, frame)
+            image = self.avatars.get(role, actor["team"] - 1, "walk", direction, frame, wear=self.wear.get(actor["id"], ()))
         else:
-            image = self.avatars.get(role, actor["team"] - 1, "stand", direction)
+            image = self.avatars.get(role, actor["team"] - 1, "stand", direction, wear=self.wear.get(actor["id"], ()))
         ox, oy = FIELD_ORIGIN
         x, y = ox + actor["x"], oy + actor["y"]
         if image is not None:
@@ -443,7 +446,7 @@ class BattleScene:
         panel = WIN_PANEL.move(card.topleft)
         for index, player_id in enumerate(winners[:4]):
             actor = actors.get(player_id)
-            image = self.avatars.get(actor["role"], actor["team"] - 1, "stand") if actor else None
+            image = self.avatars.get(actor["role"], actor["team"] - 1, "stand", wear=self.wear.get(player_id, ())) if actor else None
             if image is not None:
                 x = panel.left + panel.width * (2 * index + 1) // (2 * min(len(winners), 4))
                 screen.blit(image, image.get_rect(midbottom=(x, panel.bottom)))
@@ -467,7 +470,7 @@ class BattleScene:
         mine = next((row for row in self.result_rows if row.player_id == self.local_id), None)
         local = self._local_actor()
         if local is not None:
-            head = self.avatars.get(local["role"], local["team"] - 1, "stand")
+            head = self.avatars.get(local["role"], local["team"] - 1, "stand", wear=self.wear.get(local["id"], ()))
             if head is not None:
                 screen.blit(head, (tx + RESULT_HEAD[0], ty + RESULT_HEAD[1]))
         name = self.font(14).render(self.names.get(self.local_id, ""), True, (255, 255, 255))
@@ -505,7 +508,7 @@ class BattleScene:
         x, y = PLAYER_ROW_ORIGIN
         for index, actor in enumerate(self.state["actors"]):
             row_y = y + index * PLAYER_ROW_STEP
-            head = self.avatars.get(actor["role"], actor["team"] - 1, "stand")
+            head = self.avatars.get(actor["role"], actor["team"] - 1, "stand", wear=self.wear.get(actor["id"], ()))
             if head is not None:
                 portrait = head.subsurface(HEAD_CROP).copy()
                 if actor["state"] == ACTOR_ELIMINATED:

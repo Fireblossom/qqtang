@@ -35,6 +35,7 @@ class MatchMember:
     uin: int
     nickname: str
     points: int  # competitive points before the match (level icon)
+    wear: tuple[tuple[str, int], ...] = ()  # costume parts worn in the room
 
 
 @dataclasses.dataclass
@@ -70,7 +71,8 @@ class OnlineBattle:
         if begin_info["arbitrator"] != self.local_id:
             log("[match] another player is the arbitrator; only arbitrating clients are fully supported so far")
         self.scene = BattleScene(resources, renderer.sprites, AvatarCache(resources), sidecar, begin_info["map_id"], players,
-                                 local_id=self.local_id, state=state, realtime=True)
+                                 local_id=self.local_id, state=state, realtime=True,
+                                 wear={player_id: member.wear for player_id, member in context.members.items()})
         self.scene.on_tcp_out = lambda command, payload: session.send(command, payload)
         self.elapsed_ms = 0.0
         self.last_hello_ms = 0.0

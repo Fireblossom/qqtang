@@ -43,6 +43,7 @@ class SeatAvatar:
     role: int = -1
     x: int = 0
     y: int = 0
+    wear: dict[str, int] = dataclasses.field(default_factory=dict)  # part -> id, from room_playerWear
 
 
 class RoomState:
@@ -278,7 +279,9 @@ def build_room_natives(runtime: UIRuntime, session: Session, avatars: AvatarCach
             else:
                 runtime.goto_screen("selRoom")
 
-        members = {member.player_id: MatchMember(member.uin, member.nickname, member.game_info.points) for member in state.members.values()}
+        members = {member.player_id: MatchMember(member.uin, member.nickname, member.game_info.points,
+                                                 tuple(sorted(state.avatars[member.seat - 1].wear.items())))
+                   for member in state.members.values()}
         try:
             start_battle(packet.payload, MatchContext(bool(state.snapshot.room_flag & room.PROPERTY_FREE_RULE), members, back_to_room))
         except Exception as error:  # noqa: BLE001 - keep the room usable
@@ -453,23 +456,42 @@ def build_room_natives(runtime: UIRuntime, session: Session, avatars: AvatarCach
         return []
 
     def room_changePlayer(index, team, role):
-        if 0 <= int(index) < room.MAX_SEATS:
-            avatar = state.avatars[int(index)]
-            avatar.team, avatar.role = int(team), int(role)
+        """Client.exe 0x00458240: an unchanged team and role keeps the avatar;
+        otherwise it is rebuilt and each of the seat's items worn by that role
+        (ITEM_INFO role byte) goes back to the script's useCommItem."""
+        index, team, role = int(index), int(team), int(role)
+        if not 0 <= index < room.MAX_SEATS:
+            return
+        avatar = state.avatars[index]
+        if (avatar.team, avatar.role) == (team, role):
+            return
+        avatar.team, avatar.role = team, role
+        avatar.wear.clear()
+        member = state.members.get(index + 1)
+        if role == -1 or member is None:
+            return
+        for item in member.items:
+            if item.role_id == role:
+                script("useCommItem", index + 1, item.item_id, item.effect, item.color)
 
     def room_setPlayerPos(index, x, y):
         if 0 <= int(index) < room.MAX_SEATS:
             avatar = state.avatars[int(index)]
             avatar.x, avatar.y = int(x), int(y)
 
-    def room_playerWear(*_args):
-        pass  # costume items on the room avatar are not drawn yet
+    def room_playerWear(index, kind, part, _effect=0, _color=0):
+        if 0 <= int(index) < room.MAX_SEATS:
+            wear = state.avatars[int(index)].wear
+            if int(part) > 0:
+                wear[str(kind)] = int(part)
+            else:
+                wear.pop(str(kind), None)
 
     def draw_players(screen: pygame.Surface) -> None:
         for avatar in state.avatars:
             if avatar.role <= 0 or avatar.team < 0:
                 continue
-            image = avatars.get(avatar.role, avatar.team)
+            image = avatars.get(avatar.role, avatar.team, wear=tuple(sorted(avatar.wear.items())))
             if image is not None:
                 screen.blit(image, (avatar.x - AVATAR_ANCHOR[0], avatar.y - AVATAR_ANCHOR[1]))
 
