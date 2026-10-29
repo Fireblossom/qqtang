@@ -281,6 +281,10 @@ class Renderer:
         if widget.type in TEXT_INPUT_TYPES and not widget.caption_rect:
             box = box.inflate(-4, 0)
         size = max(widget.text_size, 9)
+        # A zero-width label breaks lines at zero bytes and shows nothing, like
+        # every box narrower than one double-byte character (0x10021C74).
+        if widget.type in WRAPPED_TYPES and box.width <= 0:
+            return
         wrapped = widget.type in WRAPPED_TYPES and box.width > 0
         lines = self._wrap(text, size, box.width if wrapped else 0)
         # gameUI.dll 0x10021E86: lines are textsize + rowspace apart, and the
