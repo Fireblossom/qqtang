@@ -86,7 +86,7 @@
 
 - [x] 代码提交在本地分支 `native-mac-client`（未推送）
 - [ ] 推送或合并到 `main`（等用户决定）
-- [ ] 服务端在 macOS 上自动找到 ONNX 运行库（`onnxruntime_path.go` 没有 darwin 分支，相关测试在 macOS 上失败）
+- [x] 服务端在 macOS 上自动找到 ONNX 运行库（`53b2c4b`）：配置里不写 `shared_library_path` 时用发布包的 `runtime/onnxruntime/darwin-arm64/libonnxruntime.1.29.0.dylib`。发布脚本（Windows 上的 `build-release.ps1`）不打包 macOS 服务端，所以 dylib 没放进 `build-assets`，本机发布包里是手动放的
 - [ ] Go 工具链和测试服务端放在 `/tmp`，重启后要重新准备
 - [ ] 清理子代理留下的工作区 `/Users/cduan/qqtang-worktrees/`（里面有原版脚本的副本）
 

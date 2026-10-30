@@ -115,7 +115,7 @@ curl -X PUT -H 'Content-Type: application/json' -d '{"quantity":1,"available_per
 CGO_ENABLED=1 go build -tags onnxruntime -o qqt-server ./cmd/qqt-server
 ```
 
-在发布包目录下运行时，ONNX Runtime 需使用官方 osx-arm64 1.29.0 版 `libonnxruntime.1.29.0.dylib`，并在配置的 `competitive_ai.shared_library_path` 中填写其路径（服务端目前不会在 macOS 上自动查找运行库）。默认测试账号为 `1000001`、`1000002`，初始密码 `123456`；本机测试库里另用 GM 接口建了 `1000003`（糖三）、`1000004`（糖四），用于双客户端联调。
+在发布包目录下运行时，ONNX Runtime 需使用官方 osx-arm64 1.29.0 版 `libonnxruntime.1.29.0.dylib`。把它放到发布包的 `runtime/onnxruntime/darwin-arm64/` 下，配置里不写 `competitive_ai.shared_library_path` 时服务端会自动用它；也可以在这一项里填写别的路径（相对配置文件所在目录）。发布脚本不打包 macOS 服务端，这个文件要自己从官方发布包里取。默认测试账号为 `1000001`、`1000002`，初始密码 `123456`；本机测试库里另用 GM 接口建了 `1000003`（糖三）、`1000004`（糖四），用于双客户端联调。
 
 ## 测试
 
