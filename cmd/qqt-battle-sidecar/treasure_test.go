@@ -42,7 +42,7 @@ func treasureMatch(t *testing.T, arbitrator uint16) *onlineMatch {
 	return &onlineMatch{
 		runtime: runtime, engine: engine, local: 1, localUIN: 1000001, arbitrator: arbitrator,
 		uins: map[uint16]uint32{1: 1000001, 2: 1000002}, trapMS: defaultTrapMS, log: io.Discard,
-		peerReady: map[uint16]bool{}, lastNumber: map[uint16]uint32{}, bombs: map[uint32]wireBomb{},
+		peerReady: map[uint16]bool{}, peerAnswered: map[uint16]bool{}, lastNumber: map[uint16]uint32{}, bombs: map[uint32]wireBomb{},
 		collected: map[pickupKey]uint16{}, fieldContacts: map[fieldContactKey]bool{}, itemUses: map[[3]uint32]bool{},
 		useRequested: map[uint8]uint32{}, preparedRequested: map[uint32]uint32{},
 		pickupRequests: map[pickupKey]pickupRequest{}, sceneRequests: map[sceneRequestKey]uint32{},

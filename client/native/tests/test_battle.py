@@ -11,7 +11,9 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
 
 from qqtclient.battle import mapfile  # noqa: E402
 from qqtclient.battle.practice import practice_players  # noqa: E402
-from qqtclient.battle.scene import ACTOR_TRAPPED, NEEDLE_ACTION, BattleScene, Explosion, flame_image  # noqa: E402
+from qqtclient.battle.scene import (ACTOR_TRAPPED, NEEDLE_ACTION, TREASURE_BADGE, TREASURE_DIGITS, BattleScene,  # noqa: E402
+                                   Explosion, flame_image)
+from qqtclient.battle.sidecar import ACTOR_ELIMINATED, EVENT_ACTOR_RESPAWNED  # noqa: E402
 
 
 class FakeResources:
@@ -94,6 +96,38 @@ class HeldItemTest(unittest.TestCase):
     def test_trapped_ctrl_uses_needle(self) -> None:
         self.assertEqual(self.scene([[41, 1], [NEEDLE_ACTION, 1]], ACTOR_TRAPPED)._smart_use(), NEEDLE_ACTION)
         self.assertEqual(self.scene([[41, 1]], ACTOR_TRAPPED)._smart_use(), 0)
+
+
+class TreasureScoreTest(unittest.TestCase):
+    @staticmethod
+    def scene(actors: list[dict]) -> tuple[BattleScene, list[tuple[str, int, int, int]]]:
+        scene = BattleScene.__new__(BattleScene)
+        scene.local_id, scene.treasure_scored = 1, False
+        scene.state = {"actors": actors}
+        drawn: list[tuple[str, int, int, int]] = []
+        scene._draw_frames = lambda _screen, path, frame, x, y: drawn.append((path, frame, x, y))  # type: ignore[method-assign]
+        return scene, drawn
+
+    def test_digits_and_leader(self) -> None:
+        actors = [{"id": 1, "team": 1, "state": 0, "carried": [0, 0, 0, 0]},
+                  {"id": 2, "team": 2, "state": 0, "carried": [0, 0, 0, 0]}]
+        scene, drawn = self.scene(actors)
+        scene._draw_treasure(None)  # type: ignore[arg-type]
+        # No score yet: both badges plain, both values 0.
+        self.assertEqual(drawn, [(TREASURE_BADGE, 0, 636, 110), (TREASURE_DIGITS[1], 0, 640, 120),
+                                 (TREASURE_BADGE, 0, 636, 161), (TREASURE_DIGITS[0], 0, 640, 171)])
+        actors[1]["carried"] = [2, 1, 3, 0]  # 2 + 2 + 9 = 13
+        drawn.clear()
+        scene._draw_treasure(None)  # type: ignore[arg-type]
+        self.assertEqual(drawn, [(TREASURE_BADGE, 0, 636, 110), (TREASURE_DIGITS[1], 0, 640, 120),
+                                 (TREASURE_BADGE, 1, 636, 161), (TREASURE_DIGITS[0], 1, 633, 171),
+                                 (TREASURE_DIGITS[0], 3, 647, 171)])
+
+    def test_respawn_clears_death_timers(self) -> None:
+        scene, _drawn = self.scene([{"id": 2, "team": 2, "state": ACTOR_ELIMINATED, "carried": [0, 0, 0, 0]}])
+        scene.eliminated_at, scene.trapped_at, scene.walk_started = {2: 5.0}, {2: 1.0}, {2: 7}
+        scene._apply({"kind": EVENT_ACTOR_RESPAWNED, "player": 2, "cell": {"row": 1, "col": 1}})
+        self.assertEqual((scene.eliminated_at, scene.trapped_at, scene.walk_started), ({}, {}, {}))
 
 
 class PracticeTest(unittest.TestCase):

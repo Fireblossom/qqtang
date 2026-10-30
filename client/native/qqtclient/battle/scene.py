@@ -18,8 +18,8 @@ from ..resources import Resources
 from ..runtime import UIRuntime
 from ..script import call_script, log
 from . import mapfile
-from .sidecar import (ACTOR_ELIMINATED, ACTOR_TRAPPED, EVENT_ACTOR_ELIMINATED, EVENT_BOMB_EXPLODED, EVENT_CELL_DESTROYED,
-                      EVENT_MAP_ELEMENT_MOVED, MOVE_DOWN, MOVE_LEFT, MOVE_NONE, MOVE_RIGHT, MOVE_UP, TICK_MS, Sidecar)
+from .sidecar import (ACTOR_ELIMINATED, ACTOR_TRAPPED, EVENT_ACTOR_ELIMINATED, EVENT_ACTOR_RESPAWNED, EVENT_BOMB_EXPLODED,
+                      EVENT_CELL_DESTROYED, EVENT_MAP_ELEMENT_MOVED, MOVE_DOWN, MOVE_LEFT, MOVE_NONE, MOVE_RIGHT, MOVE_UP, TICK_MS, Sidecar)
 
 CELL = mapfile.CELL
 # Where the 600x520 field sits on the 800x600 screen, inside the host-drawn
@@ -86,6 +86,16 @@ RESULT_TEXT = (16, 62, 112)
 RESULT_HEAD = (16, 15)
 RESULT_NAME = (264, 31)
 RESULT_STATS = ((129, 55, 303), (319, 55, 302), (129, 91, 307), (319, 91, 306))
+# Treasure (rule 5) scoreboard, Client.exe 0x005DB0B5 and 0x005E1F3A: per
+# player-list slot, a badge (frame 1 while that player's team has the highest
+# total) and the player's carried gem value in ally or opponent digits.
+TREASURE_BADGE = "object/misc/misc350_stand.img"
+TREASURE_DIGITS = ("object/misc/misc353_stand.img", "object/misc/misc351_stand.img")  # opponent, ally
+TREASURE_BADGE_AT = (636, 110)
+TREASURE_ONE_DIGIT_AT = (640, 120)
+TREASURE_TWO_DIGITS_X = (633, 647)
+TREASURE_STEP = 51
+TREASURE_GEM_VALUES = (1, 2, 3)  # scene items 150, 151, 152
 
 
 @dataclasses.dataclass
@@ -137,6 +147,12 @@ class BattleScene:
         self.map_name = description.name
         self.state = state
         self.realtime = realtime
+        begin = state.get("begin") or {}
+        self.rule = begin.get("rule") or "ordinary"
+        self.round_end_ms = begin.get("round_ms") or ROUND_END_MS
+        # The native scoreboard keeps its leader flags clear until the first
+        # score update.
+        self.treasure_scored = False
         # Online: TCP notifications for the sidecar, and where its TCP
         # copies go.
         self.pending_tcp: list[tuple[int, bytes]] = []
@@ -183,7 +199,7 @@ class BattleScene:
         return call_script(function, *args) if callable(function) else None
 
     def _update_timer(self) -> None:
-        seconds = max(0, ROUND_END_MS - self.clock) // 1000
+        seconds = max(0, self.round_end_ms - self.clock) // 1000
         if seconds != self.shown_seconds and self.runtime is not None:
             self.shown_seconds = seconds
             self.runtime.namespace["Win_SetText"](PLAYER_LIST + ".time", f"{seconds // 60:02d}:{seconds % 60:02d}")
@@ -322,6 +338,9 @@ class BattleScene:
             self._set(mapfile.LAYER_WALL, cell["row"], cell["col"], element)
         elif kind == EVENT_ACTOR_ELIMINATED:
             self.eliminated_at[event["target"] or event["player"]] = self.now_ms
+        elif kind == EVENT_ACTOR_RESPAWNED:
+            for timers in (self.eliminated_at, self.trapped_at, self.walk_started):
+                timers.pop(event["player"], None)
 
     def _set(self, layer: int, row: int, col: int, element: int) -> None:
         self.map.layers[layer][row * self.map.width + col] = element
@@ -442,6 +461,29 @@ class BattleScene:
             image.set_alpha(SYRUP_ALPHA)
             surface.blit(image, (x + offset_x, y + offset_y))
 
+    def _draw_treasure(self, screen: pygame.Surface) -> None:
+        """Each player's carried gem value. Slots follow the player list
+        order (inferred: the native slot is entry +0x3E)."""
+        actors = self.state["actors"]
+        values = [sum(count * value for count, value in zip(actor.get("carried") or (), TREASURE_GEM_VALUES)) for actor in actors]
+        teams: dict[int, int] = {}
+        for actor, value in zip(actors, values):
+            teams[actor["team"]] = teams.get(actor["team"], 0) + value
+        self.treasure_scored = self.treasure_scored or any(values) or any(actor["state"] == ACTOR_ELIMINATED for actor in actors)
+        best = max(teams.values(), default=0)
+        local = self._local_actor()
+        for slot, (actor, value) in enumerate(zip(actors, values)):
+            top = slot * TREASURE_STEP
+            leading = self.treasure_scored and teams[actor["team"]] == best
+            self._draw_frames(screen, TREASURE_BADGE, int(leading), TREASURE_BADGE_AT[0], TREASURE_BADGE_AT[1] + top)
+            digits = TREASURE_DIGITS[local is not None and actor["team"] == local["team"]]
+            y = TREASURE_ONE_DIGIT_AT[1] + top
+            if 0 <= value < 10:
+                self._draw_frames(screen, digits, value, TREASURE_ONE_DIGIT_AT[0], y)
+            elif value < 100:
+                for x, digit in zip(TREASURE_TWO_DIGITS_X, divmod(value, 10)):
+                    self._draw_frames(screen, digits, digit, x, y)
+
     def show_results(self, rows: list[ResultRow]) -> None:
         self.result_rows = sorted(rows, key=lambda row: (-row.result, row.player_id != self.local_id))
         self.result_shown_at = self.now_ms
@@ -531,6 +573,8 @@ class BattleScene:
             status = {ACTOR_TRAPPED: "（被困）", ACTOR_ELIMINATED: "（阵亡）"}.get(actor["state"], "")
             label = self.font(12).render(self.names.get(actor["id"], "") + status, True, (255, 255, 255))
             screen.blit(label, (x + 52, row_y + 14))
+        if self.rule == "treasure":
+            self._draw_treasure(screen)
         if self.result_rows:
             self._draw_results(screen)
             return

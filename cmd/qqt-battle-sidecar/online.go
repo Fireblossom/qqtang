@@ -89,7 +89,8 @@ type tcpPacket struct {
 type beginView struct {
 	GameID     uint32   `json:"game_id"`
 	MapID      uint32   `json:"map_id"`
-	Rule       string   `json:"rule"` // mapdata.CompetitiveRuleKind
+	Rule       string   `json:"rule"`     // mapdata.CompetitiveRuleKind
+	RoundMS    uint32   `json:"round_ms"` // round length including Ready/Go
 	Arbitrator uint16   `json:"arbitrator"`
 	Players    []player `json:"players"`
 }
@@ -141,6 +142,7 @@ type onlineMatch struct {
 	lastPresence    time.Time
 	lastRendezvous  time.Time
 	peerReady       map[uint16]bool
+	peerAnswered    map[uint16]bool // human peers whose rendezvous we answered
 	lastNumber      map[uint16]uint32
 	received        int
 
@@ -236,6 +238,9 @@ func newOnlineMatch(init command) (*onlineMatch, beginView, error) {
 		return nil, beginView{}, fmt.Errorf("map %d is not a competitive map", begin.MapID)
 	}
 	view := beginView{GameID: begin.GameID, MapID: begin.MapID, Rule: string(entry.Rule), Arbitrator: begin.ArbitratorPlayerID}
+	if spec, ok := mapdata.LookupCompetitiveRuleByNativeID(entry.NativeRule); ok {
+		view.RoundMS = spec.RoundDurationMS
+	}
 	rules, respawn, err := ruleOptions(entry, options.LocalID, begin.ArbitratorPlayerID)
 	if err != nil {
 		return nil, beginView{}, err
@@ -308,7 +313,7 @@ func newOnlineMatch(init command) (*onlineMatch, beginView, error) {
 		local: options.LocalID, localUIN: options.LocalUIN, arbitrator: begin.ArbitratorPlayerID,
 		uins: uins, virtual: virtual, trapMS: trapMS, started: time.Now(), log: os.Stderr,
 		conn: conn, inbound: make(chan []byte, 256),
-		peerReady: map[uint16]bool{}, lastNumber: map[uint16]uint32{},
+		peerReady: map[uint16]bool{}, peerAnswered: map[uint16]bool{}, lastNumber: map[uint16]uint32{},
 		bombs: map[uint32]wireBomb{}, collected: map[pickupKey]uint16{},
 		fieldContacts: map[fieldContactKey]bool{}, itemUses: map[[3]uint32]bool{}, useRequested: map[uint8]uint32{},
 		preparedRequested: map[uint32]uint32{},
@@ -526,17 +531,19 @@ func (match *onlineMatch) negotiate() {
 		return
 	}
 	match.lastRendezvous = now
-	endpoint := match.localEndpoint()
 	for _, playerID := range match.peerIDs() {
-		if match.peerReady[playerID] {
-			continue
+		if !match.peerReady[playerID] {
+			match.sendRendezvous(playerID)
 		}
-		match.controlNumber++
-		match.sendControl(game.LegacyUDPControlPacket{
-			Header:   match.header(game.LegacyUDPRoomPeerType, match.controlNumber),
-			RoomPeer: &game.LegacyUDPRoomPeerPayload{TargetPlayerID: playerID, TargetUIN: match.uins[playerID], Endpoint: endpoint},
-		})
 	}
+}
+
+func (match *onlineMatch) sendRendezvous(playerID uint16) {
+	match.controlNumber++
+	match.sendControl(game.LegacyUDPControlPacket{
+		Header:   match.header(game.LegacyUDPRoomPeerType, match.controlNumber),
+		RoomPeer: &game.LegacyUDPRoomPeerPayload{TargetPlayerID: playerID, TargetUIN: match.uins[playerID], Endpoint: match.localEndpoint()},
+	})
 }
 
 func (match *onlineMatch) peerIDs() []uint16 {
@@ -575,10 +582,19 @@ func (match *onlineMatch) handleDatagram(data []byte) []battleengine.Event {
 		match.presence = true
 		match.lastRendezvous = time.Time{}
 	case packet.RoomPeer != nil:
-		if !match.peerReady[packet.Header.PlayerID] {
-			match.logf("UDP peer %d ready", packet.Header.PlayerID)
+		peer := packet.Header.PlayerID
+		if !match.peerReady[peer] {
+			match.logf("UDP peer %d ready", peer)
 		}
-		match.peerReady[packet.Header.PlayerID] = true
+		match.peerReady[peer] = true
+		// A human peer's rendezvous is answered once (match-protocol.md §11
+		// step 3): the server forwards a Type-3 only to a registered target,
+		// so a peer that registered after our first ones never saw any and
+		// would keep asking. The server answers for its AIs itself.
+		if !match.virtual[peer] && !match.peerAnswered[peer] {
+			match.peerAnswered[peer] = true
+			match.sendRendezvous(peer)
+		}
 	case packet.Multicast != nil:
 		sender := packet.Header.PlayerID
 		if last, seen := match.lastNumber[sender]; seen && int32(packet.Header.PacketNumber-last) <= 0 {
@@ -831,6 +847,7 @@ func (match *onlineMatch) applyRemote(sender uint16, message game.BattleMessageD
 			return nil
 		}
 		delete(match.eliminatedAt, relive.PlayerID)
+		match.logf("player %d relives at %d,%d", relive.PlayerID, relive.Row, relive.Col)
 		return []battleengine.Event{respawned}
 	}
 	return nil
@@ -872,6 +889,7 @@ func (match *onlineMatch) respawnDue() []battleengine.Event {
 			continue
 		}
 		delete(match.eliminatedAt, actor.PlayerID)
+		match.logf("player %d relives at %d,%d", actor.PlayerID, actor.Spawn.Row, actor.Spawn.Col)
 		body, err := (game.PlayerReliveEvent{PlayerID: actor.PlayerID, ClientTime: now, Row: byte(actor.Spawn.Row), Col: byte(actor.Spawn.Col)}).MarshalNetworkBinary()
 		if err == nil {
 			match.queue(game.NotifyPlayerRelive, now, now, body)

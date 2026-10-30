@@ -3,7 +3,9 @@ package main
 import (
 	"encoding/hex"
 	"io"
+	"net"
 	"testing"
+	"time"
 
 	"qqtang/internal/game/battleengine"
 	"qqtang/internal/protocol/game"
@@ -46,7 +48,7 @@ func testMatchAs(t *testing.T, arbitrator uint16) *onlineMatch {
 	return &onlineMatch{
 		runtime: runtime, engine: engine, local: 1, localUIN: 1000001, arbitrator: arbitrator,
 		uins: map[uint16]uint32{1: 1000001, 2: 1900000002}, trapMS: defaultTrapMS, log: io.Discard,
-		peerReady: map[uint16]bool{}, lastNumber: map[uint16]uint32{}, bombs: map[uint32]wireBomb{},
+		peerReady: map[uint16]bool{}, peerAnswered: map[uint16]bool{}, lastNumber: map[uint16]uint32{}, bombs: map[uint32]wireBomb{},
 		collected: map[pickupKey]uint16{}, fieldContacts: map[fieldContactKey]bool{}, itemUses: map[[3]uint32]bool{},
 		useRequested: map[uint8]uint32{}, preparedRequested: map[uint32]uint32{},
 		pickupRequests: map[pickupKey]pickupRequest{}, sceneRequests: map[sceneRequestKey]uint32{},
@@ -176,5 +178,44 @@ func TestNonArbitratorRequestsPickupAndWaitsForTheArbitrator(t *testing.T) {
 	}
 	if len(match.pickupRequests) != 0 {
 		t.Fatalf("granted request still pending: %+v", match.pickupRequests)
+	}
+}
+
+func TestHumanRendezvousIsAnsweredOnce(t *testing.T) {
+	server, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer server.Close()
+	match := testMatch(t)
+	if match.conn, err = net.DialUDP("udp4", nil, server.LocalAddr().(*net.UDPAddr)); err != nil {
+		t.Fatal(err)
+	}
+	defer match.conn.Close()
+	peer, err := (game.LegacyUDPControlPacket{
+		Header: game.LegacyUDPControlHeader{PacketNumber: 1, PlayerID: 2, UIN: 1900000002, Type: game.LegacyUDPRoomPeerType},
+		RoomPeer: &game.LegacyUDPRoomPeerPayload{TargetPlayerID: 1, TargetUIN: 1000001,
+			Endpoint: game.LegacyUDPEndpoint{IPv4: [4]byte{127, 0, 0, 1}, Port: 40000}},
+	}).Encode()
+	if err != nil {
+		t.Fatal(err)
+	}
+	match.handleDatagram(peer)
+	match.handleDatagram(peer)
+	if !match.peerReady[2] {
+		t.Fatal("peer 2 is not ready")
+	}
+	buffer := make([]byte, 256)
+	_ = server.SetReadDeadline(time.Now().Add(200 * time.Millisecond))
+	size, _, err := server.ReadFromUDP(buffer)
+	if err != nil {
+		t.Fatalf("no answer: %v", err)
+	}
+	answer, err := game.DecodeLegacyUDPControlPacket(buffer[:size])
+	if err != nil || answer.RoomPeer == nil || answer.RoomPeer.TargetPlayerID != 2 || answer.Header.PlayerID != 1 {
+		t.Fatalf("answer = %+v, %v", answer, err)
+	}
+	if _, _, err := server.ReadFromUDP(buffer); err == nil {
+		t.Fatal("the rendezvous was answered twice")
 	}
 }
