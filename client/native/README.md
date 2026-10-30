@@ -12,6 +12,8 @@
 | 大厅 | 部分可用：房间格子分页、玩家列表、分区名称，每 5 秒刷新房间、每 10 秒刷新玩家；建房、点房间进入、快速加入；大厅聊天、悄悄话（对指定玩家）和小喇叭。好友：“好友”标签页（登录时恢复好友名单，好友上线排到前面、下线排到后面）、点玩家查看资料（在线状态、频道和小区、积分战绩）、加好友（附言）、同意或拒绝、删除好友，申请和结果经聊天栏的信封图标逐条查看。家族、家族聊天、斜杠命令（邀请、屏蔽等）、好友追踪尚未实现 |
 | 房间 | 部分可用：座位和人物（按队伍染色）、房主、准备/取消准备、房主开始、换角色、换队伍颜色、选地图、开关空位、踢人、房间聊天和头顶气泡、离开房间；人物穿着各自已装备的服装（对战里也一样）；切换竞技无道具、道具和探险模式；装备道具栏（"我的背包"里双击或拖动道具装上，右键卸下，格子顺序存在客户端目录的 `profile/<号码>.ini`）；开局后进入对战，结束后回到房间。改房间属性已接通但未实测；聊天室背景、婚礼未实现 |
 | 对战 | 普通规则地图可玩：地图、人物行走、放泡、爆炸和连锁、炸墙和推箱子、道具出现与拾取、被困和阵亡、计时、玩家列表、胜负提示。离线练习可用；联网时可作为房主与服务端 AI 对战（本客户端担任仲裁方），对局由服务端判定胜负后显示结算画面并回到房间。对战中可使用捡到的道具（1～7 键、Ctrl、Tab）；道具场里可使用从房间带入的道具（服务端只允许道具场带入，一个人在道具场不能补 AI，需要两个真人）。可以和其他真人同局：本客户端是房主时担任仲裁方，替所有人裁定；不是房主时只发自己的请求（拾取、接触、被炸、阵亡），共享结果都以仲裁方的通知为准。两名真人同时进入地图 11 或 124 会触发 Boss 局，房主开局时会被拦下 |
+| 其他对战玩法 | 未开始：踢炸弹、抢包子、比武、夺宝、雕像、机器、箱子、糖客战和 Boss 局都需要客户端自己演算（服务端只记账判胜负），且至少两名真人。调研和顺序见 `docs/other-rules.md` |
+| 探险模式 | 未开始：大厅标签页和房间里的模式切换可用；关卡数据（NPC、过关门、各级属性）已能解出（`tools/decrypt_pve.py`），NPC 演算、血量伤害和大地图都还没做。调研见 `docs/adventure.md` |
 | 商城 | 部分可用：进出商城、六个大类和子类的商品分页、糖币购买（扣款后物品进背包）、道具箱分页、试穿预览（换角色、换颜色、动作）、保存装备（`ITEM_STATUS_CHANGE`）。服务端只结算糖币，Q 币、Q 点、酷比宝石、赠送、修理、锻造合成、水果机、任务和密保验证都未实现 |
 
 原版脚本共用到 346 个宿主函数，已实现 183 个。运行 `tools/native_coverage.py` 可按界面列出尚未实现的函数。除此之外，服务器消息到达时宿主要回调脚本里的 `Notify*`、`ui_*` 等函数（约 150 种），目前接通了登录的 `LoginOK`、`LoginFailed`，大厅的 `updateRoom`、`ui_NotifyPlayerUpdate`、`ui_sectSetBtnState`、`NotifyBroadcast`（小喇叭），好友的 `updatePlayer`、`startGlint`/`endGlint`、`ReceivedRequestAddFriend`、`ui_msgBox`、`go2playerInfo`、`ui_getPlayerDetail`，以及房间的 `ui_NotifyRoomSeatChange`、`ui_NotifyRoomID`、`ui_NotifyMapChange`、`NotifyRoomPropChange`、`ui_UpdateGameType`、`ui_createRoomOK`、`ui_playerChat`。对战画面和游戏逻辑不在界面脚本里，需要另外实现。
@@ -44,7 +46,9 @@
    - `shop.py`：商城。商品目录读客户端自己的 `config/Commodity.ini`（服务端只校验版本号，不下发目录）；购买走独立的商城端口，装备变更和背包更新走游戏连接；
    - `net/`：协议实现，均与服务端 Go 代码逐字段对应：`qqtea.py` 加密，`accountauth.py` 账号校验，`game.py` 游戏包信封和连接，`directory.py` 目录区服信息，`player.py` 进区登录，`lobby.py` 房间和玩家列表，`room.py` 建房、进房和房间内的请求与通知，`chat.py` 聊天，`shop.py` 商城列表、购买、物品状态和背包更新，`friend.py` 好友名单、好友申请和应答、查找玩家。
 
-反编译和转换的结果来自原版客户端，`generated/` 已加入 `.gitignore`，不得提交。
+3. `tools/` 里的其他工具：`build-sidecar.sh` 编译规则辅助进程；`native_coverage.py` 按界面列出尚未实现的宿主函数；`decrypt_pve.py` 和 `win32emu.py` 解探险关卡数据（见上）。
+
+反编译和转换的结果来自原版客户端，`generated/` 已加入 `.gitignore`，不得提交。任务清单见 `docs/checklist.md`。
 
 ## 使用
 
@@ -75,7 +79,7 @@ tools/build-sidecar.sh          # 输出 generated/bin/qqt-battle-sidecar
 
 方向键移动，空格放泡，1～7 键使用状态栏对应格的道具，Ctrl 使用选中的道具（被困时优先用针自救），Tab 切换选中格；对局结束后回车再来一局，Esc 退出。对手只会随机走动和偶尔放泡。目前只支持普通规则（native rule 1）的地图，例如 211 景阳岗；踢炸弹、抢包子、比武等地图会被规则引擎拒绝。
 
-### 联网对战（与服务端 AI）
+### 联网对战
 
 在房间里选普通规则地图（如 211 景阳岗）后由房主开始。只有一名真人时，服务端要求房主背包里有 AI 卡（物品 30099）才会补满 AI；本地测试服务端可以用 GM 接口发放：
 
@@ -84,7 +88,7 @@ curl -X PUT -H 'Content-Type: application/json' -d '{"quantity":1,"available_per
   http://127.0.0.1:18100/gm/api/accounts/1000001/inventory/30099
 ```
 
-开局后规则辅助进程以联网模式运行：它按 GAME_BEGIN 的地图和种子建立与服务端相同的初始局面，自己收发 QQTPPP UDP 场景数据（登记、与每个对手握手、移动/放泡/被困等消息），并把需要走 TCP 的可靠副本（REQUEST_PLAY 0x0083）交给客户端发送。房主就是仲裁方，由本地引擎裁定爆炸、拾取、击杀和救援，并回应 AI 的拾取、被困和接触请求；服务端的 AI 依赖这些通知才能正常行动。服务端发来 GAME_OVER 后先显示 Win/Lose/Draw 卡片，再显示成绩表，10 秒后（或按回车、Esc、点击）回到房间。使用道具时客户端先发 REQUEST_USE_ITEM（0x0FAF），等服务端的 0x0FB0 回来才生效，与原版一致。
+开局后规则辅助进程以联网模式运行：它按 GAME_BEGIN 的地图和种子建立与服务端相同的初始局面，自己收发 QQTPPP UDP 场景数据（登记、与每个对手握手、移动/放泡/被困等消息），并把需要走 TCP 的可靠副本（REQUEST_PLAY 0x0083）交给客户端发送。房主就是仲裁方，由本地引擎裁定爆炸、拾取、击杀和救援，并回应 AI 和其他真人的拾取、被困和接触请求；服务端的 AI 依赖这些通知才能正常行动。不是房主时，本客户端只发自己的请求，共享结果都以房主的通知为准（见"已确认的原版约定"里的非仲裁方一条）。多名真人时，标准场各队人数要相同，服务端在两队都有真人时不补 AI；两名以上真人进入地图 11 或 124 会触发 Boss 局，宿主会拦下。道具场要用道具场地图（如 214），一个人在道具场不能开局。服务端发来 GAME_OVER 后先显示 Win/Lose/Draw 卡片，再显示成绩表，10 秒后（或按回车、Esc、点击）回到房间。使用道具时客户端先发 REQUEST_USE_ITEM（0x0FAF），等服务端的 0x0FB0 回来才生效，与原版一致。
 
 对战协议和规则引擎的调研见 `docs/match-protocol.md` 和 `docs/battle-engine.md`，其他对战玩法见 `docs/other-rules.md`，探险模式见 `docs/adventure.md`（两份都是只读调研，引用的 `/tmp/qqt-tools` 临时文件可能已不存在）。开发中踩过的坑和做事方法上的教训见 `docs/lessons.md`。退出时会把运行中实际调用到的未实现函数及首次参数写入 `generated/missing-natives.json`。
 
@@ -111,7 +115,7 @@ curl -X PUT -H 'Content-Type: application/json' -d '{"quantity":1,"available_per
 CGO_ENABLED=1 go build -tags onnxruntime -o qqt-server ./cmd/qqt-server
 ```
 
-在发布包目录下运行时，ONNX Runtime 需使用官方 osx-arm64 1.29.0 版 `libonnxruntime.1.29.0.dylib`，并在配置的 `competitive_ai.shared_library_path` 中填写其路径（服务端目前不会在 macOS 上自动查找运行库）。默认测试账号为 `1000001`、`1000002`，初始密码 `123456`。
+在发布包目录下运行时，ONNX Runtime 需使用官方 osx-arm64 1.29.0 版 `libonnxruntime.1.29.0.dylib`，并在配置的 `competitive_ai.shared_library_path` 中填写其路径（服务端目前不会在 macOS 上自动查找运行库）。默认测试账号为 `1000001`、`1000002`，初始密码 `123456`；本机测试库里另用 GM 接口建了 `1000003`（糖三）、`1000004`（糖四），用于双客户端联调。
 
 ## 测试
 

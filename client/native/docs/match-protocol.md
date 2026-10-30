@@ -3,6 +3,8 @@
 Source: Go server at `/Users/cduan/qqtang` (read-only analysis). All paths below are relative to that repo.
 Integers are **big-endian** unless marked **LE**. "Client" = the new Python client. "Native" = original Client.exe/QQTPPP.dll behaviour that the server was built around.
 
+> Update (2026-10-30): the non-arbitrator case is implemented too: the sidecar enables battleengine's `NativeOutcomeAuthority` with `NativeRequestPlayerID` set to the local player, sends its requests (0x0FAC, 0x0FA8/0x0FAA, PLAYER_BE_EXPLODED, death) to the arbitrator and applies the arbitrator's notifications; two native clients played rule-1 matches with no server warnings.
+
 > Update: implemented for the arbitrator case in `cmd/qqt-battle-sidecar/online.go` (UDP side) and `qqtclient/battle/online.py` (TCP side). Findings from testing against the server: a solo owner needs the AI card (item 30099) active in the inventory or StartGame fails with 0xF004; server AIs publish their item uses (0x0FB0) on Type-2, not TCP; the 0x0FA4 map-element list must include walls destroyed by the blast (engine `EventCellDestroyed`), not only damaged ones; AI contact with a banana/glue field object arrives as 0x0FAC with ItemID 42/43 and is answered with 0x0FAD like a pickup.
 
 > Legend: **[code]** = directly enforced/produced by server code; **[native]** = server comment describing what Client.exe does (not enforced, but peers depend on it); **[inferred]** = my reading, not proven by code.
