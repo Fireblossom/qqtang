@@ -27,7 +27,7 @@ func (engine *Engine) resolveActorContacts() []Event {
 				// An original actor produces its own request. A virtual actor has no
 				// client process, so Go publishes the request once per continuous
 				// contact while leaving the outcome to the elected native arbitrator.
-				if actor.Source == ParticipantHuman {
+				if !engine.authorsNativeRequests(actor) {
 					continue
 				}
 				rescue := actor.TeamID == target.TeamID
@@ -68,6 +68,9 @@ func (engine *Engine) applyFlameHazards() []Event {
 	// verified native explosions apply to that subset through
 	// applyVirtualFlameHazards instead.
 	if engine.rules.NativeOutcomeAuthority {
+		if local := engine.rules.NativeRequestPlayerID; local != 0 {
+			return engine.applyFlameHazardsMatching(func(actor *Actor) bool { return actor.PlayerID == local })
+		}
 		return nil
 	}
 	if local := engine.rules.LocalHitPlayerID; local != 0 {
@@ -296,6 +299,12 @@ func (engine *Engine) resetActorOnHit(actor *Actor) {
 	// The normal branch and avatar callback 005f78bf both face down (3).
 	engine.clearMovementStatus(actor)
 	actor.Facing = DirectionDown
+}
+
+// authorsNativeRequests reports whether, under NativeOutcomeAuthority, this
+// engine produces the actor's requests because no original client does.
+func (engine *Engine) authorsNativeRequests(actor *Actor) bool {
+	return actor.Source == ParticipantVirtualAI || (engine.rules.NativeRequestPlayerID != 0 && actor.PlayerID == engine.rules.NativeRequestPlayerID)
 }
 
 func (engine *Engine) trapDuration(actor *Actor) uint32 {

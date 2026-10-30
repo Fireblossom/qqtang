@@ -71,7 +71,7 @@ class OnlineBattle:
         if state.get("prepared"):
             log("[match] room props: " + ", ".join(f"{entry['item']}x{entry['count']}" for entry in state["prepared"]))
         if begin_info["arbitrator"] != self.local_id:
-            log("[match] another player is the arbitrator; only arbitrating clients are fully supported so far")
+            log(f"[match] following arbitrator {begin_info['arbitrator']}")
         self.scene = BattleScene(resources, renderer.sprites, AvatarCache(resources), sidecar, begin_info["map_id"], players,
                                  local_id=self.local_id, state=state, realtime=True,
                                  wear={player_id: member.wear for player_id, member in context.members.items()})

@@ -141,7 +141,7 @@ func (engine *Engine) resolvePickupContacts() []Event {
 		// the object nor applies its attribute here. Offline/RL engines keep the
 		// deterministic immediate-collection path below.
 		if engine.rules.NativeOutcomeAuthority {
-			if actor.Source == ParticipantHuman {
+			if !engine.authorsNativeRequests(actor) {
 				continue
 			}
 			actorCell := actor.Position.Cell()

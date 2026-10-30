@@ -13,6 +13,13 @@ import (
 // a detonator pickup (scene 28 -> action 64) next to player 1.
 func testMatch(t *testing.T) *onlineMatch {
 	t.Helper()
+	return testMatchAs(t, 1)
+}
+
+// testMatchAs is testMatch with the given arbitrator; the engine rules follow
+// the local player's role as in a live match.
+func testMatchAs(t *testing.T, arbitrator uint16) *onlineMatch {
+	t.Helper()
 	grid := battleengine.Grid{Width: 5, Height: 3, Cells: make([]battleengine.Tile, 15)}
 	for index := range grid.Cells {
 		grid.Cells[index].FlamePassable = true
@@ -21,9 +28,11 @@ func testMatch(t *testing.T) *onlineMatch {
 		return battleengine.Participant{PlayerID: id, TeamID: team, Source: battleengine.ParticipantHuman, Spawn: battleengine.Cell{Row: 1, Col: col},
 			SpeedPixelsPerSecond: 80, BombCapacity: 2, BombPower: 2}
 	}
+	rules := onlineRules(1, arbitrator)
+	rules.RoundDurationMS, rules.BombFuseMS, rules.FlameDurationMS, rules.ActorHalfSizePixels = 240_000, 3000, 500, 19
 	engine, err := battleengine.New(battleengine.Config{
 		Seed: 1, Grid: grid,
-		Rules:        battleengine.Rules{TickMS: 20, RoundDurationMS: 240_000, BombFuseMS: 3000, FlameDurationMS: 500, ActorHalfSizePixels: 19, LocalHitPlayerID: 1},
+		Rules:        rules,
 		Participants: []battleengine.Participant{participant(1, 1, 1), participant(2, 2, 4)},
 		Pickups:      []battleengine.Pickup{{SceneID: 28, Cell: battleengine.Cell{Row: 1, Col: 1}, State: battleengine.PickupAvailable}},
 	})
@@ -35,11 +44,12 @@ func testMatch(t *testing.T) *onlineMatch {
 		t.Fatal(err)
 	}
 	return &onlineMatch{
-		runtime: runtime, engine: engine, local: 1, localUIN: 1000001, arbitrator: 1,
+		runtime: runtime, engine: engine, local: 1, localUIN: 1000001, arbitrator: arbitrator,
 		uins: map[uint16]uint32{1: 1000001, 2: 1900000002}, trapMS: defaultTrapMS, log: io.Discard,
 		peerReady: map[uint16]bool{}, lastNumber: map[uint16]uint32{}, bombs: map[uint32]wireBomb{},
 		collected: map[pickupKey]uint16{}, fieldContacts: map[fieldContactKey]bool{}, itemUses: map[[3]uint32]bool{},
 		useRequested: map[uint8]uint32{}, preparedRequested: map[uint32]uint32{},
+		pickupRequests: map[pickupKey]pickupRequest{}, sceneRequests: map[sceneRequestKey]uint32{},
 	}
 }
 
@@ -133,5 +143,38 @@ func TestPreparedPropUseWaitsForServerConfirmation(t *testing.T) {
 	}
 	if _, pending := match.preparedRequested[curePropID]; pending {
 		t.Fatal("confirmed use is still pending")
+	}
+}
+
+func TestNonArbitratorRequestsPickupAndWaitsForTheArbitrator(t *testing.T) {
+	match := testMatchAs(t, 2)
+	events, err := match.runtime.Step([]battleengine.Action{{PlayerID: 1}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	match.publishEvents(match.engine, events)
+	var requested []byte
+	for _, message := range match.outbound {
+		if message.data.DataID == uint32(game.RequestGetItem) && message.arbitratorOnly {
+			requested = message.data.Data
+		}
+	}
+	if requested == nil {
+		t.Fatalf("no pickup request to the arbitrator in %+v", match.outbound)
+	}
+	if heldCount(match, 64) != 0 {
+		t.Fatal("the non-arbitrator collected the item on its own")
+	}
+	request, err := game.ParsePlayerItemEvent(game.GameEvent{Schema: game.RequestGetItem, Body: requested})
+	if err != nil || request.PlayerID != 1 || request.ItemID != 28 {
+		t.Fatalf("request = %+v, %v", request, err)
+	}
+
+	match.applyRemote(2, game.BattleMessageData{DataID: uint32(game.NotifyPlayerGetItem), Data: requested}) // the arbitrator's 0x0FAD
+	if heldCount(match, 64) != 1 {
+		t.Fatal("the arbitrator's grant did not give the item")
+	}
+	if len(match.pickupRequests) != 0 {
+		t.Fatalf("granted request still pending: %+v", match.pickupRequests)
 	}
 }
