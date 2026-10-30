@@ -211,7 +211,7 @@ func TestShippedTreasureMapsBuildWithSpecialRules(t *testing.T) {
 		items := append(supply.WallItems, entry.CompetitiveObjectiveSceneItems(1, 7)...)
 		options := CompetitiveMapConfigOptions{
 			SpawnSeed: 3, ItemSeed: 7, SpawnMode: NativeSpawnModeForMap(entry, false), Participants: participants,
-			Rules: Rules{TickMS: 20, ObjectiveSceneIDs: [MaxObjectiveKinds]uint32{150, 151, 152}, ObjectiveDeathDrops: true, ExternalConclusion: true},
+			Rules:             Rules{TickMS: 20, ObjectiveSceneIDs: [MaxObjectiveKinds]uint32{150, 151, 152}, ObjectiveDeathDrops: true, ExternalConclusion: true},
 			RecordedWallItems: items, RecordedDelayedItems: supply.DelayedItems, UseRecordedWallItems: true,
 		}
 		if _, err := ConfigFromCompetitiveMap(entry, options); err == nil {

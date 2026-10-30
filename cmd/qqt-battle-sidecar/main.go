@@ -12,8 +12,8 @@
 // against the server (online.go): the engine follows the wall clock and every
 // step also exchanges the match's UDP traffic.
 //
-// Only native rule 1 (ordinary bubble battle) maps are supported, which is
-// what battleengine implements.
+// Offline practice supports native rule 1 (ordinary bubble battle) maps;
+// online matches also play rule 5 (treasure, see ruleOptions).
 package main
 
 import (
@@ -94,6 +94,8 @@ type actorView struct {
 	Protected   uint32 `json:"protected_until"`
 	// The seven held-item slots as [action ID, count]; empty slots are zero.
 	Held [battleengine.NativeBattleActionSlots][2]uint8 `json:"held"`
+	// Carried rule objectives (treasure gems 150, 151, 152) by kind.
+	Carried [battleengine.MaxObjectiveKinds]uint16 `json:"carried"`
 }
 
 type bombView struct {
@@ -365,6 +367,7 @@ func view(runtime *battleengine.Runtime, events []battleengine.Event) stateView 
 			X: actor.Position.X, Y: actor.Position.Y, State: byte(actor.State), Facing: byte(actor.Facing),
 			Bombs: actor.BombCapacity, Power: actor.BombPower, SpeedRate: actor.SpeedRate,
 			TrapExpires: actor.TrapExpiresAt, Protected: actor.HarmProtectionExpiresAt,
+			Carried: actor.CarriedObjectives,
 		}
 		for index, slot := range actor.HeldActions {
 			next.Held[index] = [2]uint8{slot.ActionID, slot.Count}

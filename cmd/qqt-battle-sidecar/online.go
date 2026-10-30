@@ -38,6 +38,7 @@ import (
 	"strconv"
 	"time"
 
+	"qqtang/internal/clientdata/sceneelement"
 	"qqtang/internal/game/battleengine"
 	"qqtang/internal/game/mapdata"
 	"qqtang/internal/protocol/game"
@@ -88,6 +89,7 @@ type tcpPacket struct {
 type beginView struct {
 	GameID     uint32   `json:"game_id"`
 	MapID      uint32   `json:"map_id"`
+	Rule       string   `json:"rule"` // mapdata.CompetitiveRuleKind
 	Arbitrator uint16   `json:"arbitrator"`
 	Players    []player `json:"players"`
 }
@@ -172,6 +174,19 @@ type onlineMatch struct {
 	pickupRequests map[pickupKey]pickupRequest
 	sceneRequests  map[sceneRequestKey]uint32
 	mapElemSeq     uint16
+
+	// Timed respawn (rule 5); nil for rule 1. eliminatedAt holds the engine
+	// clock of each eliminated player's death.
+	respawn      *respawnRule
+	eliminatedAt map[uint16]uint32
+}
+
+// respawnRule is a special rule's relive timing, from Client.exe's rule
+// objects: slot 5 is the delay and rules 4 and 5 wait for the respawn cell
+// (0x00615AAE).
+type respawnRule struct {
+	delayMS  uint32
+	waitFree bool
 }
 
 type outboundMessage struct {
@@ -220,7 +235,11 @@ func newOnlineMatch(init command) (*onlineMatch, beginView, error) {
 	if !ok {
 		return nil, beginView{}, fmt.Errorf("map %d is not a competitive map", begin.MapID)
 	}
-	view := beginView{GameID: begin.GameID, MapID: begin.MapID, Arbitrator: begin.ArbitratorPlayerID}
+	view := beginView{GameID: begin.GameID, MapID: begin.MapID, Rule: string(entry.Rule), Arbitrator: begin.ArbitratorPlayerID}
+	rules, respawn, err := ruleOptions(entry, options.LocalID, begin.ArbitratorPlayerID)
+	if err != nil {
+		return nil, beginView{}, err
+	}
 	participants := make([]battleengine.Participant, 0, len(begin.Players))
 	uins := make(map[uint16]uint32, len(begin.Players))
 	for _, info := range begin.Players {
@@ -254,11 +273,12 @@ func newOnlineMatch(init command) (*onlineMatch, beginView, error) {
 		SimulationSeed: uint64(begin.SpawnSeed)<<32 | uint64(begin.ItemSeed),
 		SpawnSeed:      begin.SpawnSeed, ItemSeed: begin.ItemSeed,
 		SpawnMode:            battleengine.NativeSpawnModeForMap(entry, options.FreeRule),
-		Rules:                onlineRules(options.LocalID, begin.ArbitratorPlayerID),
+		Rules:                rules,
 		Participants:         participants,
 		RecordedWallItems:    wallItems(begin.NewItems),
 		RecordedDelayedItems: wallItems(begin.Items),
 		UseRecordedWallItems: true,
+		AllowSpecialRules:    respawn != nil,
 	})
 	if err != nil {
 		return nil, beginView{}, err
@@ -293,6 +313,7 @@ func newOnlineMatch(init command) (*onlineMatch, beginView, error) {
 		fieldContacts: map[fieldContactKey]bool{}, itemUses: map[[3]uint32]bool{}, useRequested: map[uint8]uint32{},
 		preparedRequested: map[uint32]uint32{},
 		pickupRequests:    map[pickupKey]pickupRequest{}, sceneRequests: map[sceneRequestKey]uint32{},
+		respawn: respawn, eliminatedAt: map[uint16]uint32{},
 	}
 	for _, entry := range view.Players {
 		if entry.ID == match.local {
@@ -312,6 +333,28 @@ func onlineRules(local, arbitrator uint16) battleengine.Rules {
 		return battleengine.Rules{TickMS: tickMS, LocalHitPlayerID: local}
 	}
 	return battleengine.Rules{TickMS: tickMS, NativeOutcomeAuthority: true, NativeRequestPlayerID: local}
+}
+
+// ruleOptions adds a special rule's engine options to onlineRules. Only
+// treasure (rule 5) is implemented besides rule 1: gems 150..152 are carried
+// objectives, a player who dies with gems drops only them, players relive
+// 5 s after death once their spawn cell is free, and the server decides the
+// result.
+func ruleOptions(entry mapdata.CompetitiveMap, local, arbitrator uint16) (battleengine.Rules, *respawnRule, error) {
+	rules := onlineRules(local, arbitrator)
+	switch entry.Rule {
+	case mapdata.CompetitiveRuleOrdinary:
+		return rules, nil, nil
+	case mapdata.CompetitiveRuleTreasure:
+		rules.ObjectiveSceneIDs = [battleengine.MaxObjectiveKinds]uint32{
+			uint32(sceneelement.TreasureGemOne), uint32(sceneelement.TreasureGemTwo), uint32(sceneelement.TreasureGemThree),
+		}
+		rules.ObjectiveDeathDrops = true
+		rules.ExternalConclusion = true
+		return rules, &respawnRule{delayMS: 5000, waitFree: true}, nil
+	default:
+		return battleengine.Rules{}, nil, fmt.Errorf("map %d uses rule %s, which this client does not play yet", entry.ID, entry.Rule)
+	}
 }
 
 func wallItems(items []game.GameItemType) []mapdata.CompetitiveWallItem {
@@ -372,6 +415,7 @@ func (match *onlineMatch) step(step command) ([]battleengine.Event, error) {
 	match.negotiate()
 	var events []battleengine.Event
 	events = append(events, match.drain()...)
+	match.noteEliminations(events)
 	// A held item is not used directly: its use is a TCP request (0x0FAF)
 	// and takes effect when the server's 0x0FB0 comes back (handleTCP).
 	local := battleengine.Action{PlayerID: match.local}
@@ -407,6 +451,8 @@ func (match *onlineMatch) step(step command) ([]battleengine.Event, error) {
 		match.publishMovement(before, after, action)
 		tickEvents = append(tickEvents, match.expireLocalTrap()...)
 		match.publishEvents(after, tickEvents)
+		match.noteEliminations(tickEvents)
+		tickEvents = append(tickEvents, match.respawnDue()...)
 		events = append(events, tickEvents...)
 	}
 	match.retryPickupRequests()
@@ -774,8 +820,80 @@ func (match *onlineMatch) applyRemote(sender uint16, message game.BattleMessageD
 			return nil
 		}
 		return match.applyExplosion(event)
+	case game.NotifyPlayerRelive:
+		relive, err := game.ParsePlayerReliveEvent(event)
+		if err != nil || sender != match.arbitrator || match.isArbitrator() || match.respawn == nil {
+			return nil
+		}
+		respawned, err := match.engine.RespawnActor(relive.PlayerID, battleengine.Cell{Row: int16(relive.Row), Col: int16(relive.Col)})
+		if err != nil {
+			match.logf("relive of %d rejected: %v", relive.PlayerID, err)
+			return nil
+		}
+		delete(match.eliminatedAt, relive.PlayerID)
+		return []battleengine.Event{respawned}
 	}
 	return nil
+}
+
+// noteEliminations remembers when each player died, for respawnDue.
+func (match *onlineMatch) noteEliminations(events []battleengine.Event) {
+	if match.respawn == nil {
+		return
+	}
+	for _, event := range events {
+		if event.Kind == battleengine.EventActorEliminated {
+			match.eliminatedAt[event.TargetID] = event.TimeMS
+		}
+	}
+}
+
+// respawnDue is the arbitrator's relive component (0x00615AAE): a player
+// dead for the rule's delay relives at its spawn cell, once no other player
+// and no bubble is on it (which scene grid 0x005D865C reads is inferred).
+// The NOTIFY_PLAYER_RELIVE goes to every peer and to the server.
+func (match *onlineMatch) respawnDue() []battleengine.Event {
+	if match.respawn == nil || !match.isArbitrator() || match.engine.Terminal().Ended {
+		return nil
+	}
+	now := match.engine.ElapsedMS()
+	var events []battleengine.Event
+	for _, actor := range match.engine.Actors() {
+		diedAt, dead := match.eliminatedAt[actor.PlayerID]
+		if !dead || actor.State != battleengine.ActorEliminated || now-diedAt < match.respawn.delayMS {
+			continue
+		}
+		if match.respawn.waitFree && match.cellBusy(actor.Spawn, actor.PlayerID) {
+			continue
+		}
+		respawned, err := match.engine.RespawnActor(actor.PlayerID, actor.Spawn)
+		if err != nil {
+			match.logf("relive of %d: %v", actor.PlayerID, err)
+			continue
+		}
+		delete(match.eliminatedAt, actor.PlayerID)
+		body, err := (game.PlayerReliveEvent{PlayerID: actor.PlayerID, ClientTime: now, Row: byte(actor.Spawn.Row), Col: byte(actor.Spawn.Col)}).MarshalNetworkBinary()
+		if err == nil {
+			match.queue(game.NotifyPlayerRelive, now, now, body)
+			match.mirror(game.NotifyPlayerRelive, body)
+		}
+		events = append(events, respawned)
+	}
+	return events
+}
+
+func (match *onlineMatch) cellBusy(cell battleengine.Cell, except uint16) bool {
+	for _, actor := range match.engine.Actors() {
+		if actor.PlayerID != except && actor.State != battleengine.ActorEliminated && actor.Position.Cell() == cell {
+			return true
+		}
+	}
+	for _, bomb := range match.engine.Bombs() {
+		if bomb.Cell == cell {
+			return true
+		}
+	}
+	return false
 }
 
 // wireBombID finds the engine bubble peers name by owner, placement time and
