@@ -87,7 +87,8 @@ RESULT_HEAD = (16, 15)
 RESULT_NAME = (264, 31)
 RESULT_STATS = ((129, 55, 303), (319, 55, 302), (129, 91, 307), (319, 91, 306))
 # Treasure (rule 5) scoreboard, Client.exe 0x005DB0B5 and 0x005E1F3A: per
-# player-list slot, a badge (frame 1 while that player's team has the highest
+# room seat (actor +0x396, which uiGame's ui_NotifyShowLevelIcon passes to
+# GetSeatInfo), a badge (frame 1 while that player's team has the highest
 # total) and the player's carried gem value in ally or opponent digits.
 TREASURE_BADGE = "object/misc/misc350_stand.img"
 TREASURE_DIGITS = ("object/misc/misc353_stand.img", "object/misc/misc351_stand.img")  # opponent, ally
@@ -179,6 +180,8 @@ class BattleScene:
         self.shown_slots: list[tuple[int, int]] | None = None
         self.accumulated_ms = 0.0
         self.names = {player["id"]: player.get("name") or f"玩家{player['id']}" for player in players}
+        # Room seats 0..7 by PlayerID (online only).
+        self.seats = {player["id"]: player["seat"] for player in players if player.get("seat", -1) >= 0}
         self.runtime: UIRuntime | None = None
         self.shown_seconds = -1
         self.font: Callable[[int], pygame.font.Font] | None = None
@@ -462,8 +465,8 @@ class BattleScene:
             surface.blit(image, (x + offset_x, y + offset_y))
 
     def _draw_treasure(self, screen: pygame.Surface) -> None:
-        """Each player's carried gem value. Slots follow the player list
-        order (inferred: the native slot is entry +0x3E)."""
+        """Each player's carried gem value, in the row of the player's room
+        seat; a player whose seat is unknown uses its list position."""
         actors = self.state["actors"]
         values = [sum(count * value for count, value in zip(actor.get("carried") or (), TREASURE_GEM_VALUES)) for actor in actors]
         teams: dict[int, int] = {}
@@ -472,8 +475,8 @@ class BattleScene:
         self.treasure_scored = self.treasure_scored or any(values) or any(actor["state"] == ACTOR_ELIMINATED for actor in actors)
         best = max(teams.values(), default=0)
         local = self._local_actor()
-        for slot, (actor, value) in enumerate(zip(actors, values)):
-            top = slot * TREASURE_STEP
+        for index, (actor, value) in enumerate(zip(actors, values)):
+            top = self.seats.get(actor["id"], index) * TREASURE_STEP
             leading = self.treasure_scored and teams[actor["team"]] == best
             self._draw_frames(screen, TREASURE_BADGE, int(leading), TREASURE_BADGE_AT[0], TREASURE_BADGE_AT[1] + top)
             digits = TREASURE_DIGITS[local is not None and actor["team"] == local["team"]]

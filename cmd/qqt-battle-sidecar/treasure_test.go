@@ -14,9 +14,18 @@ import (
 // under the rule-5 options, with a 3-point gem next to player 1.
 func treasureMatch(t *testing.T, arbitrator uint16) *onlineMatch {
 	t.Helper()
+	return treasureMatchOn(t, arbitrator, nil)
+}
+
+// treasureMatchOn is treasureMatch with edit applied to the field first.
+func treasureMatchOn(t *testing.T, arbitrator uint16, edit func(*battleengine.Grid)) *onlineMatch {
+	t.Helper()
 	grid := battleengine.Grid{Width: 5, Height: 3, Cells: make([]battleengine.Tile, 15)}
 	for index := range grid.Cells {
 		grid.Cells[index].FlamePassable = true
+	}
+	if edit != nil {
+		edit(&grid)
 	}
 	participant := func(id uint16, team byte, col int16) battleengine.Participant {
 		return battleengine.Participant{PlayerID: id, TeamID: team, Source: battleengine.ParticipantHuman, Spawn: battleengine.Cell{Row: 1, Col: col},
@@ -117,22 +126,36 @@ func TestArbitratorRelivesDeadPlayerAfterFiveSeconds(t *testing.T) {
 	}
 }
 
-func TestReliveWaitsForFreeSpawnCell(t *testing.T) {
+func TestBubbleOnSpawnDoesNotHoldRelive(t *testing.T) {
 	match := treasureMatch(t, 1)
 	events, err := match.runtime.AcceptNativeElimination(2, 0, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	match.noteEliminations(events)
-	if !match.cellBusy(battleengine.Cell{Row: 1, Col: 1}, 2) || match.cellBusy(battleengine.Cell{Row: 1, Col: 4}, 2) {
-		t.Fatal("cellBusy does not follow living players")
-	}
 	advanceTo(t, match, match.eliminatedAt[2]+5000)
 	if _, err := match.runtime.AcceptHumanBombPlacement(1, battleengine.Cell{Row: 1, Col: 4}, 2, 0, match.engine.ElapsedMS()); err != nil {
 		t.Fatal(err)
 	}
+	if relived := match.respawnDue(); len(relived) != 1 {
+		t.Fatalf("relive events = %+v, want one", relived)
+	}
+}
+
+// A walkable map element on the spawn cell (scene grid +0xE78) holds every
+// relive back, as 0x00615AAE returns at the first blocked spawn.
+func TestMapElementOnSpawnHoldsRelive(t *testing.T) {
+	match := treasureMatchOn(t, 1, func(grid *battleengine.Grid) {
+		grid.Cells[1*5+4].MapElementOccupied = true
+	})
+	events, err := match.runtime.AcceptNativeElimination(2, 0, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	match.noteEliminations(events)
+	advanceTo(t, match, match.eliminatedAt[2]+5000)
 	if relived := match.respawnDue(); len(relived) != 0 {
-		t.Fatalf("relived onto a bubble: %+v", relived)
+		t.Fatalf("relived onto a map element: %+v", relived)
 	}
 }
 

@@ -36,6 +36,7 @@ class MatchMember:
     nickname: str
     points: int  # competitive points before the match (level icon)
     wear: tuple[tuple[str, int], ...] = ()  # costume parts worn in the room
+    seat: int = -1  # room seat 0..7 (Client.exe actor +0x396); -1 if unknown
 
 
 @dataclasses.dataclass
@@ -64,7 +65,8 @@ class OnlineBattle:
             sidecar.close()
             raise
         begin_info = state["begin"]
-        players = [dict(player, name=member.nickname if (member := context.members.get(player["id"])) else f"玩家{player['id']}")
+        players = [dict(player, name=member.nickname if (member := context.members.get(player["id"])) else f"玩家{player['id']}",
+                        seat=member.seat if member else -1)
                    for player in begin_info["players"]]
         log(f"[match] game {begin_info['game_id']} map {begin_info['map_id']}, arbitrator {begin_info['arbitrator']}, "
             f"players " + ", ".join(f"{player['id']}:{player['name']}" for player in players))

@@ -866,9 +866,11 @@ func (match *onlineMatch) noteEliminations(events []battleengine.Event) {
 }
 
 // respawnDue is the arbitrator's relive component (0x00615AAE): a player
-// dead for the rule's delay relives at its spawn cell, once no other player
-// and no bubble is on it (which scene grid 0x005D865C reads is inferred).
-// The NOTIFY_PLAYER_RELIVE goes to every peer and to the server.
+// dead for the rule's delay relives at its spawn cell. Under rules 4 and 5 a
+// map element on that cell (scene grid +0xE78, the layer pushed boxes move
+// in, see 0x00604208) holds back the whole pass until a later frame; players
+// and bubbles do not. The NOTIFY_PLAYER_RELIVE goes to every peer and to the
+// server.
 func (match *onlineMatch) respawnDue() []battleengine.Event {
 	if match.respawn == nil || !match.isArbitrator() || match.engine.Terminal().Ended {
 		return nil
@@ -880,8 +882,8 @@ func (match *onlineMatch) respawnDue() []battleengine.Event {
 		if !dead || actor.State != battleengine.ActorEliminated || now-diedAt < match.respawn.delayMS {
 			continue
 		}
-		if match.respawn.waitFree && match.cellBusy(actor.Spawn, actor.PlayerID) {
-			continue
+		if match.respawn.waitFree && match.spawnBlocked(actor.Spawn) {
+			return events
 		}
 		respawned, err := match.engine.RespawnActor(actor.PlayerID, actor.Spawn)
 		if err != nil {
@@ -900,18 +902,12 @@ func (match *onlineMatch) respawnDue() []battleengine.Event {
 	return events
 }
 
-func (match *onlineMatch) cellBusy(cell battleengine.Cell, except uint16) bool {
-	for _, actor := range match.engine.Actors() {
-		if actor.PlayerID != except && actor.State != battleengine.ActorEliminated && actor.Position.Cell() == cell {
-			return true
-		}
-	}
-	for _, bomb := range match.engine.Bombs() {
-		if bomb.Cell == cell {
-			return true
-		}
-	}
-	return false
+// spawnBlocked reports a map element on the cell. The engine merges both
+// map layers into one tile; spawn cells start empty, so only an element
+// moved or placed there later sets it.
+func (match *onlineMatch) spawnBlocked(cell battleengine.Cell) bool {
+	tile, inside := match.engine.TileAt(cell)
+	return !inside || tile.Kind != battleengine.CellOpen || tile.MapElementOccupied
 }
 
 // wireBombID finds the engine bubble peers name by owner, placement time and
