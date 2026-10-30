@@ -31,7 +31,7 @@ func (engine *Engine) useHeldAction(actorIndex int, actionID uint8) ([]Event, bo
 			return nil, false
 		}
 	}
-	if engine.rules.NativeOutcomeAuthority && actor.Source == ParticipantVirtualAI {
+	if engine.rules.NativeOutcomeAuthority && engine.authorsNativeRequests(actor) {
 		if !canUseHeldAction(actor, actionID) {
 			return nil, false
 		}
@@ -273,7 +273,7 @@ func (engine *Engine) resolveFieldObjectContacts() []Event {
 			// A real participant reports its own native contact. A virtual actor has
 			// no client process, so Go supplies the missing request, while the
 			// elected arbitrator still owns the resulting actor state.
-			if engine.rules.NativeOutcomeAuthority && actor.Source == ParticipantHuman {
+			if engine.rules.NativeOutcomeAuthority && !engine.authorsNativeRequests(actor) {
 				continue
 			}
 			triggerIndex := len(events)

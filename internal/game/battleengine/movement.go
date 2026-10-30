@@ -138,7 +138,7 @@ func (engine *Engine) tryActorWorldInteraction(actorIndex int, direction Directi
 		return Event{}, false
 	}
 	if capabilities.CanKickBomb {
-		if engine.rules.NativeOutcomeAuthority && actor.Source == ParticipantVirtualAI {
+		if engine.rules.NativeOutcomeAuthority && engine.authorsNativeRequests(actor) {
 			if index := engine.bombAt(front); index >= 0 {
 				if target, found := engine.kickBombDestination(front, direction); found {
 					return Event{
@@ -280,7 +280,7 @@ func (engine *Engine) chargeMapElementPush(playerID uint16, source Cell, directi
 		return Event{}, true
 	}
 	if engine.rules.NativeOutcomeAuthority {
-		if actorIndex := engine.actorIndex(playerID); actorIndex >= 0 && engine.actors[actorIndex].Source == ParticipantVirtualAI {
+		if actorIndex := engine.actorIndex(playerID); actorIndex >= 0 && engine.authorsNativeRequests(&engine.actors[actorIndex]) {
 			// The local contact counter decides when to request a push, but only
 			// the arbitrator's 0x0FB3 moves the shared map element.
 			for _, cell := range footprint {

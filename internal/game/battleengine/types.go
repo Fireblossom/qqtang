@@ -345,6 +345,14 @@ type Rules struct {
 	// notification. Offline replay and RL leave this false and simulate the
 	// complete battle.
 	NativeOutcomeAuthority bool
+	// NativeRequestPlayerID, under NativeOutcomeAuthority, names one human
+	// actor whose original client is absent but who is not the arbitrator:
+	// the native macOS client hosting this engine for its own player. Its
+	// pickups, contacts, kicks, pushes, item uses and field-object contacts
+	// become request events as a virtual actor's do. Flame hits still apply to
+	// it, because every client decides its own player's hits. The server
+	// leaves this zero.
+	NativeRequestPlayerID uint16
 	// LocalHitPlayerID, when non-zero, limits flame hits to that actor. A
 	// networked client simulates every participant but, like Client.exe,
 	// decides only its own player's hits; every other actor is trapped by its
@@ -365,6 +373,9 @@ type Rules struct {
 func (rules Rules) validate() error {
 	if rules.TickMS == 0 || rules.RoundDurationMS == 0 || rules.BombFuseMS == 0 || rules.FlameDurationMS == 0 {
 		return fmt.Errorf("tick, round, bomb fuse and flame durations must be non-zero")
+	}
+	if rules.NativeRequestPlayerID != 0 && !rules.NativeOutcomeAuthority {
+		return fmt.Errorf("native request player %d requires native outcome authority", rules.NativeRequestPlayerID)
 	}
 	if rules.ActorHalfSizePixels == 0 || rules.ActorHalfSizePixels >= CellSizePixels/2 {
 		return fmt.Errorf("actor half-size %d must be within 1..%d pixels", rules.ActorHalfSizePixels, CellSizePixels/2-1)
