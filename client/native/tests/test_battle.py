@@ -11,8 +11,8 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
 
 from qqtclient.battle import mapfile  # noqa: E402
 from qqtclient.battle.practice import practice_players  # noqa: E402
-from qqtclient.battle.scene import (ACTOR_TRAPPED, NEEDLE_ACTION, TREASURE_BADGE, TREASURE_DIGITS, BattleScene,  # noqa: E402
-                                   Explosion, flame_image, player_title)
+from qqtclient.battle.scene import (ACTOR_TRAPPED, BUN_HOUSES, BUN_ICONS, NEEDLE_ACTION, TREASURE_BADGE,  # noqa: E402
+                                   TREASURE_DIGITS, BattleScene, Explosion, flame_image, player_title)
 from qqtclient.battle.sidecar import ACTOR_ELIMINATED, EVENT_ACTOR_RESPAWNED  # noqa: E402
 
 
@@ -136,6 +136,30 @@ class TreasureScoreTest(unittest.TestCase):
         scene.eliminated_at, scene.trapped_at, scene.walk_started = {2: 5.0}, {2: 1.0}, {2: 7}
         scene._apply({"kind": EVENT_ACTOR_RESPAWNED, "player": 2, "cell": {"row": 1, "col": 1}})
         self.assertEqual((scene.eliminated_at, scene.trapped_at, scene.walk_started), ({}, {}, {}))
+
+
+class BunHouseTest(unittest.TestCase):
+    def test_houses_replace_map_elements_and_draw_their_buns(self) -> None:
+        scene = BattleScene.__new__(BattleScene)
+        cells = 15 * 13
+        top = [0] * cells
+        top[1 * 15 + 4], top[1 * 15 + 5], top[2 * 15 + 4] = 8009, -8009, -8009  # map 806 draws its own house
+        top[0] = 3004
+        scene.map = mapfile.MapFile(3, 3, 15, 13, [top, [0] * cells, [0] * cells])
+        scene.now_ms = 250.0
+        scene.state = {"bun": {"first": 2, "houses": [{"row": 1, "col": 4, "team": 2, "own": 2, "captured": 1},
+                                                      {"row": 1, "col": 8, "team": 1, "own": 0, "captured": 0}]}}
+        scene._place_bun_houses()
+        self.assertEqual((top[1 * 15 + 4], top[1 * 15 + 5], top[2 * 15 + 4], top[0]), (0, 0, 0, 3004))
+        drawn: list[tuple[str, int, int, int]] = []
+        scene._draw_frames = lambda _screen, path, frame, x, y: drawn.append((path, frame, x, y))  # type: ignore[method-assign]
+        scene._draw_bun_houses(None, 2)  # type: ignore[arg-type]
+        self.assertEqual(drawn, [])
+        scene._draw_bun_houses(None, 1)  # type: ignore[arg-type]
+        # Field origin (10, 27): house 1 pixel right of element 8009's offset
+        # (1, 20); own buns in the roof window 8 apart, captured ones 10 lower.
+        self.assertEqual(drawn, [(BUN_HOUSES[0], 2, 170, 47), (BUN_ICONS[0], 0, 213, 50), (BUN_ICONS[0], 0, 221, 50),
+                                 (BUN_ICONS[1], 0, 213, 60), (BUN_HOUSES[1], 2, 330, 47)])
 
 
 class PlayerTitleTest(unittest.TestCase):

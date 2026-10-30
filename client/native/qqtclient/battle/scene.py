@@ -33,6 +33,11 @@ AVATAR_ANCHOR = (50, 64)
 WALK_FRAME_MS = 100
 FLAME_FRAME_MS = 70
 ITEM_FRAME_MS = 120
+# A scene item's image (with its own offset) is drawn 15 pixels above its
+# cell's top-left: sprite point = cell centre, anchor (0, 15) (0x005F760A,
+# 0x005F750E). Measured on a 2021 recording (Bilibili BV1Fh411m7Cx) for
+# items 6, 9 and 11.
+ITEM_RAISE = 15
 DIE_MS = 1000
 # Being trapped: the full-body trigger pose under a syrup blob, which first
 # forms (misc111_stand, 5 frames) and then wobbles (misc111_trigger). The
@@ -120,6 +125,33 @@ TREASURE_ONE_DIGIT_AT = (640, 120)
 TREASURE_TWO_DIGITS_X = (633, 647)
 TREASURE_STEP = 51
 TREASURE_GEM_VALUES = (1, 2, 3)  # scene items 150, 151, 152
+# Bun (rule 3). Client.exe builds both houses at the start (0x005B720C, map
+# element 8009) and puts each in the grid at its anchor, replacing what the
+# map file has there (0x005D839C; map 806 draws houses 8009/8010 itself).
+# CMEBunShop (0x006151C6, 0x0061531F) plays default_MapElement.eff with
+# misc151 (the first house) or misc152, 4 frames 100 ms apart (the .eff's
+# 100 read as the frame time, inferred), at effect point (col*40+8,
+# row*40+1): an ordinary element's effect point is its cell*40 - offset +
+# (8, 21) (0x005EEE71), so the house sits 1 pixel right of where element
+# 8009 would. Then it draws one small bun per bun it holds, 8 pixels apart,
+# from sprite point (col*40+20, row*40+20): its own colour's buns with
+# anchor (-43, 17), captured ones with (-43, 7) (0x006152BF), so the
+# captured row is 10 pixels lower; misc161 is the first house's colour,
+# misc162 the other. 0x005C477E draws a sprite at point - anchor + (-12, 1),
+# which is our field point + (8, 21) like an effect point. Checked against
+# a 2021 recording of map 819 (Bilibili BV1Fh411m7Cx): both houses, both
+# rows and the 8-pixel step match to the pixel.
+BUN_HOUSES = ("object/misc/misc151_stand.img", "object/misc/misc152_stand.img")  # first house, second
+BUN_HOUSE_ELEMENTS = (8009, 8010)
+BUN_HOUSE_OFFSET = (-1 + 1, -20)  # element 8009's offset from mapElem.py, 1 pixel right
+BUN_HOUSE_FRAME_MS = 100
+BUN_ICONS = ("object/misc/misc161_stand.img", "object/misc/misc162_stand.img")  # first house's colour, other
+BUN_ICON_AT = ((43, -17), (43, -7))  # own row, captured row; from the house's top-left cell
+BUN_ICON_STEP = 8
+# A loose bun is object/item/item11, drawn like a scene item; a carrier
+# wears it as cap 22 (first house's colour) or 23 (0x005AA4EC).
+BUN_LOOSE = "object/item/item11_stand.img"
+BUN_CAPS = (22, 23)
 
 
 @dataclasses.dataclass
@@ -179,6 +211,7 @@ class BattleScene:
         self.elements = mapfile.load_elements(resources)
         self.map_name = description.name
         self.state = state
+        self._place_bun_houses()
         self.realtime = realtime
         begin = state.get("begin") or {}
         self.rule = begin.get("rule") or "ordinary"
@@ -194,6 +227,10 @@ class BattleScene:
         self.result: int | None = None
         self.result_rows: list[ResultRow] = []
         self.result_shown_at = 0.0
+        # Online: GAME_OVER has arrived. Client.exe then stops the scene's
+        # play update (0x005C874F sets state 2; 0x005C8703 then only runs
+        # 0x005C8BE2, the clock), so nothing more is simulated or sent.
+        self.over = False
         self.end_logged = False
         self.previous_positions: dict[int, tuple[int, int]] = {}
         self.walk_started: dict[int, int] = {}
@@ -327,7 +364,7 @@ class BattleScene:
         self.now_ms += elapsed_ms
         # Online the sidecar still exchanges network traffic after its own
         # engine has ended; the server decides when the match is over.
-        if self.outcome["ended"] and not self.realtime:
+        if self.outcome["ended"] and not self.realtime or self.over:
             return
         self.accumulated_ms += elapsed_ms
         ticks = int(self.accumulated_ms // TICK_MS)
@@ -393,7 +430,9 @@ class BattleScene:
                 self._draw_element(field, self.map.element(mapfile.LAYER_FLOOR, row, col), row, col)
         for pickup in self.state["pickups"] or ():
             self._draw_frames(field, f"object/item/item{pickup['scene']}_stand.img", self.clock // ITEM_FRAME_MS,
-                              ox + pickup["col"] * CELL, oy + pickup["row"] * CELL)
+                              ox + pickup["col"] * CELL, oy + pickup["row"] * CELL - ITEM_RAISE)
+        for bun in (self.state.get("bun") or {}).get("loose") or ():
+            self._draw_frames(field, BUN_LOOSE, self.clock // ITEM_FRAME_MS, ox + bun["col"] * CELL, oy + bun["row"] * CELL - ITEM_RAISE)
         for field_object in self.state.get("fields") or ():
             # Banana and glue placed with items 41/42 (scene IDs 42/43).
             self._draw_frames(field, f"object/item/item{field_object['action']}_stand.img", self.clock // ITEM_FRAME_MS,
@@ -412,10 +451,49 @@ class BattleScene:
                     dying = self.dying.get((layer, row, col))
                     if dying is not None:
                         self._draw_dying(field, dying, row, col)
+            self._draw_bun_houses(field, row)
             for actor in sorted(actors_by_row.get(row, ()), key=lambda item: item["y"]):
                 self._draw_actor(field, actor)
         for path, position in ((FRAME_TOP, (0, 0)), (FRAME_LEFT, (0, oy))):
             self._draw_frames(screen, path, 0, *position)
+
+    def _place_bun_houses(self) -> None:
+        """Put the houses in the grid as 0x005D839C does, replacing the map
+        file's own house elements (map 806)."""
+        bun = self.state.get("bun")
+        for house in (bun or {}).get("houses") or ():
+            for row in range(house["row"], min(house["row"] + 3, self.map.height)):
+                for col in range(house["col"], min(house["col"] + 3, self.map.width)):
+                    if abs(self.map.element(mapfile.LAYER_TOP, row, col)) in BUN_HOUSE_ELEMENTS:
+                        self._set(mapfile.LAYER_TOP, row, col, 0)
+
+    def _draw_bun_houses(self, field: pygame.Surface, row: int) -> None:
+        """The houses anchored on this row, each with its row of small buns."""
+        bun = self.state.get("bun")
+        if not bun:
+            return
+        ox, oy = FIELD_ORIGIN
+        for house in bun.get("houses") or ():
+            if house["row"] != row:
+                continue
+            first = house["team"] == bun["first"]
+            x, y = ox + house["col"] * CELL, oy + house["row"] * CELL
+            self._draw_frames(field, BUN_HOUSES[0 if first else 1], int(self.now_ms // BUN_HOUSE_FRAME_MS),
+                              x + BUN_HOUSE_OFFSET[0], y + BUN_HOUSE_OFFSET[1])
+            own, other = (BUN_ICONS[0], BUN_ICONS[1]) if first else (BUN_ICONS[1], BUN_ICONS[0])
+            for path, count, (dx, dy) in ((own, house["own"], BUN_ICON_AT[0]), (other, house["captured"], BUN_ICON_AT[1])):
+                for index in range(count):
+                    self._draw_frames(field, path, 0, x + dx + index * BUN_ICON_STEP, y + dy)
+
+    def _wear(self, actor: dict[str, Any]) -> tuple[tuple[str, int], ...]:
+        """Worn costume parts; a bun carrier's cap is the bun."""
+        wear = self.wear.get(actor["id"], ())
+        bun = self.state.get("bun")
+        carried = (bun or {}).get("carried", {}).get(str(actor["id"]), -1)
+        if carried < 0:
+            return wear
+        cap = BUN_CAPS[0 if carried == bun["first"] else 1]
+        return tuple(part for part in wear if part[0] != "cap") + (("cap", cap),)
 
     def _seat(self, index: int, actor: dict[str, Any]) -> int:
         """The player's room seat, or its list position offline."""
@@ -486,14 +564,14 @@ class BattleScene:
         else:
             self.trapped_at.pop(actor["id"], None)
         if actor["state"] == ACTOR_ELIMINATED:
-            image = self.avatars.get(role, actor["team"] - 1, "die", direction, int(dead_for // (DIE_MS // 4)), wear=self.wear.get(actor["id"], ()))
+            image = self.avatars.get(role, actor["team"] - 1, "die", direction, int(dead_for // (DIE_MS // 4)), wear=self._wear(actor))
         elif actor["state"] == ACTOR_TRAPPED:
-            image = self.avatars.get(role, actor["team"] - 1, "trigger", direction, int(trapped_for // TRAPPED_FRAME_MS), wear=self.wear.get(actor["id"], ()))
+            image = self.avatars.get(role, actor["team"] - 1, "trigger", direction, int(trapped_for // TRAPPED_FRAME_MS), wear=self._wear(actor))
         elif actor["id"] in self.walk_started:
             frame = (self.clock - self.walk_started[actor["id"]]) // WALK_FRAME_MS
-            image = self.avatars.get(role, actor["team"] - 1, "walk", direction, frame, wear=self.wear.get(actor["id"], ()))
+            image = self.avatars.get(role, actor["team"] - 1, "walk", direction, frame, wear=self._wear(actor))
         else:
-            image = self.avatars.get(role, actor["team"] - 1, "stand", direction, wear=self.wear.get(actor["id"], ()))
+            image = self.avatars.get(role, actor["team"] - 1, "stand", direction, wear=self._wear(actor))
         ox, oy = FIELD_ORIGIN
         x, y = ox + actor["x"], oy + actor["y"]
         if image is not None:

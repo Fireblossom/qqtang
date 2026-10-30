@@ -59,12 +59,12 @@ func treasureMatchOn(t *testing.T, arbitrator uint16, edit func(*battleengine.Gr
 	}
 }
 
-func TestOnlyTreasureJoinsRuleOne(t *testing.T) {
+func TestUnimplementedRulesAreRefused(t *testing.T) {
 	if _, respawn, err := ruleOptions(mapdata.CompetitiveMap{Rule: mapdata.CompetitiveRuleOrdinary}, 1, 1); err != nil || respawn != nil {
 		t.Fatalf("rule 1: respawn %v, %v", respawn, err)
 	}
-	if _, _, err := ruleOptions(mapdata.CompetitiveMap{Rule: mapdata.CompetitiveRuleBun}, 1, 1); err == nil {
-		t.Fatal("bun maps were accepted")
+	if _, _, err := ruleOptions(mapdata.CompetitiveMap{Rule: mapdata.CompetitiveRuleKickBomb}, 1, 1); err == nil {
+		t.Fatal("kick-bomb maps were accepted")
 	}
 }
 

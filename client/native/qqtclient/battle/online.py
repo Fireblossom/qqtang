@@ -119,6 +119,7 @@ class OnlineBattle:
         mine = next((result for result in over.results if result.player_id == self.local_id), None)
         log("[match] game over: " + ", ".join(f"{result.player_id}={result.result}" for result in over.results))
         self.scene.result = mine.result if mine is not None else match.RESULT_LOSS
+        self.scene.over = True
         self.scene.show_results([
             ResultRow(result.player_id, result.result, *(result.counts + [0, 0, 0])[:3], result.point,
                       self.context.members[result.player_id].points + result.point if result.player_id in self.context.members else result.point)

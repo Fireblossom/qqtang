@@ -164,6 +164,7 @@ type stateView struct {
 	Net   *netView   `json:"net,omitempty"`
 	// The local player's room props left, in GAME_BEGIN order.
 	Prepared []preparedView `json:"prepared,omitempty"`
+	Bun      *bunView       `json:"bun,omitempty"` // rule 3
 	TCPOut   []tcpPacket    `json:"tcp_out,omitempty"`
 }
 
@@ -225,6 +226,9 @@ func runOnline(init command, lines *bufio.Scanner, out *json.Encoder) error {
 	defer match.close()
 	state := view(match.runtime, nil)
 	state.Begin, state.Net, state.Prepared = &begin, match.netView(), match.preparedView()
+	if match.bun != nil {
+		state.Bun = match.bun.view()
+	}
 	if err := out.Encode(state); err != nil {
 		return err
 	}
@@ -242,6 +246,9 @@ func runOnline(init command, lines *bufio.Scanner, out *json.Encoder) error {
 		}
 		state := view(match.runtime, events)
 		state.Net, state.TCPOut, state.Prepared = match.netView(), match.takeTCP(), match.preparedView()
+		if match.bun != nil {
+			state.Bun = match.bun.view()
+		}
 		if err := out.Encode(state); err != nil {
 			return err
 		}

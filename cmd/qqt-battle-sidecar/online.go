@@ -184,6 +184,7 @@ type onlineMatch struct {
 	eliminatedAt map[uint16]uint32
 
 	bot *autoplayBot // --autoplay; nil when the keyboard plays
+	bun *bunRule     // rule 3; nil otherwise
 }
 
 // respawnRule is a special rule's relive timing, from Client.exe's rule
@@ -323,8 +324,12 @@ func newOnlineMatch(init command) (*onlineMatch, beginView, error) {
 		pickupRequests:    map[pickupKey]pickupRequest{}, sceneRequests: map[sceneRequestKey]uint32{},
 		respawn: respawn, eliminatedAt: map[uint16]uint32{},
 	}
+	if entry.Rule == mapdata.CompetitiveRuleBun {
+		match.bun = newBunRule(entry, begin)
+	}
 	if options.Autoplay {
 		match.bot = newAutoplayBot(match.local)
+		match.bot.bun = match.bun
 		match.logf("autoplay: the test bot plays player %d", match.local)
 	}
 	for _, entry := range view.Players {
@@ -357,6 +362,11 @@ func ruleOptions(entry mapdata.CompetitiveMap, local, arbitrator uint16) (battle
 	switch entry.Rule {
 	case mapdata.CompetitiveRuleOrdinary:
 		return rules, nil, nil
+	case mapdata.CompetitiveRuleBun:
+		// Rule 3's slots 4 and 5: relive after 10 s (Tutorial2.qbv agrees),
+		// without waiting for the spawn cell (that is rules 4 and 5 only).
+		rules.ExternalConclusion = true
+		return rules, &respawnRule{delayMS: 10_000}, nil
 	case mapdata.CompetitiveRuleTreasure:
 		rules.ObjectiveSceneIDs = [battleengine.MaxObjectiveKinds]uint32{
 			uint32(sceneelement.TreasureGemOne), uint32(sceneelement.TreasureGemTwo), uint32(sceneelement.TreasureGemThree),
@@ -469,6 +479,7 @@ func (match *onlineMatch) step(step command) ([]battleengine.Event, error) {
 		match.publishEvents(after, tickEvents)
 		match.noteEliminations(tickEvents)
 		tickEvents = append(tickEvents, match.respawnDue()...)
+		match.bunTick()
 		events = append(events, tickEvents...)
 	}
 	match.retryPickupRequests()
@@ -701,6 +712,9 @@ func (match *onlineMatch) applyRemote(sender uint16, message game.BattleMessageD
 		if err != nil {
 			match.logf("death of %d rejected: %v", death.PlayerID, err)
 		}
+		if match.bun != nil {
+			match.bun.onDeath(death.PlayerID, 0, false, battleengine.Position{X: int32(death.PosX), Y: int32(death.PosY)})
+		}
 		return events
 	case game.RequestGetItem:
 		if match.isArbitrator() {
@@ -716,6 +730,9 @@ func (match *onlineMatch) applyRemote(sender uint16, message game.BattleMessageD
 			return nil
 		}
 		events, _ := match.runtime.AcceptNativeElimination(killed.DestinationPlayerID, killed.PlayerID, pickupsFromItems(killed.Items))
+		if match.bun != nil {
+			match.bun.onDeath(killed.DestinationPlayerID, killed.PlayerID, true, battleengine.Position{X: int32(killed.PosX), Y: int32(killed.PosY)})
+		}
 		return events
 	case game.NotifyPlayerSaved:
 		saved, err := game.ParsePlayerInteractionEvent(event)
@@ -847,6 +864,16 @@ func (match *onlineMatch) applyRemote(sender uint16, message game.BattleMessageD
 			return nil
 		}
 		return match.applyExplosion(event)
+	case game.RequestGetBun, game.RequestPutBun:
+		request, err := game.ParseBunActionEvent(event)
+		if err == nil && match.bun != nil && match.isArbitrator() && request.PlayerID == sender {
+			match.arbitrateBun(schema, request)
+		}
+	case game.NotifyPlayerGetBun, game.NotifyPlayerPutBun:
+		notice, err := game.ParseBunActionEvent(event)
+		if err == nil && match.bun != nil && sender == match.arbitrator && !match.isArbitrator() {
+			match.applyBun(schema, notice)
+		}
 	case game.NotifyPlayerRelive:
 		relive, err := game.ParsePlayerReliveEvent(event)
 		if err != nil || sender != match.arbitrator || match.isArbitrator() || match.respawn == nil {
@@ -1749,6 +1776,9 @@ func (match *onlineMatch) publishElimination(event battleengine.Event, drops []g
 			match.queue(game.NotifyPlayerDieEvent, now, now, body)
 			match.mirror(game.NotifyPlayerDieEvent, body)
 		}
+		if match.bun != nil {
+			match.bun.onDeath(match.local, 0, false, event.Position)
+		}
 		return
 	}
 	if !arbitrator || event.PlayerID == 0 {
@@ -1762,6 +1792,9 @@ func (match *onlineMatch) publishElimination(event battleengine.Event, drops []g
 	if err == nil {
 		match.queue(game.NotifyPlayerKilled, now, now, body)
 		match.mirror(game.NotifyPlayerKilled, body)
+	}
+	if match.bun != nil {
+		match.bun.onDeath(event.TargetID, event.PlayerID, true, event.Position)
 	}
 }
 
@@ -1916,4 +1949,74 @@ func pickupsFromItems(items []game.GameItem) []battleengine.Pickup {
 		pickups = append(pickups, battleengine.Pickup{SceneID: item.ItemID, Cell: battleengine.Cell{Row: int16(item.Row), Col: int16(item.Col)}, State: battleengine.PickupAvailable})
 	}
 	return pickups
+}
+
+// Bun (rule 3) -----------------------------------------------------------------
+
+// bunTick sends the local player's take or put request, at most once per
+// bunRequestPeriod while the same request stands. The arbitrator answers its
+// own player at once.
+func (match *onlineMatch) bunTick() {
+	if match.bun == nil || !match.localActive() {
+		return
+	}
+	actor, ok := actorByID(match.engine.Actors(), match.local)
+	if !ok {
+		return
+	}
+	schema, request, wanted := match.bun.wanted(actor)
+	if !wanted {
+		return
+	}
+	now := match.engine.ElapsedMS()
+	request.ClientTime = now
+	same := schema == match.bun.lastRequestKind && request.BunID == match.bun.lastRequest.BunID && request.BunTeamID == match.bun.lastRequest.BunTeamID
+	if same && now-match.bun.lastRequestSent < bunRequestPeriod {
+		return
+	}
+	match.bun.lastRequest, match.bun.lastRequestKind, match.bun.lastRequestSent = request, schema, now
+	if match.isArbitrator() {
+		match.arbitrateBun(schema, request)
+		return
+	}
+	if body, err := request.MarshalNetworkBinary(); err == nil {
+		match.request(schema, now, body)
+	}
+}
+
+// arbitrateBun answers a take or put request as 0x00603D53 and 0x00603B0F
+// do: a valid one is applied and announced to every peer and the server; an
+// invalid one gets no answer.
+func (match *onlineMatch) arbitrateBun(schema uint16, request game.BunActionEvent) {
+	actor, ok := actorByID(match.engine.Actors(), request.PlayerID)
+	if !ok || actor.State != battleengine.ActorActive {
+		return
+	}
+	notice := uint16(game.NotifyPlayerGetBun)
+	if schema == game.RequestPutBun {
+		if !match.bun.allowPut(request, actor) {
+			return
+		}
+		notice = game.NotifyPlayerPutBun
+	} else if !match.bun.allowTake(request, actor) {
+		return
+	}
+	body, err := request.MarshalNetworkBinary()
+	if err != nil {
+		return
+	}
+	match.applyBun(notice, request)
+	now := match.engine.ElapsedMS()
+	match.queue(notice, now, now, body)
+	match.mirror(notice, body)
+}
+
+func (match *onlineMatch) applyBun(schema uint16, notice game.BunActionEvent) {
+	if schema == game.NotifyPlayerPutBun {
+		match.bun.applyPut(notice)
+		match.logf("player %d puts a team-%d bun home", notice.PlayerID, notice.BunTeamID)
+	} else {
+		match.bun.applyTake(notice)
+		match.logf("player %d takes a team-%d bun (%d)", notice.PlayerID, notice.BunTeamID, notice.BunID)
+	}
 }

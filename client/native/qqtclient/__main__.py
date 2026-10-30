@@ -26,6 +26,7 @@ def parse_args() -> argparse.Namespace:
     automation.add_argument("--headless", action="store_true", help="render off-screen")
     automation.add_argument("--exit-after", type=int, metavar="MS", help="quit after this many milliseconds")
     automation.add_argument("--screenshot", type=pathlib.Path, help="save the last frame here on exit")
+    automation.add_argument("--shot", action="append", default=[], metavar="PATH@MS", help="save the frame drawn at MS milliseconds to PATH")
     automation.add_argument("--click", action="append", default=[], metavar="X,Y@MS", help="left-click at X,Y after MS milliseconds")
     automation.add_argument("--rclick", action="append", default=[], metavar="X,Y@MS", help="right-click at X,Y after MS milliseconds")
     automation.add_argument("--drag", action="append", default=[], metavar="X1,Y1:X2,Y2@MS", help="drag with the left button after MS milliseconds")
@@ -147,6 +148,7 @@ def main() -> int:
     renderer.draw_callbacks["SC_room_drawPlayer"] = draw_room_players
     pending = scheduled_events(args)
     calls = sorted(((int(at), expr) for expr, _, at in (spec.rpartition("@") for spec in args.call)), key=lambda item: item[0])
+    shots = sorted(((int(at), path) for path, _, at in (spec.rpartition("@") for spec in args.shot)), key=lambda item: item[0])
 
     clock = pygame.time.Clock()
     started = pygame.time.get_ticks()
@@ -181,6 +183,8 @@ def main() -> int:
             drag = (runtime.drag_image, runtime.mouse_pos) if runtime.dragging is not None and runtime.drag_image else None
             renderer.draw(runtime.root, runtime.focus, drag)
             pygame.display.flip()
+            while shots and shots[0][0] <= now:
+                pygame.image.save(screen, shots.pop(0)[1])
             if args.exit_after is not None and now >= args.exit_after:
                 break
     finally:

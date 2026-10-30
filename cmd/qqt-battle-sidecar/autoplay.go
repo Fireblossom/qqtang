@@ -26,6 +26,8 @@ type autoplayBot struct {
 	timeline  battleengine.DangerTimeline
 	plannedAt uint32
 	planned   bool
+	// The rule's objectives, when the map has them (rule 3).
+	bun *bunRule
 }
 
 func newAutoplayBot(player uint16) *autoplayBot {
@@ -80,20 +82,25 @@ func (bot *autoplayBot) act(engine *battleengine.Engine) battleengine.Action {
 		_, threatened := bot.timeline.ImpactAt(cell)
 		return !threatened
 	}
-	// 2. Collect the nearest visible item; gems (rule objectives) first.
+	// 2. Rule objectives: carry buns home, pick loose ones up, raid the
+	// opposing house.
+	if path := bot.bunPath(world, actor, here, safe); len(path) > 0 {
+		return bot.follow(action, actor, path)
+	}
+	// 3. Collect the nearest visible item; gems (rule objectives) first.
 	if path := world.nearest(here, safe, world.objectiveAt); len(path) > 0 {
 		return bot.follow(action, actor, path)
 	}
 	if path := world.nearest(here, safe, world.pickupAt); len(path) > 0 {
 		return bot.follow(action, actor, path)
 	}
-	// 3. Place a bubble beside a breakable wall or an opponent, if it can be
+	// 4. Place a bubble beside a breakable wall or an opponent, if it can be
 	// escaped.
 	if world.worthBombing(here, actor) && onCentre(actor.Position) && bot.canEscapeOwnBubble(engine, actor, msPerCell) {
 		action.PlaceBomb = true
 		return action
 	}
-	// 4. Walk toward the nearest cell where a bubble would be worth it.
+	// 5. Walk toward the nearest cell where a bubble would be worth it.
 	if path := world.nearest(here, safe, func(cell battleengine.Cell) bool { return world.worthBombing(cell, actor) }); len(path) > 0 {
 		return bot.follow(action, actor, path)
 	}
@@ -285,4 +292,25 @@ func (world autoplayWorld) search(start battleengine.Cell, passable, goal func(b
 		}
 	}
 	return nil
+}
+
+// bunPath is the way to the bot's next bun goal, or nil.
+func (bot *autoplayBot) bunPath(world autoplayWorld, actor battleengine.Actor, here battleengine.Cell, safe func(battleengine.Cell) bool) []battleengine.Cell {
+	rule := bot.bun
+	if rule == nil {
+		return nil
+	}
+	if rule.carrying(actor.PlayerID) != bunNone {
+		return world.nearest(here, safe, func(cell battleengine.Cell) bool {
+			house := rule.houseAt(cell)
+			return house != nil && house.team == actor.TeamID
+		})
+	}
+	if path := world.nearest(here, safe, func(cell battleengine.Cell) bool { return rule.looseAt(cell, 0, true) >= 0 }); len(path) > 0 {
+		return path
+	}
+	return world.nearest(here, safe, func(cell battleengine.Cell) bool {
+		house := rule.houseAt(cell)
+		return house != nil && house.team != actor.TeamID && house.own > 0
+	})
 }
