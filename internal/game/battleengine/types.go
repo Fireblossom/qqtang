@@ -12,6 +12,7 @@ import (
 
 const (
 	MaxParticipants                 = 8
+	MaxObjectiveKinds               = 4
 	ObservationSchemaVersion uint16 = 7
 	ActionSpaceVersion       uint16 = 2
 	MaxNativeSpeedRate              = 10
@@ -358,6 +359,21 @@ type Rules struct {
 	// decides only its own player's hits; every other actor is trapped by its
 	// own PLAYER_BE_EXPLODED report through ApplyVerifiedActorHit.
 	LocalHitPlayerID uint16
+	// ObjectiveSceneIDs lists rule-owned scene items, such as the rule-5
+	// treasure gems 150..152, that are collected without any attribute effect
+	// and counted per actor in Actor.CarriedObjectives at the same index. Zero
+	// entries are unused. Rule 1 and the server leave it empty.
+	ObjectiveSceneIDs [MaxObjectiveKinds]uint32
+	// ObjectiveDeathDrops makes an eliminated actor that carries objectives
+	// drop exactly those and none of its ordinary items, as Client.exe's
+	// rule-5 death-drop slot 0x0060B08C does. Without carried objectives the
+	// ordinary drop applies.
+	ObjectiveDeathDrops bool
+	// ExternalConclusion leaves the result to the server: a team whose actors
+	// are all eliminated does not end the round, and RespawnActor may bring an
+	// eliminated actor back. The round deadline still ends the engine. Timed
+	// respawn rules (3, 4, 5, 6, 13) need it; rule 1 leaves it false.
+	ExternalConclusion bool
 	// RecordItemEffects captures event-local before/after evidence only for
 	// diagnostic matches. It does not alter physics, visibility or rewards.
 	RecordItemEffects bool
@@ -380,7 +396,47 @@ func (rules Rules) validate() error {
 	if rules.ActorHalfSizePixels == 0 || rules.ActorHalfSizePixels >= CellSizePixels/2 {
 		return fmt.Errorf("actor half-size %d must be within 1..%d pixels", rules.ActorHalfSizePixels, CellSizePixels/2-1)
 	}
+	objectives := 0
+	for index, sceneID := range rules.ObjectiveSceneIDs {
+		if sceneID == 0 {
+			continue
+		}
+		objectives++
+		if _, _, ordinary := supportedPickupEffect(sceneID); ordinary || nativeFieldSceneID(sceneID) {
+			return fmt.Errorf("objective scene ID %d already has an ordinary pickup effect", sceneID)
+		}
+		for _, earlier := range rules.ObjectiveSceneIDs[:index] {
+			if earlier == sceneID {
+				return fmt.Errorf("objective scene ID %d is listed twice", sceneID)
+			}
+		}
+	}
+	if rules.ObjectiveDeathDrops && objectives == 0 {
+		return fmt.Errorf("objective death drops need at least one objective scene ID")
+	}
 	return nil
+}
+
+// objectiveIndex is the Actor.CarriedObjectives index of sceneID, or -1.
+func (rules Rules) objectiveIndex(sceneID uint32) int {
+	if sceneID == 0 {
+		return -1
+	}
+	for index, objective := range rules.ObjectiveSceneIDs {
+		if objective == sceneID {
+			return index
+		}
+	}
+	return -1
+}
+
+// pickupSupported reports whether the engine can hold sceneID as a pickup:
+// an ordinary effect or one of the rule's objectives.
+func (rules Rules) pickupSupported(sceneID uint32) bool {
+	if _, _, supported := supportedPickupEffect(sceneID); supported {
+		return true
+	}
+	return rules.objectiveIndex(sceneID) >= 0
 }
 
 type Config struct {
@@ -543,7 +599,12 @@ type Actor struct {
 	MovementStatus             MovementStatusKind
 	MovementStatusExpiresAt    uint32
 	HeldActions                [NativeBattleActionSlots]HeldActionSlot
-	PublicBehavior             PublicBehaviorMemory
+	// CarriedObjectives counts the Rules.ObjectiveSceneIDs this actor has
+	// collected since its last elimination, by the same index.
+	CarriedObjectives [MaxObjectiveKinds]uint16
+	PublicBehavior    PublicBehaviorMemory
+	// initial keeps the participant's starting attributes for RespawnActor.
+	initial Participant
 	// nativeBasicPickupDelta mirrors the three per-match counters at actor
 	// +0x124/+0x138/+0x14c. Rule 1 uses their positive, capped values to build
 	// SceneID 1/2/3 death drops; they are not the actor's initial attributes.
@@ -685,6 +746,9 @@ const (
 	PickupEffectMatchSugar
 	PickupEffectBattleAction
 	PickupEffectMovementStatus
+	// PickupEffectObjective counts one of Rules.ObjectiveSceneIDs in
+	// Actor.CarriedObjectives; RewardBefore/RewardAfter hold the count.
+	PickupEffectObjective
 )
 
 type TransformationEndReason byte
@@ -747,6 +811,9 @@ const (
 	// match instead waits for the elected native arbitrator's 0x0FBF/0x0FAE.
 	EventPickupDestroyed
 	EventPickupDispatched
+	// EventActorRespawned is emitted only by RespawnActor, under
+	// Rules.ExternalConclusion. Cell and Position are the respawn point.
+	EventActorRespawned
 )
 
 // EliminationCause separates finishing contact from an expiring trap. A native

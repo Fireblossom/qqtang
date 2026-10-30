@@ -58,7 +58,7 @@ func validateInitialPickups(grid Grid, rules Rules, participants []Participant, 
 	requiredSpeedRates := [MaxNativeSpeedRate + 1]bool{}
 	for index, pickup := range pickups {
 		attribute, _, supported := supportedPickupEffect(pickup.SceneID)
-		if !supported {
+		if !supported && rules.objectiveIndex(pickup.SceneID) < 0 {
 			return fmt.Errorf("battle pickup %d uses unsupported scene ID %d", index, pickup.SceneID)
 		}
 		if attribute == AttributeSpeedRate || pickup.SceneID == SceneRandomAttribute {
@@ -186,7 +186,15 @@ func (engine *Engine) collectPickup(actor *Actor, pickup *Pickup) Event {
 	transformation, isTransformation := sceneelement.NativeTransformation(sceneelement.ID(pickup.SceneID))
 	battleAction, isBattleAction := sceneelement.NativeBattleActionPickup(sceneelement.ID(pickup.SceneID))
 	reward, isReward := sceneelement.NativeReward(sceneelement.ID(pickup.SceneID))
+	objective := engine.rules.objectiveIndex(pickup.SceneID)
 	switch {
+	case objective >= 0:
+		event.Effect = PickupEffectObjective
+		event.RewardBefore = uint32(actor.CarriedObjectives[objective])
+		if actor.CarriedObjectives[objective] < ^uint16(0) {
+			actor.CarriedObjectives[objective]++
+		}
+		event.RewardAfter = uint32(actor.CarriedObjectives[objective])
 	case isTransformation:
 		engine.installTransformation(actor, transformation)
 		event.Effect = PickupEffectTransformation
@@ -343,7 +351,7 @@ func (engine *Engine) validateVerifiedPickup(playerID uint16, sceneID uint32, po
 	if !engine.actorCapabilities(actor, actor.Facing).CanCollectItems {
 		return nil, Position{}, fmt.Errorf("verified pickup player %d current avatar cannot collect items", playerID)
 	}
-	if _, _, supported := supportedPickupEffect(sceneID); !supported {
+	if !engine.rules.pickupSupported(sceneID) {
 		return nil, Position{}, fmt.Errorf("verified pickup uses unsupported scene ID %d", sceneID)
 	}
 	if position == (Position{}) {

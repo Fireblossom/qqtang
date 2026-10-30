@@ -19,7 +19,7 @@ func (engine *Engine) evaluateTerminal() (Event, bool) {
 		}
 	}
 	roundElapsed := engine.RoundElapsedMS()
-	if len(teams) <= 1 {
+	if len(teams) <= 1 && !engine.rules.ExternalConclusion {
 		engine.outcome = Outcome{Ended: true, EndedAtMS: roundElapsed}
 		if len(teams) == 0 {
 			engine.outcome.Draw = true

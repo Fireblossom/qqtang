@@ -25,6 +25,44 @@ func (engine *Engine) scatterNativeDeathDrops(actor *Actor) []Pickup {
 	if engine == nil || actor == nil {
 		return nil
 	}
+	sceneIDs := engine.objectiveDeathDropSceneIDs(actor)
+	if len(sceneIDs) == 0 {
+		sceneIDs = ordinaryDeathDropSceneIDs(actor)
+	}
+	if len(sceneIDs) == 0 {
+		return nil
+	}
+	// Ordinary rule 1 passes the default rectangle to native FUN_005b8574,
+	// selecting unoccupied cells across the map. The death producer's 5x5
+	// rectangle is conditional on rule 12, not on the number of carried items.
+	cells := engine.nativeWholeMapDropCells(len(sceneIDs))
+	if len(cells) < len(sceneIDs) {
+		sceneIDs = sceneIDs[:len(cells)]
+	}
+	drops := make([]Pickup, len(sceneIDs))
+	for index := range sceneIDs {
+		drops[index] = Pickup{SceneID: sceneIDs[index], Cell: cells[index], State: PickupAvailable}
+	}
+	return drops
+}
+
+// objectiveDeathDropSceneIDs is rule 5's slot 6 (0x0060B08C): the carried
+// gems 150, 151 and 152, in that order. When the list is empty the native
+// rule falls back to the ordinary drop (base slot 0x005F4B16).
+func (engine *Engine) objectiveDeathDropSceneIDs(actor *Actor) []uint32 {
+	if !engine.rules.ObjectiveDeathDrops {
+		return nil
+	}
+	var sceneIDs []uint32
+	for index, count := range actor.CarriedObjectives {
+		for item := uint16(0); item < count && len(sceneIDs) < nativeDeathDropMaximum; item++ {
+			sceneIDs = append(sceneIDs, engine.rules.ObjectiveSceneIDs[index])
+		}
+	}
+	return sceneIDs
+}
+
+func ordinaryDeathDropSceneIDs(actor *Actor) []uint32 {
 	sceneIDs := make([]uint32, 0, nativeDeathDropMaximum)
 	for index, delta := range actor.nativeBasicPickupDelta {
 		count := int(delta)
@@ -47,21 +85,7 @@ func (engine *Engine) scatterNativeDeathDrops(actor *Actor) []Pickup {
 			sceneIDs = append(sceneIDs, sceneID)
 		}
 	}
-	if len(sceneIDs) == 0 {
-		return nil
-	}
-	// Ordinary rule 1 passes the default rectangle to native FUN_005b8574,
-	// selecting unoccupied cells across the map. The death producer's 5x5
-	// rectangle is conditional on rule 12, not on the number of carried items.
-	cells := engine.nativeWholeMapDropCells(len(sceneIDs))
-	if len(cells) < len(sceneIDs) {
-		sceneIDs = sceneIDs[:len(cells)]
-	}
-	drops := make([]Pickup, len(sceneIDs))
-	for index := range sceneIDs {
-		drops[index] = Pickup{SceneID: sceneIDs[index], Cell: cells[index], State: PickupAvailable}
-	}
-	return drops
+	return sceneIDs
 }
 
 func (engine *Engine) deathDropCellOccupied(cell Cell) bool {
@@ -103,7 +127,7 @@ func (engine *Engine) validateVerifiedDeathDrops(drops []Pickup) error {
 		if drop.State != PickupAvailable {
 			return fmt.Errorf("verified death drop %d has state %d, want available", index, drop.State)
 		}
-		if _, _, supported := supportedPickupEffect(drop.SceneID); !supported {
+		if !engine.rules.pickupSupported(drop.SceneID) {
 			return fmt.Errorf("verified death drop %d uses unsupported scene ID %d", index, drop.SceneID)
 		}
 		if _, inside := engine.grid.Cell(drop.Cell); !inside {

@@ -11,8 +11,21 @@ import (
 // may share this base grid, but Boss objects and their AI remain outside the
 // restricted engine.
 func GridFromCompetitiveMap(entry mapdata.CompetitiveMap) (Grid, error) {
-	if entry.NativeRule != 1 || entry.Rule != mapdata.CompetitiveRuleOrdinary {
-		return Grid{}, fmt.Errorf("competitive map %d uses native rule %d/%s, want ordinary rule 1", entry.ID, entry.NativeRule, entry.Rule)
+	return gridFromCompetitiveMap(entry, false)
+}
+
+// checkOrdinaryRule rejects every map but rule 1 unless the caller asked for
+// special rules (CompetitiveMapConfigOptions.AllowSpecialRules).
+func checkOrdinaryRule(entry mapdata.CompetitiveMap, allowSpecial bool) error {
+	if allowSpecial || entry.NativeRule == 1 && entry.Rule == mapdata.CompetitiveRuleOrdinary {
+		return nil
+	}
+	return fmt.Errorf("competitive map %d uses native rule %d/%s, want ordinary rule 1", entry.ID, entry.NativeRule, entry.Rule)
+}
+
+func gridFromCompetitiveMap(entry mapdata.CompetitiveMap, allowSpecial bool) (Grid, error) {
+	if err := checkOrdinaryRule(entry, allowSpecial); err != nil {
+		return Grid{}, err
 	}
 	field := entry.Battlefield
 	if field.Width == 0 || field.Height == 0 || len(field.Cells) != int(field.Width)*int(field.Height) {
@@ -52,12 +65,12 @@ func GridFromCompetitiveMap(entry mapdata.CompetitiveMap) (Grid, error) {
 // must not change with ItemSeed merely because an unsupported wall-item rule
 // happened not to roll in one match.
 func ValidateNativeRuntimeMap(entry mapdata.CompetitiveMap) error {
-	_, err := validateNativeRuntimeMap(entry)
+	_, err := validateNativeRuntimeMap(entry, false)
 	return err
 }
 
-func validateNativeRuntimeMap(entry mapdata.CompetitiveMap) (Grid, error) {
-	grid, err := GridFromCompetitiveMap(entry)
+func validateNativeRuntimeMap(entry mapdata.CompetitiveMap, allowSpecial bool) (Grid, error) {
+	grid, err := gridFromCompetitiveMap(entry, allowSpecial)
 	if err != nil {
 		return Grid{}, err
 	}
@@ -99,6 +112,11 @@ type CompetitiveMapConfigOptions struct {
 	RecordedWallItems    []mapdata.CompetitiveWallItem
 	RecordedDelayedItems []mapdata.CompetitiveWallItem
 	UseRecordedWallItems bool
+	// AllowSpecialRules accepts maps of rules other than 1 for a caller that
+	// supplies their rule logic itself (the native macOS client's sidecar).
+	// Their GAME_BEGIN items must be recorded, and objective items such as
+	// gems need Rules.ObjectiveSceneIDs. The server leaves it false.
+	AllowSpecialRules bool
 }
 
 // ConfigFromCompetitiveMap creates the complete deterministic rule-1 initial
@@ -109,9 +127,12 @@ func ConfigFromCompetitiveMap(entry mapdata.CompetitiveMap, options CompetitiveM
 	if entry.PlayerLimit != 0 && len(options.Participants) > int(entry.PlayerLimit) {
 		return Config{}, fmt.Errorf("competitive map %d supports at most %d participants, got %d", entry.ID, entry.PlayerLimit, len(options.Participants))
 	}
-	grid, err := validateNativeRuntimeMap(entry)
+	grid, err := validateNativeRuntimeMap(entry, options.AllowSpecialRules)
 	if err != nil {
 		return Config{}, err
+	}
+	if options.AllowSpecialRules && !options.UseRecordedWallItems && entry.NativeRule != 1 {
+		return Config{}, fmt.Errorf("competitive map %d uses special rule %d and needs recorded GAME_BEGIN items", entry.ID, entry.NativeRule)
 	}
 	spec, ok := mapdata.LookupCompetitiveRuleByNativeID(entry.NativeRule)
 	if !ok || spec.RoundDurationMS == 0 {
@@ -141,7 +162,7 @@ func ConfigFromCompetitiveMap(entry mapdata.CompetitiveMap, options CompetitiveM
 		supply := entry.PlanCompetitiveSupply(options.ItemSeed, roles, false)
 		items, delayed = supply.WallItems, supply.DelayedItems
 	}
-	pickups, err := HiddenPickupsFromCompetitiveWallItems(entry, options.ItemSeed, items)
+	pickups, err := hiddenPickupsFromWallItems(entry, options.ItemSeed, items, rules, options.AllowSpecialRules)
 	if err != nil {
 		return Config{}, err
 	}
@@ -272,14 +293,18 @@ func HiddenPickupsFromCompetitiveMap(entry mapdata.CompetitiveMap, itemSeed uint
 // Differential replay uses this boundary so a historical server roll is not
 // silently replaced by the current local policy.
 func HiddenPickupsFromCompetitiveWallItems(entry mapdata.CompetitiveMap, itemSeed uint32, items []mapdata.CompetitiveWallItem) ([]Pickup, error) {
-	if entry.NativeRule != 1 || entry.Rule != mapdata.CompetitiveRuleOrdinary {
-		return nil, fmt.Errorf("competitive map %d uses native rule %d/%s, want ordinary rule 1", entry.ID, entry.NativeRule, entry.Rule)
+	return hiddenPickupsFromWallItems(entry, itemSeed, items, Rules{}, false)
+}
+
+func hiddenPickupsFromWallItems(entry mapdata.CompetitiveMap, itemSeed uint32, items []mapdata.CompetitiveWallItem, rules Rules, allowSpecial bool) ([]Pickup, error) {
+	if err := checkOrdinaryRule(entry, allowSpecial); err != nil {
+		return nil, err
 	}
 	for index, item := range items {
 		if item.SceneID == 0 || item.Quantity <= 0 {
 			return nil, fmt.Errorf("competitive map %d recorded wall item %d has invalid scene/quantity %d/%d", entry.ID, index, item.SceneID, item.Quantity)
 		}
-		if _, _, supported := supportedPickupEffect(item.SceneID); !supported {
+		if !rules.pickupSupported(item.SceneID) {
 			return nil, fmt.Errorf("competitive map %d recorded wall item %d uses unsupported scene ID %d", entry.ID, index, item.SceneID)
 		}
 	}

@@ -254,7 +254,7 @@ func (engine *Engine) ApplyVerifiedPickupDispatch(dispatchTime uint32, dispatche
 		if pickup.SceneID == 0 {
 			return fmt.Errorf("verified dispatched pickup %d has zero scene ID", index)
 		}
-		if _, _, supported := supportedPickupEffect(pickup.SceneID); !supported && !nativeFieldSceneID(pickup.SceneID) {
+		if !engine.rules.pickupSupported(pickup.SceneID) && !nativeFieldSceneID(pickup.SceneID) {
 			return fmt.Errorf("verified dispatched pickup %d uses unsupported scene ID %d", index, pickup.SceneID)
 		}
 		tile, inside := engine.grid.Cell(pickup.Cell)
