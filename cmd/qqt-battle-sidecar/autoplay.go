@@ -1,0 +1,288 @@
+package main
+
+// Autoplay: a scripted stand-in for the local human, for two-client tests
+// without anyone at the keyboard. It is not the server's AI and not a model
+// of how people play; it only has to move, collect, place bubbles and avoid
+// blasts well enough to drive the rule paths (pickups, kills, relives) on the
+// client's real input and network path.
+//
+// It plans on whole cells with what a player can see: open cells, bubbles,
+// visible items and the danger timeline of the bubbles already placed.
+
+import (
+	"qqtang/internal/game/battleengine"
+)
+
+const (
+	autoplayHorizonMS  = 4000
+	autoplayReplanMS   = 100
+	autoplayMaxEscape  = 8   // cells
+	autoplayCentreSlop = 3   // pixels off a cell centre that still count as on it
+	autoplayMarginMS   = 150 // extra time asked of every escape
+)
+
+type autoplayBot struct {
+	player    uint16
+	timeline  battleengine.DangerTimeline
+	plannedAt uint32
+	planned   bool
+}
+
+func newAutoplayBot(player uint16) *autoplayBot {
+	return &autoplayBot{player: player}
+}
+
+var autoplayDirections = [...]battleengine.Direction{
+	battleengine.DirectionUp, battleengine.DirectionRight, battleengine.DirectionDown, battleengine.DirectionLeft,
+}
+
+func stepCell(cell battleengine.Cell, direction battleengine.Direction) battleengine.Cell {
+	switch direction {
+	case battleengine.DirectionUp:
+		cell.Row--
+	case battleengine.DirectionDown:
+		cell.Row++
+	case battleengine.DirectionLeft:
+		cell.Col--
+	case battleengine.DirectionRight:
+		cell.Col++
+	}
+	return cell
+}
+
+// act chooses the local player's input for the next engine tick.
+func (bot *autoplayBot) act(engine *battleengine.Engine) battleengine.Action {
+	action := battleengine.Action{PlayerID: bot.player}
+	actor, ok := actorByID(engine.Actors(), bot.player)
+	if !ok || actor.State != battleengine.ActorActive {
+		return action
+	}
+	now := engine.ElapsedMS()
+	if !bot.planned || now-bot.plannedAt >= autoplayReplanMS {
+		timeline, err := engine.DangerTimeline(autoplayHorizonMS)
+		if err != nil {
+			return action
+		}
+		bot.timeline, bot.plannedAt, bot.planned = timeline, now, true
+	}
+	msPerCell := uint32(1000 * battleengine.CellSizePixels / max(1, int(actor.SpeedPixelsPerSecond)))
+	here := actor.Position.Cell()
+	world := newAutoplayWorld(engine)
+
+	// 1. Leave a cell a known blast will reach.
+	if _, threatened := bot.timeline.ImpactAt(here); threatened {
+		if path := world.escape(here, bot.timeline, now, msPerCell); len(path) > 1 {
+			action.Move = steer(actor.Position, path[1])
+		}
+		return action
+	}
+	safe := func(cell battleengine.Cell) bool {
+		_, threatened := bot.timeline.ImpactAt(cell)
+		return !threatened
+	}
+	// 2. Collect the nearest visible item; gems (rule objectives) first.
+	if path := world.nearest(here, safe, world.objectiveAt); len(path) > 0 {
+		return bot.follow(action, actor, path)
+	}
+	if path := world.nearest(here, safe, world.pickupAt); len(path) > 0 {
+		return bot.follow(action, actor, path)
+	}
+	// 3. Place a bubble beside a breakable wall or an opponent, if it can be
+	// escaped.
+	if world.worthBombing(here, actor) && onCentre(actor.Position) && bot.canEscapeOwnBubble(engine, actor, msPerCell) {
+		action.PlaceBomb = true
+		return action
+	}
+	// 4. Walk toward the nearest cell where a bubble would be worth it.
+	if path := world.nearest(here, safe, func(cell battleengine.Cell) bool { return world.worthBombing(cell, actor) }); len(path) > 0 {
+		return bot.follow(action, actor, path)
+	}
+	return action
+}
+
+func (bot *autoplayBot) follow(action battleengine.Action, actor battleengine.Actor, path []battleengine.Cell) battleengine.Action {
+	if len(path) > 1 {
+		action.Move = steer(actor.Position, path[1])
+	} else if !onCentre(actor.Position) {
+		action.Move = steer(actor.Position, path[0])
+	}
+	return action
+}
+
+// canEscapeOwnBubble places the bubble on a copy of the match and looks for
+// a reachable cell its blast (with every other known blast) never reaches.
+func (bot *autoplayBot) canEscapeOwnBubble(engine *battleengine.Engine, actor battleengine.Actor, msPerCell uint32) bool {
+	here := actor.Position.Cell()
+	clone := engine.Clone()
+	if _, err := clone.ApplyVerifiedBombPlacementAt(bot.player, here, uint16(actor.BombPower)+1, 0, clone.ElapsedMS()); err != nil {
+		return false
+	}
+	timeline, err := clone.DangerTimeline(autoplayHorizonMS)
+	if err != nil {
+		return false
+	}
+	path := newAutoplayWorld(clone).escape(here, timeline, clone.ElapsedMS(), msPerCell)
+	return len(path) > 1
+}
+
+// steer is the held direction that moves the actor toward the centre of the
+// next cell, first lining it up on the other axis.
+func steer(position battleengine.Position, next battleengine.Cell) battleengine.Direction {
+	target := battleengine.PositionAtCellCenter(next)
+	dx, dy := target.X-position.X, target.Y-position.Y
+	horizontal := abs32(dx) > abs32(dy)
+	switch {
+	case horizontal && abs32(dy) > autoplayCentreSlop:
+		horizontal = false
+	case !horizontal && abs32(dx) > autoplayCentreSlop:
+		horizontal = true
+	}
+	if horizontal {
+		if dx > 0 {
+			return battleengine.DirectionRight
+		}
+		return battleengine.DirectionLeft
+	}
+	if dy > 0 {
+		return battleengine.DirectionDown
+	}
+	if dy < 0 {
+		return battleengine.DirectionUp
+	}
+	return battleengine.DirectionNone
+}
+
+func onCentre(position battleengine.Position) bool {
+	centre := battleengine.PositionAtCellCenter(position.Cell())
+	return abs32(centre.X-position.X) <= autoplayCentreSlop && abs32(centre.Y-position.Y) <= autoplayCentreSlop
+}
+
+func abs32(value int32) int32 {
+	if value < 0 {
+		return -value
+	}
+	return value
+}
+
+// autoplayWorld is the public map the bot plans on.
+type autoplayWorld struct {
+	engine  *battleengine.Engine
+	grid    battleengine.Grid
+	bombs   map[battleengine.Cell]bool
+	pickups map[battleengine.Cell]uint32
+}
+
+func newAutoplayWorld(engine *battleengine.Engine) autoplayWorld {
+	world := autoplayWorld{engine: engine, grid: engine.Grid(), bombs: map[battleengine.Cell]bool{}, pickups: map[battleengine.Cell]uint32{}}
+	for _, bomb := range engine.Bombs() {
+		world.bombs[bomb.Cell] = true
+	}
+	for _, pickup := range engine.Pickups() {
+		if pickup.State == battleengine.PickupAvailable {
+			world.pickups[pickup.Cell] = pickup.SceneID
+		}
+	}
+	return world
+}
+
+func (world autoplayWorld) open(cell battleengine.Cell) bool {
+	tile, inside := world.grid.Cell(cell)
+	return inside && tile.Kind == battleengine.CellOpen && !world.bombs[cell]
+}
+
+func (world autoplayWorld) pickupAt(cell battleengine.Cell) bool {
+	_, found := world.pickups[cell]
+	return found
+}
+
+func (world autoplayWorld) objectiveAt(cell battleengine.Cell) bool {
+	scene, found := world.pickups[cell]
+	return found && scene >= 150 && scene <= 152
+}
+
+// worthBombing: a breakable wall or an opponent next to the cell.
+func (world autoplayWorld) worthBombing(cell battleengine.Cell, self battleengine.Actor) bool {
+	if world.bombs[cell] {
+		return false
+	}
+	active := 0
+	for _, bomb := range world.engine.Bombs() {
+		if bomb.OwnerID == self.PlayerID {
+			active++
+		}
+	}
+	if active >= int(self.BombCapacity) {
+		return false
+	}
+	for _, direction := range autoplayDirections {
+		next := stepCell(cell, direction)
+		if tile, inside := world.grid.Cell(next); inside && tile.Kind == battleengine.CellBreakable {
+			return true
+		}
+		for _, actor := range world.engine.Actors() {
+			if actor.TeamID != self.TeamID && actor.State == battleengine.ActorActive && actor.Position.Cell() == next {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// nearest is the shortest path over open cells that pass allowed to the
+// first cell satisfying goal, the start included; nil if none.
+func (world autoplayWorld) nearest(start battleengine.Cell, allowed, goal func(battleengine.Cell) bool) []battleengine.Cell {
+	return world.search(start, func(cell battleengine.Cell, _ int) bool { return cell == start || allowed(cell) }, func(cell battleengine.Cell, _ int) bool { return goal(cell) }, -1)
+}
+
+// escape is the shortest path to a cell no known blast reaches, entering
+// only cells that are not hit while the actor would be in them.
+func (world autoplayWorld) escape(start battleengine.Cell, timeline battleengine.DangerTimeline, now, msPerCell uint32) []battleengine.Cell {
+	passable := func(cell battleengine.Cell, steps int) bool {
+		if cell == start {
+			return true
+		}
+		impact, threatened := timeline.ImpactAt(cell)
+		if !threatened {
+			return true
+		}
+		leave := now + uint32(steps+1)*msPerCell + autoplayMarginMS
+		clear, _ := timeline.ClearAt(cell)
+		return impact > leave || clear < now+uint32(steps)*msPerCell
+	}
+	goal := func(cell battleengine.Cell, _ int) bool {
+		_, threatened := timeline.ImpactAt(cell)
+		return !threatened
+	}
+	return world.search(start, passable, goal, autoplayMaxEscape)
+}
+
+func (world autoplayWorld) search(start battleengine.Cell, passable, goal func(battleengine.Cell, int) bool, limit int) []battleengine.Cell {
+	previous := map[battleengine.Cell]battleengine.Cell{start: start}
+	queue := []battleengine.Cell{start}
+	depth := map[battleengine.Cell]int{start: 0}
+	for len(queue) > 0 {
+		cell := queue[0]
+		queue = queue[1:]
+		if goal(cell, depth[cell]) {
+			path := []battleengine.Cell{cell}
+			for cell != start {
+				cell = previous[cell]
+				path = append([]battleengine.Cell{cell}, path...)
+			}
+			return path
+		}
+		if limit >= 0 && depth[cell] >= limit {
+			continue
+		}
+		for _, direction := range autoplayDirections {
+			next := stepCell(cell, direction)
+			if _, seen := previous[next]; seen || !world.open(next) || !passable(next, depth[cell]+1) {
+				continue
+			}
+			previous[next] = cell
+			depth[next] = depth[cell] + 1
+			queue = append(queue, next)
+		}
+	}
+	return nil
+}

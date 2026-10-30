@@ -79,6 +79,7 @@ type onlineInit struct {
 	UINs          map[string]uint32 `json:"uins"` // by player ID
 	FreeRule      bool              `json:"free_rule"`
 	TrapMS        uint32            `json:"trap_ms"`
+	Autoplay      bool              `json:"autoplay"` // the test bot plays the local player
 }
 
 type tcpPacket struct {
@@ -181,6 +182,8 @@ type onlineMatch struct {
 	// clock of each eliminated player's death.
 	respawn      *respawnRule
 	eliminatedAt map[uint16]uint32
+
+	bot *autoplayBot // --autoplay; nil when the keyboard plays
 }
 
 // respawnRule is a special rule's relive timing, from Client.exe's rule
@@ -320,6 +323,10 @@ func newOnlineMatch(init command) (*onlineMatch, beginView, error) {
 		pickupRequests:    map[pickupKey]pickupRequest{}, sceneRequests: map[sceneRequestKey]uint32{},
 		respawn: respawn, eliminatedAt: map[uint16]uint32{},
 	}
+	if options.Autoplay {
+		match.bot = newAutoplayBot(match.local)
+		match.logf("autoplay: the test bot plays player %d", match.local)
+	}
 	for _, entry := range view.Players {
 		if entry.ID == match.local {
 			match.prepared = append([]preparedView(nil), entry.Prepared...)
@@ -444,6 +451,10 @@ func (match *onlineMatch) step(step command) ([]battleengine.Event, error) {
 		before := match.runtime.EngineSnapshot()
 		action := local
 		action.PlaceBomb, match.bombPressed = match.bombPressed, false
+		if match.bot != nil && match.localActive() {
+			chosen := match.bot.act(match.engine)
+			action.Move, action.PlaceBomb = chosen.Move, chosen.PlaceBomb
+		}
 		var actions []battleengine.Action
 		if action.PlayerID != 0 && match.localActive() {
 			actions = []battleengine.Action{action}

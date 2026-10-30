@@ -37,6 +37,7 @@ class MatchMember:
     points: int  # competitive points before the match (level icon)
     wear: tuple[tuple[str, int], ...] = ()  # costume parts worn in the room
     seat: int = -1  # room seat 0..7 (Client.exe actor +0x396); -1 if unknown
+    gender: int = 0  # as the room reports it; 1 picks the male title ranks
 
 
 @dataclasses.dataclass
@@ -60,13 +61,15 @@ class OnlineBattle:
         sidecar = Sidecar()
         try:
             state = sidecar.start_online(resources.root, begin, self.local_id, session.uin, server.ip, server.udp_port,
-                                         {player_id: member.uin for player_id, member in context.members.items()}, context.free_rule)
+                                         {player_id: member.uin for player_id, member in context.members.items()}, context.free_rule,
+                                         session.autoplay)
         except SidecarError:
             sidecar.close()
             raise
         begin_info = state["begin"]
         players = [dict(player, name=member.nickname if (member := context.members.get(player["id"])) else f"玩家{player['id']}",
-                        seat=member.seat if member else -1)
+                        seat=member.seat if member else -1, points=member.points if member else 0,
+                        gender=member.gender if member else 0)
                    for player in begin_info["players"]]
         log(f"[match] game {begin_info['game_id']} map {begin_info['map_id']}, arbitrator {begin_info['arbitrator']}, "
             f"players " + ", ".join(f"{player['id']}:{player['name']}" for player in players))
@@ -100,7 +103,7 @@ class OnlineBattle:
             "GetPVEPlayerInfo": lambda: [],
         })
         runtime.goto_screen("game")
-        self.scene.attach(runtime, begin_info["map_id"], renderer.font)
+        self.scene.attach(runtime, begin_info["map_id"], renderer.font, renderer.text_line)
         renderer.underlay, renderer.overlay = self.scene.draw, self.scene.draw_overlay
 
     def on_game_event(self, packet: game.Packet) -> None:

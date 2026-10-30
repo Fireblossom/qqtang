@@ -52,7 +52,7 @@ class PracticeSession:
         state = sidecar.start(self.resources.root, self.map_id, self.players, seed, seed ^ 0x5A5A)
         self.scene = BattleScene(self.resources, self.renderer.sprites, self.avatars, sidecar, self.map_id, self.players,
                                  local_id=LOCAL_ID, state=state)
-        self.scene.attach(self.runtime, self.map_id, self.renderer.font)
+        self.scene.attach(self.runtime, self.map_id, self.renderer.font, self.renderer.text_line)
         self.renderer.underlay, self.renderer.overlay = self.scene.draw, self.scene.draw_overlay
 
     def handle(self, event: pygame.event.Event) -> None:

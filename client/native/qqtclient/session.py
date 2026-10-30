@@ -30,6 +30,9 @@ STATE_FILE = pathlib.Path(os.path.expanduser("~/Library/Application Support/QQTa
 class Session:
     def __init__(self, server_host: str):
         self.server_host = server_host
+        # Online matches play the local player with the sidecar's test bot
+        # (--autoplay) instead of the keyboard.
+        self.autoplay = False
         self.uin = 0
         self.nickname = ""
         self.gender = 0

@@ -12,7 +12,7 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
 from qqtclient.battle import mapfile  # noqa: E402
 from qqtclient.battle.practice import practice_players  # noqa: E402
 from qqtclient.battle.scene import (ACTOR_TRAPPED, NEEDLE_ACTION, TREASURE_BADGE, TREASURE_DIGITS, BattleScene,  # noqa: E402
-                                   Explosion, flame_image)
+                                   Explosion, flame_image, player_title)
 from qqtclient.battle.sidecar import ACTOR_ELIMINATED, EVENT_ACTOR_RESPAWNED  # noqa: E402
 
 
@@ -136,6 +136,17 @@ class TreasureScoreTest(unittest.TestCase):
         scene.eliminated_at, scene.trapped_at, scene.walk_started = {2: 5.0}, {2: 1.0}, {2: 7}
         scene._apply({"kind": EVENT_ACTOR_RESPAWNED, "player": 2, "cell": {"row": 1, "col": 1}})
         self.assertEqual((scene.eliminated_at, scene.trapped_at, scene.walk_started), ({}, {}, {}))
+
+
+class PlayerTitleTest(unittest.TestCase):
+    def test_titles(self) -> None:
+        self.assertEqual(player_title(0, 1), "QQ堂平民")
+        self.assertEqual(player_title(9999, 1), "QQ堂平民")
+        self.assertEqual(player_title(10000, 1), "糖果爱好者")
+        self.assertEqual(player_title(1150000, 0), "刨冰骑兵")  # Client.exe's table, not levelCFG's
+        self.assertEqual(player_title(10800000, 1), "太阳国王")
+        self.assertEqual(player_title(10800000, 0), "太阳女王")
+        self.assertEqual(player_title(144100000, 1), "???")
 
 
 class PracticeTest(unittest.TestCase):

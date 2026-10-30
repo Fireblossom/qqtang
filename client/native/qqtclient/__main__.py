@@ -32,6 +32,8 @@ def parse_args() -> argparse.Namespace:
     automation.add_argument("--type", action="append", default=[], metavar="TEXT@MS", help="type TEXT after MS milliseconds")
     automation.add_argument("--key", action="append", default=[], metavar="NAME@MS", help="press a key (pygame name, e.g. tab, return) after MS milliseconds")
     automation.add_argument("--hold", action="append", default=[], metavar="NAME@FROM:TO", help="hold a key down from FROM to TO milliseconds")
+    automation.add_argument("--autoplay", action="store_true",
+                            help="in online matches, let the sidecar's test bot play the local player")
     automation.add_argument("--call", action="append", default=[], metavar="EXPR@MS",
                             help="evaluate a native call such as Login(1000001,0,'123456') after MS milliseconds")
     return parser.parse_args()
@@ -121,6 +123,7 @@ def main() -> int:
     runtime = UIRuntime(ScriptLoader(scripts, namespace))
     namespace.update(build_natives(runtime, resources, Audio(resources)))
     session = Session(args.server)
+    session.autoplay = args.autoplay
     namespace.update(build_session_natives(runtime, session))
     namespace.update(build_lobby_natives(runtime, session))
     namespace.update(build_chat_natives(runtime, session))

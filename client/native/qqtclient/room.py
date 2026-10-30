@@ -290,7 +290,8 @@ def build_room_natives(runtime: UIRuntime, session: Session, avatars: AvatarCach
                 runtime.goto_screen("selRoom")
 
         members = {member.player_id: MatchMember(member.uin, member.nickname, member.game_info.points,
-                                                 tuple(sorted(state.avatars[member.seat - 1].wear.items())), member.seat - 1)
+                                                 tuple(sorted(state.avatars[member.seat - 1].wear.items())), member.seat - 1,
+                                                 member.gender)
                    for member in state.members.values()}
         try:
             start_battle(packet.payload, MatchContext(bool(state.snapshot.room_flag & room.PROPERTY_FREE_RULE), members, back_to_room))

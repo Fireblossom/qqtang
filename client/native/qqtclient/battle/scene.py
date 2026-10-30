@@ -13,7 +13,7 @@ from typing import Any, Callable
 import pygame
 
 from ..avatar import AvatarCache
-from ..render import SpriteCache
+from ..render import SpriteCache, cell_width
 from ..resources import Resources
 from ..runtime import UIRuntime
 from ..script import call_script, log
@@ -61,11 +61,34 @@ SLOT_STEP = 54
 SLOT_SIZE = 50
 ROUND_END_MS = 240000  # battleengine.StandardRoundTimeMS, including the 3 s Ready/Go
 PLAYER_LIST = "UI.game.playerListDlg"
-# Rows of the in-game player list (uiGame playerListDlg.playerBtn<i>); the
-# native host draws each player's head, name and state into them.
-PLAYER_ROW_ORIGIN = (609 + 46, 91)
-PLAYER_ROW_STEP = 48
+# The in-game player list, one 51-pixel row per room seat (Client.exe
+# 0x005E1C24 sets it up, 0x005E1E46 draws it), over UI.game. The portrait
+# (0x005DCF44, placed by 0x005DD1C3) is the player's avatar at sprite point
+# (685, 162) + 51 per seat (role 41: 10 higher); the in-field actor's sprite
+# point is its position + (10, 30) (0x005B514E), which puts our 100x100
+# canvas at sprite point - (50, 67). The portrait draws a separate part list
+# (+0x2CC); that it is only the head is inferred, so the host crops the
+# canvas to HEAD_CROP.
+PLAYER_LIST_STEP = 51
+PLAYER_LIST_PORTRAIT_AT = (685 - 50, 162 - 67)  # canvas top-left for seat 0
+PLAYER_LIST_ROLE_RAISE = {41: 10}
 HEAD_CROP = pygame.Rect(26, 18, 48, 40)  # head area of the 100x100 avatar canvas
+PLAYER_LIST_TEXT_RIGHT = 788  # names and titles end here (x = 788 - 6 per GBK byte)
+PLAYER_LIST_NAME_Y = 115
+PLAYER_LIST_TITLE_Y = 135
+PLAYER_LIST_TEXT = (0xC7, 0xF2, 0xFC)  # over a black copy one pixel down and right
+# Title by competitive points (Client.exe table 0x7F5940): the first whose
+# bound exceeds the points. The three highest add a gendered rank
+# (0x7F5D78 for gender 1, 0x7F5D82 otherwise); past the table it is "???".
+PLAYER_TITLES = (
+    (10000, "QQ堂平民"), (30000, "糖果爱好者"), (60000, "采购学徒"), (100000, "熬糖工人"), (150000, "拌糖熟练工"),
+    (210000, "甜味技术员"), (280000, "捏形师傅"), (360000, "品糖高手"), (450000, "造型专家"), (550000, "QQ糖大师"),
+    (700000, "糖果志愿者"), (900000, "奶酪预备兵"), (1150000, "泡泡糖战士"), (1450000, "刨冰骑兵"), (1800000, "棒棒糖游侠"),
+    (2200000, "饼干队长"), (2650000, "果冻骑士"), (3150000, "巧克力将军"), (3700000, "冰琪淋勇者"), (4300000, "QQ堂英雄"),
+    (5000000, "糖果镇长"), (5900000, "中华城主"), (7100000, "梦幻岛主"), (8700000, "星星公爵"), (10800000, "月亮"),
+    (13500000, "太阳"), (25350000, "紫钻"), (63300000, "酷比大天使"), (144100000, "创世之神"),
+)
+PLAYER_TITLE_RANKS = {24: ("王子", "公主"), 25: ("国王", "女王"), 26: ("皇帝", "女皇")}
 GAME_MODE_NORMAL = 0
 READY_MS = 3000  # online Ready/Go countdown from GAME_BEGIN
 RESULT_DRAW, RESULT_WIN = 1, 2  # net.match.RESULT_*
@@ -131,6 +154,15 @@ def flame_image(explosion: Explosion | None, row: int, col: int) -> int:
     return (6 if end else 2) + direction
 
 
+def player_title(points: int, gender: int) -> str:
+    """The player list's second line for these competitive points."""
+    for index, (bound, title) in enumerate(PLAYER_TITLES):
+        if points < bound:
+            ranks = PLAYER_TITLE_RANKS.get(index)
+            return title + (ranks[0 if gender == 1 else 1] if ranks else "")
+    return "???"
+
+
 class BattleScene:
     """state is the started sidecar's init reply. In realtime (online) mode
     the sidecar keeps its own clock, so it is stepped every frame."""
@@ -182,16 +214,19 @@ class BattleScene:
         self.names = {player["id"]: player.get("name") or f"玩家{player['id']}" for player in players}
         # Room seats 0..7 by PlayerID (online only).
         self.seats = {player["id"]: player["seat"] for player in players if player.get("seat", -1) >= 0}
+        self.titles = {player["id"]: player_title(player.get("points", 0), player.get("gender", 0)) for player in players}
         self.runtime: UIRuntime | None = None
         self.shown_seconds = -1
         self.font: Callable[[int], pygame.font.Font] | None = None
+        self.text: Callable[[str, int, tuple[int, int, int]], pygame.Surface] | None = None
         log(f"[battle] map {map_id} {self.map_name} ({self.map.width}x{self.map.height}, rule {self.map.rule})")
 
     # UI.game ------------------------------------------------------------------
 
-    def attach(self, runtime: UIRuntime, map_id: int, font: Callable[[int], pygame.font.Font]) -> None:
+    def attach(self, runtime: UIRuntime, map_id: int, font: Callable[[int], pygame.font.Font],
+               text: Callable[[str, int, tuple[int, int, int]], pygame.Surface] | None = None) -> None:
         """Prepare UI.game the way the native host does when a match starts."""
-        self.runtime, self.font = runtime, font
+        self.runtime, self.font, self.text = runtime, font, text
         self._script("ui_SetGameMode", GAME_MODE_NORMAL)
         self._script("ui_InitPVEBoss")  # hides the boss bars when there are none
         self._script("game_setMapID", map_id)
@@ -382,6 +417,27 @@ class BattleScene:
         for path, position in ((FRAME_TOP, (0, 0)), (FRAME_LEFT, (0, oy))):
             self._draw_frames(screen, path, 0, *position)
 
+    def _seat(self, index: int, actor: dict[str, Any]) -> int:
+        """The player's room seat, or its list position offline."""
+        return self.seats.get(actor["id"], index)
+
+    def _draw_player_list(self, screen: pygame.Surface) -> None:
+        for index, actor in enumerate(self.state["actors"]):
+            top = self._seat(index, actor) * PLAYER_LIST_STEP
+            image = self.avatars.get(actor["role"], actor["team"] - 1, "stand", SPRITE_DIRECTION[MOVE_DOWN], wear=self.wear.get(actor["id"], ()))
+            if image is not None:
+                raise_by = PLAYER_LIST_ROLE_RAISE.get(actor["role"], 0)
+                screen.blit(image.subsurface(HEAD_CROP), (PLAYER_LIST_PORTRAIT_AT[0] + HEAD_CROP.x,
+                                                          PLAYER_LIST_PORTRAIT_AT[1] + HEAD_CROP.y + top - raise_by))
+            if self.text is None:
+                continue
+            for line, y in ((self.names.get(actor["id"], ""), PLAYER_LIST_NAME_Y), (self.titles.get(actor["id"], ""), PLAYER_LIST_TITLE_Y)):
+                if not line:
+                    continue
+                x = PLAYER_LIST_TEXT_RIGHT - cell_width(line, 12)
+                screen.blit(self.text(line, 12, (0, 0, 0)), (x + 1, y + top + 1))
+                screen.blit(self.text(line, 12, PLAYER_LIST_TEXT), (x, y + top))
+
     def _draw_frames(self, surface: pygame.Surface, path: str, frame: int, x: int, y: int) -> None:
         frames = self.sprites.get(path)
         if not frames:
@@ -476,7 +532,7 @@ class BattleScene:
         best = max(teams.values(), default=0)
         local = self._local_actor()
         for index, (actor, value) in enumerate(zip(actors, values)):
-            top = self.seats.get(actor["id"], index) * TREASURE_STEP
+            top = self._seat(index, actor) * TREASURE_STEP
             leading = self.treasure_scored and teams[actor["team"]] == best
             self._draw_frames(screen, TREASURE_BADGE, int(leading), TREASURE_BADGE_AT[0], TREASURE_BADGE_AT[1] + top)
             digits = TREASURE_DIGITS[local is not None and actor["team"] == local["team"]]
@@ -558,24 +614,14 @@ class BattleScene:
                         screen.blit(icon[0][0], (columns[4] - 20, y - 8))
 
     def draw_overlay(self, screen: pygame.Surface) -> None:
-        """Host-drawn parts above UI.game: player rows and the result banner."""
+        """Host-drawn parts above UI.game: the selected item slot, the player
+        list and the result banner."""
         if self.font is None:
             return
         if self._slots()[self.selected_slot][0]:
             slot = pygame.Rect(SLOT_ORIGIN[0] + self.selected_slot * SLOT_STEP, SLOT_ORIGIN[1], SLOT_SIZE, SLOT_SIZE)
             pygame.draw.rect(screen, (255, 230, 80), slot, 2)
-        x, y = PLAYER_ROW_ORIGIN
-        for index, actor in enumerate(self.state["actors"]):
-            row_y = y + index * PLAYER_ROW_STEP
-            head = self.avatars.get(actor["role"], actor["team"] - 1, "stand", wear=self.wear.get(actor["id"], ()))
-            if head is not None:
-                portrait = head.subsurface(HEAD_CROP).copy()
-                if actor["state"] == ACTOR_ELIMINATED:
-                    portrait.fill((90, 90, 90, 255), special_flags=pygame.BLEND_RGBA_MULT)
-                screen.blit(portrait, (x, row_y))
-            status = {ACTOR_TRAPPED: "（被困）", ACTOR_ELIMINATED: "（阵亡）"}.get(actor["state"], "")
-            label = self.font(12).render(self.names.get(actor["id"], "") + status, True, (255, 255, 255))
-            screen.blit(label, (x + 52, row_y + 14))
+        self._draw_player_list(screen)
         if self.rule == "treasure":
             self._draw_treasure(screen)
         if self.result_rows:

@@ -209,3 +209,7 @@ func TestDeathWithGemsPublishesOnlyGems(t *testing.T) {
 		t.Fatalf("death = %+v, %v", death, err)
 	}
 }
+
+func treasureMapForTest() mapdata.CompetitiveMap {
+	return mapdata.CompetitiveMap{ID: 1101, Rule: mapdata.CompetitiveRuleTreasure}
+}
