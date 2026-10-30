@@ -169,6 +169,9 @@ func TestRespawnRestoresStartingActor(t *testing.T) {
 	if actor.CarriedObjectives != ([MaxObjectiveKinds]uint16{}) || actor.MovementStatus != MovementStatusNone {
 		t.Fatalf("respawned actor kept state: %+v", *actor)
 	}
+	if want := engine.ElapsedMS() + NativePostTransformationProtectionMS; actor.HarmProtectionExpiresAt != want || event.EffectExpiresAt != want {
+		t.Fatalf("protection until %d (event %d), want %d", actor.HarmProtectionExpiresAt, event.EffectExpiresAt, want)
+	}
 	if _, err := engine.Step(nil); err != nil {
 		t.Fatal(err)
 	}
@@ -241,5 +244,35 @@ func TestShippedTreasureMapsBuildWithSpecialRules(t *testing.T) {
 	}
 	if err := ValidateNativeRuntimeMap(mapdata.CompetitiveMap{NativeRule: 5, Rule: mapdata.CompetitiveRuleTreasure}); err == nil {
 		t.Fatal("server validation accepted a treasure map")
+	}
+}
+
+// A relived actor is protected from flames for 3 s, like one whose avatar
+// just ended (0x005B5202).
+func TestRespawnProtectsFromFlames(t *testing.T) {
+	config := treasureTestConfig()
+	config.Rules.BombFuseMS = 300
+	engine := mustEngine(t, config)
+	engine.actors[0].State = ActorEliminated
+	cell := Cell{Row: 2, Col: 4}
+	if _, err := engine.RespawnActor(1, cell); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := engine.ApplyVerifiedBombPlacementAt(2, cell, 2, 0, engine.ElapsedMS()); err != nil {
+		t.Fatal(err)
+	}
+	exploded := 0
+	for engine.ElapsedMS() < 1000 {
+		events, err := engine.Step(nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		exploded += countEventKind(events, EventBombExploded)
+	}
+	if exploded != 1 {
+		t.Fatalf("explosions = %d, want 1", exploded)
+	}
+	if state := engine.actors[0].State; state != ActorActive {
+		t.Fatalf("a protected actor was hit: state %d", state)
 	}
 }

@@ -9,10 +9,12 @@ import "fmt"
 // Client.exe's receiver (0x00603754) moves the actor to the centre of the
 // message's cell, records that cell as the actor's spawn (0x005AD5E1) and
 // switches its state machine to the relive state. The relive state's entry
-// (0x00881FE5) is VM-protected; the starting attributes restored here come
-// from Tutorial2.qbv, where player 6 placed power-4 bubbles before a kill and
-// power-2 bubbles after its relive. Whether the relive animation keeps the
-// actor still or protected is not known; the actor is active at once.
+// (0x00881FE5) is VM-protected; run in Unicorn it sets the actor's state byte
+// +0x3B7 to 1 (active, as a rescue does), clears the avatar (+0x404) and
+// installs the 3000 ms flash2.eff harm protection through 0x005B5202, the
+// same as an avatar's end. It writes none of the attribute records; the
+// starting attributes restored here come from Tutorial2.qbv, where player 6
+// placed power-4 bubbles before a kill and power-2 bubbles after its relive.
 func (engine *Engine) RespawnActor(playerID uint16, cell Cell) (Event, error) {
 	if engine == nil {
 		return Event{}, fmt.Errorf("battle engine is nil")
@@ -42,7 +44,9 @@ func (engine *Engine) RespawnActor(playerID uint16, cell Cell) (Event, error) {
 	*actor = Actor{
 		Participant: initial, initial: initial, Position: position, State: ActorActive, Facing: DirectionDown,
 		OxygenValue: NativeOxygenValueInitial, PublicBehavior: actor.PublicBehavior,
-		nativePreviousPosition: actor.Position,
+		HarmProtectionExpiresAt: saturatingAdd(engine.elapsedMS, NativePostTransformationProtectionMS),
+		nativePreviousPosition:  actor.Position,
 	}
-	return Event{Kind: EventActorRespawned, TimeMS: engine.elapsedMS, PlayerID: playerID, Cell: cell, Position: position, TeamID: actor.TeamID}, nil
+	return Event{Kind: EventActorRespawned, TimeMS: engine.elapsedMS, PlayerID: playerID, Cell: cell, Position: position, TeamID: actor.TeamID,
+		EffectExpiresAt: actor.HarmProtectionExpiresAt}, nil
 }
