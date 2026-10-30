@@ -14,6 +14,9 @@ func bundledONNXRuntimePath(goos, goarch string) (string, error) {
 		name = "onnxruntime.dll"
 	case "linux":
 		name = "libonnxruntime.so.1.29.0"
+	case "darwin":
+		// The official osx-arm64 1.29.0 archive's versioned library.
+		name = "libonnxruntime.1.29.0.dylib"
 	default:
 		return "", fmt.Errorf("competitive_ai.shared_library_path is required for ONNX Runtime on %s/%s", goos, goarch)
 	}

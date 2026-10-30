@@ -12,6 +12,7 @@ func TestBundledONNXRuntimePlatformPaths(t *testing.T) {
 		{"windows", "amd64", "onnxruntime.dll"},
 		{"linux", "amd64", "libonnxruntime.so.1.29.0"},
 		{"linux", "arm64", "libonnxruntime.so.1.29.0"},
+		{"darwin", "arm64", "libonnxruntime.1.29.0.dylib"},
 	} {
 		got, err := bundledONNXRuntimePath(test.goos, test.arch)
 		want := filepath.Join("..", "runtime", "onnxruntime", test.goos+"-"+test.arch, test.name)
