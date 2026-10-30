@@ -38,3 +38,4 @@ __pycache__/
 # Native client: scripts and caches derived from the user-supplied client.
 /client/native/generated/
 /client/native/.venv/
+.chat_history
