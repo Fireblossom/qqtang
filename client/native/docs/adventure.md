@@ -1,5 +1,7 @@
 # 探险模式（PVE）调研：原生客户端实现所需的流程、差异和步骤
 
+> 更正（2026-10-30）：两种 `.dat` 已经解开，方法见 `tools/decrypt_pve.py` 和 README 的"已确认的原版约定"。解密代码在 `QQTSection.dll` 里（相邻字节异或加 zlib），不在 `Client.exe` 的 TP 变形段；下文第 0 节第 4 条、第 3 节末尾和第 4 节 A 步关于 `0x890521`、TP 段的说法已经过时。
+
 只读调研，没有修改 `/Users/cduan/qqtang`，没有运行客户端，没有访问本地服务端端口。
 临时探针放在 `/tmp/qqt-tools/advprobe/`，用 `go test -overlay` 注入到包里运行，不改动仓库文件。
 
