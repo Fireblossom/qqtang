@@ -339,7 +339,7 @@ func (engine *Engine) applyVerifiedMapElementHitAt(sceneMS uint32, hit VerifiedM
 	if tile.Kind == CellOpen && tile.Durability == 0 {
 		return Event{}, nil, false, nil
 	}
-	if tile.Durability == 0 || tile.MapElementID != hit.MapElementID {
+	if (tile.Durability == 0 && !(engine.rules.NativeDurabilityLayers != 0 && machineCoolBreakable(tile))) || tile.MapElementID != hit.MapElementID {
 		// The native event remains authoritative even if an incomplete mirror
 		// lacks this map element. Do not fabricate geometry from an asset ID, but
 		// also do not reject the bomb and visible-item destruction facts that can

@@ -284,7 +284,8 @@ func (server *Server) requireCompetitiveBombDispatch(session *connectionSession,
 
 // requireCompetitiveKickableBombRule accepts the shared PLAYER_THROW_BOMB
 // action only for native rules which actually create kickable bubbles. Rule 2
-// receives them from its airborne-bomb producer; rule 8 receives them from
+// receives them from its airborne-bomb producer; rule 7 throws new player
+// bubbles (Client.exe 0x00619019 / 0x00600862); rule 8 receives them from
 // the fixed corner launchers and carried bomb props. Keeping this separate
 // from requireCompetitiveBombDispatch is important: the 0x10E1 airborne
 // batch producer remains exclusive to rule 2.
@@ -293,7 +294,7 @@ func (server *Server) requireCompetitiveKickableBombRule(session *connectionSess
 		return nil, "", fmt.Errorf("kickable-bomb event requires the client map catalog and a session")
 	}
 	selected, ok := server.mapCatalog.CompetitiveMap(session.CurrentMapID)
-	if !ok || (selected.Rule != mapdata.CompetitiveRuleKickBomb && selected.Rule != mapdata.CompetitiveRuleBox) {
+	if !ok || (selected.Rule != mapdata.CompetitiveRuleKickBomb && selected.Rule != mapdata.CompetitiveRuleMachine && selected.Rule != mapdata.CompetitiveRuleBox) {
 		return nil, "", fmt.Errorf("kickable-bomb event is invalid on competitive map %d", session.CurrentMapID)
 	}
 	battle, err := server.requireCompetitiveRule(session, selected.Rule, playerID)

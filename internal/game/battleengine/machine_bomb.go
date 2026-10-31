@@ -18,7 +18,7 @@ func (engine *Engine) PlaceMachineBomb(owner uint16, cell Cell, style, wirePower
 	} else if style == 14 {
 		speed = 300
 	}
-	bomb := Bomb{ID: engine.nextBombID, OwnerID: owner, Cell: cell, Power: wirePower - 1, NativeStyle: style,
+	bomb := Bomb{ID: engine.nextBombID, OwnerID: owner, Cell: cell, Power: wirePower - 1, NativeStyle: style, RuleOwned: true,
 		ExplodeAtMS:   saturatingAdd(engine.elapsedMS, 3001),
 		FlightUntilMS: saturatingAdd(engine.elapsedMS, (uint32(min(cell.Row, 3))*40000+speed-1)/speed)}
 	return engine.commitBomb(bomb), nil
@@ -91,4 +91,54 @@ func (engine *Engine) SetMachineGate(anchor Cell, first, ready bool) {
 			NativeGridAttrSet: true, NativeGridAttr: attr, NativePlayerExitAttrSet: true, NativePlayerExitAttr: attr,
 		}
 	}
+}
+
+// CanThrowMachineBomb is the ordinary placement allowance used by rule 7's
+// 0x00619019 producer. Machine salvo bubbles never decrement that allowance.
+func (engine *Engine) CanThrowMachineBomb(playerID uint16) bool {
+	index := engine.actorIndex(playerID)
+	if index < 0 || engine.actors[index].State != ActorActive {
+		return false
+	}
+	actor := &engine.actors[index]
+	return engine.activeBombCount(playerID) < int(engine.actorCapabilities(actor, actor.Facing).EffectiveBombCapacity)
+}
+
+// ApplyVerifiedMachineThrow receives 0x1159: the new player-owned bubble
+// flies at 500 px/s (0x00600862), retaining the ordinary three-second fuse.
+func (engine *Engine) ApplyVerifiedMachineThrow(owner uint16, target Cell, power, property byte, at uint32, flightMS uint32) (Event, error) {
+	index := engine.actorIndex(owner)
+	if index < 0 || engine.actors[index].State != ActorActive {
+		return Event{}, fmt.Errorf("machine throw owner %d is inactive", owner)
+	}
+	if _, ok := engine.grid.Cell(target); !ok || power < 2 || flightMS > 2000 {
+		return Event{}, fmt.Errorf("invalid machine throw destination/power/distance")
+	}
+	bomb := Bomb{ID: engine.nextBombID, OwnerID: owner, Cell: target, Power: power - 1, NativeStyle: 1,
+		ExplodeAtMS: saturatingAdd(at, 3001), FlightUntilMS: saturatingAdd(at, flightMS), SceneFourEffect: property != 0}
+	return engine.commitBomb(bomb), nil
+}
+
+// RemoveMachineGate is the permanent Cool-side destruction in 00607F08.
+func (engine *Engine) RemoveMachineGate(anchor Cell) {
+	for dc := int16(0); dc < 2; dc++ {
+		at := Cell{Row: anchor.Row, Col: anchor.Col + dc}
+		if tile, ok := engine.grid.Cell(at); ok && tile.MapElementID == 13016 && tile.ElementAnchor == anchor {
+			engine.grid.Cells[int(at.Row)*int(engine.grid.Width)+int(at.Col)] = Tile{Kind: CellOpen, FlamePassable: true}
+		}
+	}
+}
+
+// NativeBombPickupCount exposes the match counter at +0x124, not the
+// resulting capacity. Rule 7 uses it to choose its charge refill period.
+func (actor Actor) NativeBombPickupCount() int16 { return actor.nativeBasicPickupDelta[0] }
+
+// Cool additionally removes these normally solid layer-1 objects in the
+// shipped rule-7 maps (0060825C). Keep the centre dividers 13020/13021.
+func machineCoolBreakable(tile Tile) bool {
+	switch tile.MapElementID {
+	case 13011, 13012, 13013, 13014:
+		return true
+	}
+	return false
 }

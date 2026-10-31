@@ -124,7 +124,8 @@ func BuildLocalPlayerEatBombNotify(requestPacket []byte, roomID uint16, gameData
 }
 
 // KickBombAction is PLAYER_THROW_BOMB (0x1159). The client computes the
-// destination after a player contacts an existing kickable bubble. The
+// destination for a rule-owned bubble action. Rule 7 creates a new player
+// bubble and throws it to the aiming cursor (0x00619019 / 0x00600862). The
 // server validates the participant and broadcasts the action; it must not be
 // confused with ProduceItem, which creates the periodically arriving bubbles.
 type KickBombAction struct {

@@ -248,6 +248,29 @@ class FlightTest(unittest.TestCase):
                                      ("object/bomb/bomb2_stand.img", 130, 92)])
 
 
+class MachineDrawingTest(unittest.TestCase):
+    def test_machine_durability_uses_team_frames_without_badges(self) -> None:
+        scene = BattleScene.__new__(BattleScene)
+        scene.local_id, scene.seats = 1, {1: 0, 2: 3}
+        scene.state = {"actors": [{"id": 1, "team": 1, "durability": 3}, {"id": 2, "team": 2, "durability": 1}]}
+        drawn = []
+        scene._draw_frames = lambda _screen, path, frame, x, y: drawn.append((path, frame, x, y))
+        scene._draw_machine_durability(None)
+        self.assertEqual(drawn, [("object/misc/misc460_stand.img", 3, 628, 121),
+                                ("object/misc/misc461_stand.img", 1, 628, 274)])
+
+    def test_ready_machine_draws_native_gate_and_local_arrow(self) -> None:
+        scene = BattleScene.__new__(BattleScene)
+        scene.local_id = 1
+        scene.state = {"clock": 48000, "actors": [{"id": 1, "team": 1}], "machine": {"gates": [
+            {"row": 3, "col": 6, "first": True, "team": 1, "ready": True, "fired": 0}]}}
+        drawn = []
+        scene._draw_frames = lambda _screen, path, frame, x, y: drawn.append((path, x, y))
+        scene._draw_machine_gates(None, 3)
+        self.assertEqual(drawn, [("object/misc/misc401_stand.img", 210, 67),
+                                ("object/misc/misc400_stand.img", 230, 67)])
+
+
 class EffectTest(unittest.TestCase):
     def test_effect_frames_wrap_at_the_last_key(self) -> None:
         # default_MapElement.eff: 4 frames of 100 ms, keys 0..1000.

@@ -738,3 +738,21 @@ func sendReliableBossRuleEvent(t *testing.T, server *Server, session *connection
 	packet := testLocalRoutedPacketWithPayload(t, game.GameEventRequestCommand, 3, 0xffff, session.Profile.PlayerID, session.UIN, payload)
 	return server.handleGameEventMessage(ListenerConfig{Response: ResponseConfig{QQTGameEventRelay: true}}, session, "test", "local", "remote", packet)
 }
+
+func TestMachinePlayerThrowUsesNative1159(t *testing.T) {
+	server, owner, peer, _ := newSculptureDamageTestServer(t)
+	owner.CurrentMapID, peer.CurrentMapID = 1302, 1302
+	if err := server.replaceCompetitiveBattle(1, 1302, owner.Profile.PlayerID, []match.CompetitiveParticipant{
+		{PlayerID: owner.Profile.PlayerID, RoleID: 1, TeamID: 1}, {PlayerID: peer.Profile.PlayerID, RoleID: 2, TeamID: 2},
+	}, match.CompetitiveRuleConfig{ConclusionPolicy: match.CompetitiveConclusionClientRule, PlayerLifecycle: match.CompetitivePlayerNativeDurability, NativeHitLimit: 4}); err != nil {
+		t.Fatal(err)
+	}
+	body, err := (game.KickBombAction{BombRowAndCol: 0x62, BombDestRowAndCol: 0x69, Direction: 0, Power: 3, BombPower: 3, Time: 5000, PlayerID: peer.Profile.PlayerID}).MarshalNetworkBinary()
+	if err != nil {
+		t.Fatal(err)
+	}
+	result := sendReliableBossRuleEvent(t, server, peer, 1, game.PlayerThrowBomb, body)
+	if !result.handled || len(result.response) == 0 || len(result.followUp) != 0 || result.afterResponse != nil {
+		t.Fatalf("rule7 throw rejected or echoed: %+v", result)
+	}
+}

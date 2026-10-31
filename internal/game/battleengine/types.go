@@ -732,6 +732,7 @@ type Actor struct {
 }
 
 type Bomb struct {
+	RuleOwned     bool // rule-generated batches do not consume a player's placement capacity
 	NativeStyle   byte // rule-7 types 13/14 have area fire; zero is an ordinary bubble
 	ID            uint32
 	OwnerID       uint16

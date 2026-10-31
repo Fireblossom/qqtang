@@ -79,3 +79,82 @@ func TestMachineAreaBombsDoNotCrossMiddleAndPersist(t *testing.T) {
 		}
 	}
 }
+
+func TestMachinePlayerThrowsUseCapacityButLauncherBombsDoNot(t *testing.T) {
+	engine := machineTestEngine(t)
+	engine.elapsedMS = 50000
+	for i := int16(0); i < 10; i++ {
+		if _, err := engine.PlaceMachineBomb(1, Cell{Row: 1, Col: i}, 1, 8); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if !engine.CanThrowMachineBomb(1) {
+		t.Fatal("launcher consumed player capacity")
+	}
+	capacity := int(engine.actors[0].BombCapacity)
+	for i := 0; i < capacity; i++ {
+		if !engine.CanThrowMachineBomb(1) {
+			t.Fatal("capacity consumed early")
+		}
+		event, err := engine.ApplyVerifiedMachineThrow(1, Cell{Row: 6, Col: int16(9 + i)}, 3, 0, 50000, 560)
+		if err != nil {
+			t.Fatal(err)
+		}
+		b := engine.bombs[engine.bombIndexByID(event.BombID)]
+		if b.FlightUntilMS != 50560 || b.ExplodeAtMS != 53001 || b.Power != 2 {
+			t.Fatalf("player flight/fuse: %+v", b)
+		}
+	}
+	if engine.CanThrowMachineBomb(1) {
+		t.Fatal("player exceeded its throw capacity")
+	}
+}
+
+func TestMachineCoolRemovesShippedSecondLayerSceneryOnly(t *testing.T) {
+	for _, style := range []byte{13, 14} {
+		engine := machineTestEngine(t)
+		ids := []uint32{13011, 13012, 13013, 13014, 13020, 13021}
+		for i, id := range ids {
+			engine.grid.Cells[6*15+i+1] = Tile{Kind: CellSolid, MapElementOccupied: true, MapElementID: id}
+		}
+		engine.grid.Cells[5*15+3] = Tile{Kind: CellBreakable, MapElementOccupied: true, MapElementID: 13007, Durability: 1}
+		_, err := engine.PlaceMachineBomb(2, Cell{Row: 6, Col: 3}, style, 3)
+		if err != nil {
+			t.Fatal(err)
+		}
+		engine.elapsedMS = 3020
+		events := engine.explodeDueBombs()
+		var hits []VerifiedMapElementHit
+		for _, e := range events {
+			if e.Kind == EventCellDestroyed {
+				hits = append(hits, VerifiedMapElementHit{MapElementID: e.ObjectID, Cell: e.Cell})
+			}
+		}
+		finishMapRetirementsForTest(engine)
+		for i, id := range ids {
+			tile, _ := engine.grid.Cell(Cell{Row: 6, Col: int16(i + 1)})
+			gone := tile.Kind == CellOpen
+			if gone != (style == 14 && i < 4) {
+				t.Fatalf("style %d scenery %d removed=%t", style, id, gone)
+			}
+		}
+		if tile, _ := engine.grid.Cell(Cell{Row: 5, Col: 3}); tile.Kind != CellOpen {
+			t.Fatal("area fire failed to damage a breakable wall")
+		}
+		peer := machineTestEngine(t)
+		for i, id := range ids {
+			peer.grid.Cells[6*15+i+1] = Tile{Kind: CellSolid, MapElementOccupied: true, MapElementID: id}
+		}
+		_, err = peer.ApplyVerifiedBombExplosion([]VerifiedExplodedBomb{{OwnerID: 2, Cell: Cell{Row: 6, Col: 3}, NativeStyle: style}}, hits, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		finishMapRetirementsForTest(peer)
+		for i := 0; i < 4; i++ {
+			tile, _ := peer.grid.Cell(Cell{Row: 6, Col: int16(i + 1)})
+			if (tile.Kind == CellOpen) != (style == 14) {
+				t.Fatal("peer did not mirror Cool-only scenery deletion")
+			}
+		}
+	}
+}

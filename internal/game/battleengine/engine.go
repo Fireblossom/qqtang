@@ -408,7 +408,7 @@ func (engine *Engine) actorIndex(playerID uint16) int {
 func (engine *Engine) activeBombCount(playerID uint16) int {
 	count := 0
 	for _, bomb := range engine.bombs {
-		if bomb.OwnerID == playerID {
+		if bomb.OwnerID == playerID && !bomb.RuleOwned {
 			count++
 		}
 	}

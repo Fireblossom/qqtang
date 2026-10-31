@@ -216,7 +216,10 @@ func (engine *Engine) commitBlastBatch(batch blastBatch) []Event {
 func (engine *Engine) blastCells(bomb Bomb, _ map[uint32]bool, _ *[]uint32, batch *blastBatch) []Cell {
 	if area := engine.machineBlastCells(bomb.NativeStyle, bomb.Cell); area != nil {
 		for _, cell := range area {
-			batch.hit(cell, bomb, false) // area fire affects objects, not static walls
+			batch.hit(cell, bomb, false)
+			if tile, ok := engine.grid.Cell(cell); ok && (tile.Durability > 0 || bomb.NativeStyle == 14 && machineCoolBreakable(tile)) {
+				batch.hit(cell, bomb, true)
+			}
 		}
 		return area
 	}
