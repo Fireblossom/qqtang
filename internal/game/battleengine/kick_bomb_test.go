@@ -182,8 +182,8 @@ func TestDropRuleBatch(t *testing.T) {
 		t.Fatalf("events %+v, bubbles %+v", events, engine.bombs)
 	}
 	for index, want := range []Bomb{
-		{OwnerID: 2, Cell: Cell{Row: 5, Col: 11}, Power: 1, ExplodeAtMS: 3_001, FlightUntilMS: 300},
-		{OwnerID: 2, Cell: Cell{Row: 10, Col: 10}, Power: 4, ExplodeAtMS: 3_001, FlightUntilMS: 1_000},
+		{RuleOwned: true, OwnerID: 2, Cell: Cell{Row: 5, Col: 11}, Power: 1, ExplodeAtMS: 3_001, FlightUntilMS: 300},
+		{RuleOwned: true, OwnerID: 2, Cell: Cell{Row: 10, Col: 10}, Power: 4, ExplodeAtMS: 3_001, FlightUntilMS: 1_000},
 	} {
 		got := engine.bombs[index]
 		got.ID = 0

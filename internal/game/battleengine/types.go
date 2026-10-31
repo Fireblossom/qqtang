@@ -324,6 +324,9 @@ type Rules struct {
 	// elapsed time while rendering FPS may vary. The engine never reads a wall
 	// clock, so callers and future vectorized training own the cadence.
 	TickMS uint32
+	// NativeDurabilityLayers replaces the ordinary trap with native rule-7
+	// durability hits. Zero preserves ordinary combat.
+	NativeDurabilityLayers byte
 	// StartClockMS is the native game clock at the first controllable frame.
 	// It is part of (and therefore consumes) the absolute RoundDurationMS scene
 	// deadline, while still letting offline/RL callers skip empty Ready/Go steps.
@@ -676,10 +679,11 @@ func (memory PublicBehaviorMemory) MatchRate(kind PublicBehaviorKind) float32 {
 
 type Actor struct {
 	Participant
-	Position  Position
-	State     ActorState
-	Facing    Direction
-	TrappedBy uint16
+	Position       Position
+	State          ActorState
+	Facing         Direction
+	TrappedBy      uint16
+	DurabilityLeft byte
 	// TrappedByBombID preserves the exact authoritative bubble that produced
 	// the flame hit. Zero denotes a non-bomb/native-reconciled trap. Keeping
 	// this beside TrappedBy lets offline training carry causal credit through
@@ -731,6 +735,8 @@ type Actor struct {
 }
 
 type Bomb struct {
+	RuleOwned     bool // rule-generated batches do not consume a player's placement capacity
+	NativeStyle   byte // rule-7 types 13/14 have area fire; zero is an ordinary bubble
 	ID            uint32
 	OwnerID       uint16
 	Cell          Cell
@@ -762,9 +768,10 @@ func (bomb Bomb) EffectiveExplodeAtMS() uint32 {
 }
 
 type Flame struct {
-	Cell    Cell
-	OwnerID uint16
-	BombID  uint32
+	NativeStyle byte // 13/14 remain harmful throughout the native fire10 lifetime
+	Cell        Cell
+	OwnerID     uint16
+	BombID      uint32
 	// ImpactAtMS is the instant at which this explosion arm intersects
 	// actors. The native 0x0FA5 path is emitted once by the explosion state;
 	// the remaining 500 ms is visual/flame-object lifetime, not a repeating
@@ -912,6 +919,9 @@ const (
 	// EventActorRespawned is emitted only by RespawnActor, under
 	// Rules.ExternalConclusion. Cell and Position are the respawn point.
 	EventActorRespawned
+	// EventActorHarmed is a non-avatar native durability hit. TargetID is
+	// the victim, who remains active unless the final layer was consumed.
+	EventActorHarmed
 )
 
 // EliminationCause separates finishing contact from an expiring trap. A native
@@ -925,6 +935,7 @@ const (
 )
 
 type Event struct {
+	NativeStyle byte
 	// OpenedTraversal describes the pre-destruction terrain, not predicted
 	// value. Burning already walkable grass is not a new walking entrance.
 	OpenedTraversal bool

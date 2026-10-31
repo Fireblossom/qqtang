@@ -93,6 +93,7 @@ type actorView struct {
 	SpeedRate   byte   `json:"speed_rate"`
 	TrapExpires uint32 `json:"trap_expires"`
 	Protected   uint32 `json:"protected_until"`
+	Durability  byte   `json:"durability"`
 	// The seven held-item slots as [action ID, count]; empty slots are zero.
 	Held [battleengine.NativeBattleActionSlots][2]uint8 `json:"held"`
 	// Carried rule objectives (treasure gems 150, 151, 152) by kind.
@@ -110,6 +111,7 @@ type bombView struct {
 }
 
 type flameView struct {
+	Style   byte   `json:"style,omitempty"`
 	Row     int16  `json:"row"`
 	Col     int16  `json:"col"`
 	Bomb    uint32 `json:"bomb"`
@@ -174,6 +176,7 @@ type stateView struct {
 	Streaks map[string]int `json:"streaks,omitempty"`
 	TCPOut  []tcpPacket    `json:"tcp_out,omitempty"`
 	Kick    *kickView      `json:"kick,omitempty"` // rule 2
+	Machine *machineView   `json:"machine,omitempty"`
 }
 
 func main() {
@@ -245,6 +248,9 @@ func runOnline(init command, lines *bufio.Scanner, out *json.Encoder) error {
 		state.Sculpture = match.sculpture.view()
 		match.markStyleNine(state.Bombs)
 	}
+	if match.machine != nil {
+		state.Machine = match.machineView()
+	}
 	if match.kick != nil {
 		state.Kick = match.kick.view()
 		match.kick.markStyles(state.Bombs)
@@ -276,6 +282,9 @@ func runOnline(init command, lines *bufio.Scanner, out *json.Encoder) error {
 		if match.sculpture != nil {
 			state.Sculpture = match.sculpture.view()
 			match.markStyleNine(state.Bombs)
+		}
+		if match.machine != nil {
+			state.Machine = match.machineView()
 		}
 		if match.kick != nil {
 			state.Kick = match.kick.view()
@@ -405,7 +414,7 @@ func view(runtime *battleengine.Runtime, events []battleengine.Event) stateView 
 			ID: actor.PlayerID, Team: actor.TeamID, Role: actor.RoleID, AvatarRole: actor.AvatarRoleID,
 			X: actor.Position.X, Y: actor.Position.Y, State: byte(actor.State), Facing: byte(actor.Facing),
 			Bombs: actor.BombCapacity, Power: actor.BombPower, SpeedRate: actor.SpeedRate,
-			TrapExpires: actor.TrapExpiresAt, Protected: actor.HarmProtectionExpiresAt,
+			TrapExpires: actor.TrapExpiresAt, Protected: actor.HarmProtectionExpiresAt, Durability: actor.DurabilityLeft,
 			Carried: actor.CarriedObjectives,
 		}
 		for index, slot := range actor.HeldActions {
@@ -415,12 +424,12 @@ func view(runtime *battleengine.Runtime, events []battleengine.Event) stateView 
 	}
 	for _, bomb := range engine.Bombs() {
 		state.Bombs = append(state.Bombs, bombView{
-			ID: bomb.ID, Owner: bomb.OwnerID, Row: bomb.Cell.Row, Col: bomb.Cell.Col, Power: bomb.Power, ExplodeAt: bomb.ExplodeAtMS,
+			ID: bomb.ID, Owner: bomb.OwnerID, Row: bomb.Cell.Row, Col: bomb.Cell.Col, Power: bomb.Power, ExplodeAt: bomb.ExplodeAtMS, Style: bomb.NativeStyle,
 		})
 	}
 	for _, flame := range engine.Flames() {
 		state.Flames = append(state.Flames, flameView{
-			Row: flame.Cell.Row, Col: flame.Cell.Col, Bomb: flame.BombID, Impact: flame.ImpactAtMS, Expires: flame.ExpiresAtMS,
+			Row: flame.Cell.Row, Col: flame.Cell.Col, Bomb: flame.BombID, Impact: flame.ImpactAtMS, Expires: flame.ExpiresAtMS, Style: flame.NativeStyle,
 		})
 	}
 	for _, pickup := range engine.Pickups() {

@@ -30,6 +30,7 @@ type autoplayBot struct {
 	bun       *bunRule
 	sculpture *sculptureRule
 	tank      *tankRule
+	machine   *machineRule
 	// Rule 2: no own bubbles; kick the dropped ones instead.
 	kick bool
 }
@@ -88,6 +89,44 @@ func (bot *autoplayBot) act(engine *battleengine.Engine) battleengine.Action {
 	safe := func(cell battleengine.Cell) bool {
 		_, threatened := bot.timeline.ImpactAt(cell)
 		return !threatened
+	}
+	if bot.machine != nil && bot.machine.ready(bot.machine.side(actor.TeamID), now) {
+		for _, gate := range bot.machine.gates {
+			if gate.side != bot.machine.side(actor.TeamID) {
+				continue
+			}
+			if here == gate.trigger() {
+				if onCentre(actor.Position) {
+					action.PlaceBomb = true
+				} else {
+					action.Move = steer(actor.Position, here)
+				}
+				return action
+			}
+			if here == gate.approach() {
+				action.Move = steer(actor.Position, gate.trigger())
+				return action
+			}
+			if path := world.nearest(here, safe, func(c battleengine.Cell) bool { return c == gate.approach() }); len(path) > 0 {
+				return bot.follow(action, actor, path)
+			}
+		}
+	}
+	if bot.machine != nil && bot.machine.charges[actor.PlayerID] != nil && bot.machine.charges[actor.PlayerID].count > 0 && engine.CanThrowMachineBomb(actor.PlayerID) {
+		// Outside a launcher, space throws toward the native aiming cursor.
+		// Face across the centre rather than place ordinary bubbles at our feet.
+		facing := battleengine.DirectionRight
+		if here.Col >= 7 {
+			facing = battleengine.DirectionLeft
+		}
+		if actor.Facing != facing {
+			action.Move = facing
+			return action
+		}
+		if _, _, ok := machineThrowTarget(engine, here, actor.Facing); ok {
+			action.PlaceBomb = true
+			return action
+		}
 	}
 	// 2. Rule objectives: carry buns home, pick loose ones up, raid the
 	// opposing house.
@@ -304,6 +343,11 @@ func (world autoplayWorld) search(start battleengine.Cell, passable, goal func(b
 		for _, direction := range autoplayDirections {
 			next := stepCell(cell, direction)
 			if _, seen := previous[next]; seen || !world.open(next) || !passable(next, depth[cell]+1) {
+				continue
+			}
+			from, _ := world.grid.Cell(cell)
+			to, _ := world.grid.Cell(next)
+			if !from.PlayerExitPassable(direction) || !to.PlayerPassable(direction) {
 				continue
 			}
 			previous[next] = cell

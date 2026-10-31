@@ -7,6 +7,7 @@ import "fmt"
 // adapter; zero is permitted when the native event repairs a previously
 // missing placement while its cell and exact blast bounds remain useful.
 type VerifiedExplodedBomb struct {
+	NativeStyle byte
 	BombID      uint32
 	OwnerID     uint16
 	Cell        Cell
@@ -139,6 +140,9 @@ func (engine *Engine) ApplyVerifiedBombExplosionAt(sceneMS uint32, bombs []Verif
 		if _, inside := engine.grid.Cell(bomb.Cell); !inside {
 			return nil, fmt.Errorf("verified exploded bomb is outside map at %d,%d", bomb.Cell.Row, bomb.Cell.Col)
 		}
+		if bomb.NativeStyle == 13 || bomb.NativeStyle == 14 {
+			continue
+		}
 		if bomb.BlastRowMin > bomb.Cell.Row || bomb.BlastRowMax < bomb.Cell.Row ||
 			bomb.BlastColMin > bomb.Cell.Col || bomb.BlastColMax < bomb.Cell.Col ||
 			bomb.BlastRowMin < 0 || bomb.BlastColMin < 0 ||
@@ -177,6 +181,13 @@ func (engine *Engine) ApplyVerifiedBombExplosionAt(sceneMS uint32, bombs []Verif
 			BlastRowMin: bomb.BlastRowMin, BlastRowMax: bomb.BlastRowMax,
 			BlastColMin: bomb.BlastColMin, BlastColMax: bomb.BlastColMax,
 		})
+		if area := engine.machineBlastCells(bomb.NativeStyle, bomb.Cell); area != nil {
+			for _, cell := range area {
+				clearedCells[cell] = struct{}{}
+				engine.addMachineFlame(cell, bomb.OwnerID, bomb.BombID, bomb.NativeStyle)
+			}
+			continue
+		}
 		for col := bomb.BlastColMin; col <= bomb.BlastColMax; col++ {
 			cell := Cell{Row: bomb.Cell.Row, Col: col}
 			clearedCells[cell] = struct{}{}
@@ -336,7 +347,7 @@ func (engine *Engine) applyVerifiedMapElementHitAt(sceneMS uint32, hit VerifiedM
 	if tile.Kind == CellOpen && tile.Durability == 0 {
 		return Event{}, nil, false, nil
 	}
-	if tile.Durability == 0 || tile.MapElementID != hit.MapElementID {
+	if (tile.Durability == 0 && !(engine.rules.NativeDurabilityLayers != 0 && machineCoolBreakable(tile))) || tile.MapElementID != hit.MapElementID {
 		// The native event remains authoritative even if an incomplete mirror
 		// lacks this map element. Do not fabricate geometry from an asset ID, but
 		// also do not reject the bomb and visible-item destruction facts that can

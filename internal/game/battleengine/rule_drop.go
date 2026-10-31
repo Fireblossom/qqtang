@@ -45,7 +45,7 @@ func (engine *Engine) DropRuleBatch(ownerID uint16, placedAtMS uint32, bombs []R
 	for _, drop := range bombs {
 		cols := drop.Cell.Col - drop.FromCol
 		bomb := Bomb{
-			ID: engine.nextBombID, OwnerID: ownerID, Cell: drop.Cell, Power: drop.Power,
+			ID: engine.nextBombID, OwnerID: ownerID, Cell: drop.Cell, Power: drop.Power, RuleOwned: true,
 			ExplodeAtMS:   saturatingAdd(saturatingAdd(placedAtMS, engine.rules.BombFuseMS), 1),
 			FlightUntilMS: saturatingAdd(placedAtMS, NativeBombFlightMSPerCell*uint32(max(cols, -cols))),
 		}

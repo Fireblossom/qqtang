@@ -226,8 +226,21 @@ def flight_position(flight: dict[str, Any], clock: int, width: int, height: int)
     # 0x005DF724 passes cell centres to the mover. Wrap those centres before
     # applying the arc (0x005A47E4 / 0x005A4983), then return a cell corner.
     # Wrapping the corner instead makes the bubble cross an edge 20 px late.
-    x = flight["from"]["col"] * CELL + CELL // 2 + step_x * length * progress
-    y = flight["from"]["row"] * CELL + CELL // 2 + step_y * length * progress
+    dx, dy = step_x * length, step_y * length
+    if "to" in flight:
+        dx = (flight["to"]["col"] - flight["from"]["col"]) * CELL
+        dy = (flight["to"]["row"] - flight["from"]["row"]) * CELL
+        if step_x > 0 and dx < 0:
+            dx += width
+        elif step_x < 0 and dx > 0:
+            dx -= width
+        if step_y > 0 and dy < 0:
+            dy += height
+        elif step_y < 0 and dy > 0:
+            dy -= height
+        length = abs(dx)
+    x = flight["from"]["col"] * CELL + CELL // 2 + dx * progress
+    y = flight["from"]["row"] * CELL + CELL // 2 + dy * progress
     x = x + width if x < 0 else x - width if x > width else x
     y = y + height if y < 0 else y - height if y > height else y
     arc = -length / 4 * (1 - (2 * progress - 1) ** 2) if step_x else 0
@@ -504,7 +517,8 @@ class BattleScene:
         elif kind == EVENT_CELL_DESTROYED:
             for layer in (mapfile.LAYER_WALL, mapfile.LAYER_TOP):
                 element = self.map.element(layer, cell["row"], cell["col"])
-                if element > 0 and self.elements.get(element, mapfile.ElementInfo()).life_time > 0:
+                if element > 0 and (self.elements.get(element, mapfile.ElementInfo()).life_time > 0 or
+                                   self.map.rule == 7 and element in (13011, 13012, 13013, 13014)):
                     self._set(layer, cell["row"], cell["col"], 0)
                     self.dying[(layer, cell["row"], cell["col"])] = (element, event["time"])
                     break
@@ -550,7 +564,12 @@ class BattleScene:
             x, y = self._item_at(fall["scene"], 0, fall["col"])
             drop = min(max(self.clock - fall["start"], 0), fall["until"] - fall["start"]) * FLIGHT_PX_PER_MS
             self._draw_frames(field, f"object/item/item{fall['scene']}_stand.img", self.clock // ITEM_FRAME_MS, x, y + int(drop))
-        flights = kick.get("flights") or {}
+        aim = (self.state.get("machine") or {}).get("aim")
+        if aim is not None:
+            self._draw_frames(field, "object/misc/misc450_stand.img", self.clock // 100,
+                              ox + aim["col"] * CELL, oy + aim["row"] * CELL)
+        flights = dict(kick.get("flights") or {})
+        flights.update((self.state.get("machine") or {}).get("flights") or {})
         for bomb in self.state["bombs"] or ():
             # Rule 6's style-9 bubble uses that bubble type's image, placed like
             # the others (its size was not checked against a recording).
@@ -575,9 +594,20 @@ class BattleScene:
             self._draw_bun_houses(field, row)
             self._draw_statues(field, row)
             self._draw_tank_bases(field, row)
+            self._draw_machine_gates(field, row)
             for actor in sorted(actors_by_row.get(row, ()), key=lambda item: item["y"]):
                 self._draw_actor(field, actor)
         self._draw_streak(field)
+        charge = (self.state.get("machine") or {}).get("charge")
+        actor = self._local_actor() if charge is not None else None
+        if actor is not None and actor["state"] != ACTOR_ELIMINATED:
+            # 005D2BDE / 005D2D02: local-only five-shot charge bar.
+            self._draw_frames(field, "object/misc/misc179_stand.img", 0, actor["x"] - 11, actor["y"] - 43)
+            frames = self.sprites.get("object/misc/misc181_stand.img")
+            if frames and frames[0][0] is not None:
+                fill = frames[0][0]
+                width = min(38, int((charge["count"] + charge["elapsed"] / max(charge["period"], 1)) * 38 / 5))
+                field.blit(fill, (actor["x"] - 10, actor["y"] - 35), (0, 0, width, fill.get_height()))
         for path, position in ((FRAME_TOP, (0, 0)), (FRAME_LEFT, (0, oy))):
             self._draw_frames(screen, path, 0, *position)
 
@@ -610,6 +640,32 @@ class BattleScene:
             if self.shown_tank_hp.get(base["team"]) != base["hp"]:
                 self._script("ui_UpdateTankBaseLife", base["team"], base["hp"])
                 self.shown_tank_hp[base["team"]] = base["hp"]
+
+    def _draw_machine_gates(self, field: pygame.Surface, row: int) -> None:
+        # 0x005EF91F locates machine images one column left, two rows up.
+        for gate in (self.state.get("machine") or {}).get("gates") or ():
+            if gate["row"] != row or gate.get("destroyed"):
+                continue
+            first = gate["first"]
+            elapsed = self.clock - gate["fired"]
+            firing = gate["fired"] > 0 and 0 <= elapsed < 800
+            number = (167 if first else 168) if firing else (401 if first else 402) if gate["ready"] else (163 if first else 164)
+            frame = elapsed * 3 // 100 if firing else self.clock // 100
+            x = FIELD_ORIGIN[0] + (gate["col"] - 1) * CELL
+            y = FIELD_ORIGIN[1] + (gate["row"] - 2) * CELL
+            self._draw_frames(field, f"object/misc/misc{number}_stand.img", frame, x, y)
+            local = self._local_actor()
+            if gate["ready"] and local is not None and local["team"] == gate["team"]:
+                arrow_x = FIELD_ORIGIN[0] + gate["col"] * CELL + (-20 if first else 60)
+                self._draw_frames(field, "object/misc/misc400_stand.img", self.clock // 100, arrow_x, y)
+
+    def _draw_machine_durability(self, screen: pygame.Surface) -> None:
+        # 0x005E2093 / 0x005E1E46: no badge, local-team misc460 / other misc461.
+        local = self._local_actor()
+        for index, actor in enumerate(self.state["actors"]):
+            same = local is not None and actor["team"] == local["team"]
+            self._draw_frames(screen, f"object/misc/misc{460 if same else 461}_stand.img",
+                              actor.get("durability", 4), 628, 121 + 51 * self._seat(index, actor))
 
     def _draw_tank_bases(self, field: pygame.Surface, row: int) -> None:
         # 005F64E5 / 005F65F0: first base misc623..626, second 627..630;
@@ -790,7 +846,7 @@ class BattleScene:
 
     def _draw_flame(self, surface: pygame.Surface, flame: dict[str, Any]) -> None:
         row, col = flame["row"], flame["col"]
-        image = flame_image(self.explosions.get(flame["bomb"]), row, col)
+        image = 10 if flame.get("style") in (13, 14) else flame_image(self.explosions.get(flame["bomb"]), row, col)
         frames = self.sprites.get(f"object/flame/flame{image}_stand.img")
         if not frames:
             return
@@ -961,6 +1017,8 @@ class BattleScene:
         self._draw_player_list(screen)
         if self.rule in ("treasure", "wrestle"):
             self._draw_treasure(screen)
+        if self.map.rule == 7:
+            self._draw_machine_durability(screen)
         if self.result_rows:
             self._draw_results(screen)
             return

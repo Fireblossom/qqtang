@@ -125,7 +125,7 @@ func (engine *Engine) Reset(config Config) error {
 		position := PositionAtCellCenter(participant.Spawn)
 		actors = append(actors, Actor{
 			Participant: participant, Position: position, State: ActorActive, Facing: DirectionDown,
-			OxygenValue: NativeOxygenValueInitial, initial: participant,
+			OxygenValue: NativeOxygenValueInitial, initial: participant, DurabilityLeft: config.Rules.NativeDurabilityLayers,
 		})
 		teamSeen[participant.TeamID] = struct{}{}
 		participants[index] = participant
@@ -411,7 +411,7 @@ func (engine *Engine) actorIndex(playerID uint16) int {
 func (engine *Engine) activeBombCount(playerID uint16) int {
 	count := 0
 	for _, bomb := range engine.bombs {
-		if bomb.OwnerID == playerID {
+		if bomb.OwnerID == playerID && !bomb.RuleOwned {
 			count++
 		}
 	}

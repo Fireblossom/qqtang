@@ -90,3 +90,29 @@ func TestParsePlayerHarmedEvent(t *testing.T) {
 		t.Fatalf("native-durability zero-loss marker = %+v, %v", zero, err)
 	}
 }
+
+func TestMachineStateCountPacksMachineIndex(t *testing.T) {
+	for _, schema := range []uint16{NotifyMachineFree, NotifyMachineAngry, NotifyMachineGrace, NotifyMachineCool} {
+		state := MachineBombState{MachineIndex: 2, PlayerID: 3, Time: 48000, Bombs: []DispatchBomb{{SceneID: 1, Prop: 8, Row: 5, Col: 12}}}
+		body, err := state.MarshalNetworkBinary(schema)
+		if err != nil || body[6] != 0x21 {
+			t.Fatalf("packed machine state: %x, %v", body, err)
+		}
+		parsed, err := ParseMachineBombState(GameEvent{Schema: schema, Body: body})
+		if err != nil || parsed.MachineIndex != 2 || len(parsed.Bombs) != 1 || parsed.Bombs[0] != state.Bombs[0] {
+			t.Fatalf("decoded state %+v, %v", parsed, err)
+		}
+		if _, err := ParseMachineBombState(GameEvent{Schema: NotifyMachineMove, Body: body}); err == nil {
+			t.Fatal("0x115D accepted a packed machine index instead of a plain count")
+		}
+	}
+	launch := MachineLaunchEvent{MachineIndex: 2, FirstTeam: 1, RoleID: 8, PlayerID: 3, Time: 48000}
+	body, err := launch.MarshalNetworkBinary()
+	if err != nil || body[0] != 0x21 {
+		t.Fatalf("packed launch: %x, %v", body, err)
+	}
+	parsed, err := ParseMachineLaunchEvent(GameEvent{Schema: RequestLaunchMachine, Body: body})
+	if err != nil || parsed != launch {
+		t.Fatalf("decoded launch %+v, %v", parsed, err)
+	}
+}

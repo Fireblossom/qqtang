@@ -201,6 +201,7 @@ type onlineMatch struct {
 	carryRequestSent uint32
 	// Rule 6's style-9 bubbles (held item 48) by engine bomb ID.
 	styleNine map[uint32]bool
+	machine   *machineRule
 	tank      *tankRule
 	kick      *kickRule // rule 2; nil otherwise
 }
@@ -310,6 +311,10 @@ func newOnlineMatch(init command) (*onlineMatch, beginView, error) {
 	if err != nil {
 		return nil, beginView{}, err
 	}
+	var machine *machineRule
+	if entry.Rule == mapdata.CompetitiveRuleMachine {
+		machine = newMachineRule(entry, begin)
+	}
 	var tank *tankRule
 	if entry.Rule == mapdata.CompetitiveRuleTank {
 		tank = newTankRule(entry, begin)
@@ -318,6 +323,11 @@ func newOnlineMatch(init command) (*onlineMatch, beginView, error) {
 	engine, err := battleengine.New(config)
 	if err != nil {
 		return nil, beginView{}, err
+	}
+	if machine != nil {
+		for _, gate := range machine.gates {
+			engine.SetMachineGate(gate.anchor, gate.side == 0, false)
+		}
 	}
 	runtime, err := battleengine.NewRuntime(engine, nil)
 	if err != nil {
@@ -345,7 +355,7 @@ func newOnlineMatch(init command) (*onlineMatch, beginView, error) {
 		fieldContacts: map[fieldContactKey]bool{}, itemUses: map[[3]uint32]bool{}, useRequested: map[uint8]uint32{},
 		preparedRequested: map[uint32]uint32{},
 		pickupRequests:    map[pickupKey]pickupRequest{}, sceneRequests: map[sceneRequestKey]uint32{},
-		tank: tank, respawn: respawn, eliminatedAt: map[uint16]uint32{}, departed: map[uint16]bool{},
+		machine: machine, tank: tank, respawn: respawn, eliminatedAt: map[uint16]uint32{}, departed: map[uint16]bool{},
 		kills: map[uint16]int{}, streaks: map[uint16]int{},
 	}
 	switch entry.Rule {
@@ -368,6 +378,7 @@ func newOnlineMatch(init command) (*onlineMatch, beginView, error) {
 		match.bot = newAutoplayBot(match.local)
 		match.bot.bun, match.bot.sculpture = match.bun, match.sculpture
 		match.bot.tank = match.tank
+		match.bot.machine = match.machine
 		match.bot.kick = match.kick != nil
 		match.logf("autoplay: the test bot plays player %d", match.local)
 	}
@@ -401,6 +412,11 @@ func ruleOptions(entry mapdata.CompetitiveMap, local, arbitrator uint16) (battle
 	rules := onlineRules(local, arbitrator)
 	switch entry.Rule {
 	case mapdata.CompetitiveRuleOrdinary:
+		return rules, nil, nil
+	case mapdata.CompetitiveRuleMachine:
+		rules.NativeDurabilityLayers = 4
+		rules.DisableBombPlacement = true
+		rules.ExternalConclusion = true
 		return rules, nil, nil
 	case mapdata.CompetitiveRuleKickBomb:
 		// Rule 2 (kickbomb.go): no own bubbles or pushing, everyone kicks
@@ -541,6 +557,8 @@ func (match *onlineMatch) step(step command) ([]battleengine.Event, error) {
 				match.requestItemUse(chosen.UseActionID)
 			}
 		}
+		match.launchMachine(&action)
+		events = append(events, match.throwMachine(&action)...)
 		var actions []battleengine.Action
 		if action.PlayerID != 0 && match.localActive() {
 			actions = []battleengine.Action{action}
@@ -557,6 +575,7 @@ func (match *onlineMatch) step(step command) ([]battleengine.Event, error) {
 		tickEvents = append(tickEvents, match.respawnDue()...)
 		match.carryTick()
 		tickEvents = append(tickEvents, match.kickTick()...)
+		tickEvents = append(tickEvents, match.machineTick()...)
 		events = append(events, tickEvents...)
 	}
 	match.collectLooseDispatches()
@@ -730,6 +749,9 @@ func (match *onlineMatch) applyRemote(sender uint16, message game.BattleMessageD
 	}
 	schema := uint16(message.DataID)
 	event := game.GameEvent{Schema: schema, Body: message.Data}
+	if events, handled := match.machineRemote(sender, event); handled {
+		return events
+	}
 	switch schema {
 	case game.PlayerMoveSchema:
 		movement, err := game.ParsePlayerMove(message.Data)
@@ -789,6 +811,9 @@ func (match *onlineMatch) applyRemote(sender uint16, message game.BattleMessageD
 		events, err := match.runtime.AcceptNativeElimination(death.PlayerID, 0, pickupsFromItems(death.Items))
 		if err != nil {
 			match.logf("death of %d rejected: %v", death.PlayerID, err)
+		}
+		if match.machine != nil && err == nil {
+			match.machineFinalDeath(death)
 		}
 		if match.carry != nil {
 			match.carry.onDeath(death.PlayerID, 0, false, battleengine.Position{X: int32(death.PosX), Y: int32(death.PosY)})
@@ -1102,7 +1127,7 @@ func (match *onlineMatch) applyExplosion(event game.GameEvent) []battleengine.Ev
 			delete(match.styleNine, bombID)
 		}
 		bombs = append(bombs, battleengine.VerifiedExplodedBomb{
-			BombID: bombID, OwnerID: bomb.PlayerID, Cell: cell,
+			BombID: bombID, OwnerID: bomb.PlayerID, Cell: cell, NativeStyle: bomb.BombID,
 			BlastRowMin: int16(bomb.RowMin), BlastRowMax: int16(bomb.RowMax), BlastColMin: int16(bomb.ColumnMin), BlastColMax: int16(bomb.ColumnMax),
 		})
 	}
@@ -1122,6 +1147,7 @@ func (match *onlineMatch) applyExplosion(event game.GameEvent) []battleengine.Ev
 		match.logf("explosion rejected: %v", err)
 	} else {
 		match.tankExplosion(&explosion, false)
+		match.machineExplosion(explosion)
 	}
 	return events
 }
@@ -1822,6 +1848,9 @@ func (match *onlineMatch) publishEvents(after *battleengine.Engine, events []bat
 				placedAt = event.TimeMS
 			}
 			style := byte(0xff)
+			if match.machine != nil && event.NativeStyle != 0 {
+				style = event.NativeStyle
+			}
 			if match.styleNine[event.BombID] {
 				// 0x0060EDC6 writes the bubble type; 0x00607C5A acts on 9.
 				style = 9
@@ -1852,13 +1881,21 @@ func (match *onlineMatch) publishEvents(after *battleengine.Engine, events []bat
 					dispatched = append(dispatched, game.GameItem{ItemID: event.SceneID, Row: byte(event.Cell.Row), Col: byte(event.Cell.Col)})
 				}
 			}
+		case battleengine.EventActorHarmed:
+			if match.machine != nil {
+				match.machineHarm(event, false)
+			}
 		case battleengine.EventActorTrapped:
 			if event.TargetID == match.local {
 				match.publishHit(event, false)
 			}
 		case battleengine.EventActorTransformationEnded:
 			if event.PlayerID == match.local && event.TransformationEnd == battleengine.TransformationEndHit {
-				match.publishHit(event, true)
+				if match.machine != nil {
+					match.machineHarm(event, true)
+				} else {
+					match.publishHit(event, true)
+				}
 			}
 			if arbitrator && event.TransformationEnd == battleengine.TransformationEndExpired {
 				body, err := (game.AvatarRecoveryEvent{PlayerID: event.PlayerID, Time: now, PosX: uint16(event.Position.X), PosY: uint16(event.Position.Y)}).MarshalNetworkBinary()
@@ -1943,12 +1980,15 @@ func (match *onlineMatch) publishEvents(after *battleengine.Engine, events []bat
 				}
 			}
 		case battleengine.EventActorEliminated:
-			match.publishElimination(event, drops[event.TargetID], arbitrator)
+			if match.machine == nil {
+				match.publishElimination(event, drops[event.TargetID], arbitrator)
+			}
 		}
 	}
 	if len(explosion.Bombs) > 0 {
 		explosion.PlayerID, explosion.ClientTime = match.local, now
 		match.tankExplosion(&explosion, true)
+		match.machineExplosion(explosion)
 		if body, err := explosion.MarshalNetworkBinary(); err == nil {
 			match.queue(game.NotifyBombExplode, now, now, body)
 			match.mirror(game.NotifyBombExplode, body)

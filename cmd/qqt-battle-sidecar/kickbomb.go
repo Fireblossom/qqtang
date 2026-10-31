@@ -64,6 +64,7 @@ type kickItem struct {
 // moves Cells cells in Direction (wire order right, up, left, down), across
 // the field's edge if need be.
 type kickFlight struct {
+	To        *cell  `json:"to,omitempty"` // rule-7 player throws can start one row above the target line
 	From      cell   `json:"from"`
 	Direction byte   `json:"dir"`
 	Cells     int16  `json:"cells"`
