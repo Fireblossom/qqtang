@@ -29,6 +29,7 @@ type autoplayBot struct {
 	// The rule's objectives, when the map has them (rules 3 and 6).
 	bun       *bunRule
 	sculpture *sculptureRule
+	tank      *tankRule
 }
 
 func newAutoplayBot(player uint16) *autoplayBot {
@@ -105,14 +106,17 @@ func (bot *autoplayBot) act(engine *battleengine.Engine) battleengine.Action {
 	if path := world.nearest(here, safe, world.pickupAt); len(path) > 0 {
 		return bot.follow(action, actor, path)
 	}
+	worthBombing := func(cell battleengine.Cell) bool {
+		return world.worthBombing(cell, actor) || bot.tank != nil && bot.tank.worthBombing(world, cell, actor)
+	}
 	// 4. Place a bubble beside a breakable wall or an opponent, if it can be
 	// escaped.
-	if world.worthBombing(here, actor) && onCentre(actor.Position) && bot.canEscapeOwnBubble(engine, actor, msPerCell) {
+	if worthBombing(here) && onCentre(actor.Position) && bot.canEscapeOwnBubble(engine, actor, msPerCell) {
 		action.PlaceBomb = true
 		return action
 	}
 	// 5. Walk toward the nearest cell where a bubble would be worth it.
-	if path := world.nearest(here, safe, func(cell battleengine.Cell) bool { return world.worthBombing(cell, actor) }); len(path) > 0 {
+	if path := world.nearest(here, safe, worthBombing); len(path) > 0 {
 		return bot.follow(action, actor, path)
 	}
 	return action

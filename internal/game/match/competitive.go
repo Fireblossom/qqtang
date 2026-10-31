@@ -705,7 +705,7 @@ func (battle *CompetitiveBattle) timeoutWinnerByPlayerValues(values map[uint16]u
 
 // RecordTankBaseHPChange consumes the native tank base's signed delta. Static
 // client evidence gives exactly three legal reports: +30 repairs the actor's
-// own base, while -10 and the armour-reduced -5 damage an opposing base. The
+// own base, while -10 and the armour-reduced -5 are reported by the scene arbitrator. The
 // wire DestTeamID is always the target base's team: the repair producer copies
 // the local player's team, while the explosion producer copies +0x39 from the
 // base object hit at that cell. The client clamps HP to 0..100; zero is
@@ -734,8 +734,12 @@ func (battle *CompetitiveBattle) RecordTankBaseHPChange(playerID uint16, reporte
 			return CompetitiveTankBaseHPResult{}, fmt.Errorf("tank-base player %d cannot repair opposing team %d", playerID, targetTeamID)
 		}
 	case -5, -10:
-		if targetTeamID == participant.TeamID {
-			return CompetitiveTankBaseHPResult{}, fmt.Errorf("tank-base player %d cannot damage own team %d", playerID, targetTeamID)
+		// 006075D0 copies the 0x0FA4 sender, not the bubble owner. Both
+		// bases take damage, including friendly fire. Only the elected
+		// arbitrator may report negative deltas; actor identity is also
+		// checked by the dispatch layer against the sending session.
+		if !battle.concluded && playerID != battle.arbitratorID {
+			return CompetitiveTankBaseHPResult{}, fmt.Errorf("tank-base damage reporter %d is not arbitrator %d", playerID, battle.arbitratorID)
 		}
 	default:
 		return CompetitiveTankBaseHPResult{}, fmt.Errorf("tank-base HP change %d is outside native +30/-5/-10 values", change)

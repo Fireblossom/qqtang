@@ -21,8 +21,8 @@ from .net import accountauth, directory, game, player
 from .runtime import UIRuntime
 from .script import call_script, log
 
-ACCOUNT_AUTH_PORT = 18000
-DIRECTORY_PORT = 18080
+ACCOUNT_AUTH_PORT = int(os.environ.get("QQT_AUTH_PORT", "18000"))
+DIRECTORY_PORT = int(os.environ.get("QQT_DIRECTORY_PORT", "18080"))
 DEFAULT_ROLE_ID = 1
 STATE_FILE = pathlib.Path(os.path.expanduser("~/Library/Application Support/QQTangNative/state.json"))
 

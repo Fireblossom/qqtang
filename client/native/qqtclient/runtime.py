@@ -179,6 +179,13 @@ class UIRuntime:
                 self.call(widget, "OnTimer")
         frames = elapsed_ms / (1000 / 60)
         for widget in list(self.widgets.values()):
+            if widget.type == "DYLIFESTRIP":
+                # 10011D9A: approach destination at stepnum units/second.
+                delta = widget.strip_step * elapsed_ms / 1000
+                if widget.strip_current < widget.strip_destination:
+                    widget.strip_current = min(widget.strip_destination, widget.strip_current + delta)
+                else:
+                    widget.strip_current = max(widget.strip_destination, widget.strip_current - delta)
             if widget.alpha_direction == FADE_IN:
                 widget.alpha = min(1.0, widget.alpha + widget.alpha_speed * frames)
             elif widget.alpha_direction == FADE_OUT:

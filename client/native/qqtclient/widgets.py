@@ -65,6 +65,11 @@ class Widget:
         self.image_flag = int(attr("bkImgFlag", 0) or 0)
         self.framescheme = attr("framescheme", None)
         self.frame_speed = float(attr("framespeed", 0) or 0)
+        # LIFESTRIP / DYLIFESTRIP (gameUI.dll 100117D8, 10011C43).
+        self.strip_total = float(attr("totalnum", 0) or 0)
+        self.strip_current = float(attr("curnum", 0) or 0)
+        self.strip_destination = float(attr("destnum", 0) or 0)
+        self.strip_step = float(attr("stepnum", 0) or 0)
         self.draw_color = tuple(attr("drawcolor", (0, 0, 0, 255)))
         self.back_color = tuple(attr("bkcolor", (0, 0, 0, 0)))
         self.edge_color = tuple(attr("textEdgeColor", (0, 0, 0, 0)))

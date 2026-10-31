@@ -370,9 +370,8 @@ func TestCompetitiveGameDataIncludesRuleOwnedObjectiveSceneItems(t *testing.T) {
 	want = []game.GameItemType{
 		{ItemID: 1, Quantity: 7},
 		{ItemID: 6, Quantity: 1},
-		{ItemID: 201, Quantity: 2},
-		{ItemID: 203, Quantity: 2},
-		{ItemID: 204, Quantity: 2},
+		{ItemID: 119, Quantity: 2},
+		{ItemID: 120, Quantity: 2},
 	}
 	if !slices.Equal(data.NewItems, want) {
 		t.Fatalf("tank GAME_BEGIN NewItems = %+v, want ordinary and rule-specific wall objects %+v", data.NewItems, want)

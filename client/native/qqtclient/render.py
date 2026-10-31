@@ -139,6 +139,8 @@ class Renderer:
             self.screen.blit(fill, (x, y))
         if widget.type == "NUMLABEL":
             self._draw_number(widget, x, y, alpha)
+        elif widget.type in ("LIFESTRIP", "DYLIFESTRIP"):
+            self._draw_life_strip(widget, x, y, alpha)
         elif widget.type == "PICLABEL":
             self._draw_glyph_frames(widget, x, y, alpha)
         elif widget.type == "DYLABEL":
@@ -164,6 +166,29 @@ class Renderer:
             return
         for child in widget.sorted_children():
             self._draw(child, x, y, alpha, focus)
+
+    def _draw_life_strip(self, widget: Widget, x: int, y: int, alpha: float) -> None:
+        """1001192F: keep both end thirds and stretch the middle third."""
+        if not 0.01 < widget.strip_current <= widget.strip_total or not widget.image:
+            return
+        frames = self.sprites.get(widget.image)
+        if not frames or frames[0][0] is None:
+            return
+        source, ox, oy = frames[0]
+        width = int(widget.w * widget.strip_current / widget.strip_total)
+        if width < 1:
+            return
+        cap = source.get_width() // 3
+        if cap < 1 or width < 2 * cap + 1:
+            image = pygame.transform.scale(source, (width, source.get_height()))
+        else:
+            image = pygame.Surface((width, source.get_height()), pygame.SRCALPHA)
+            image.blit(source, (0, 0), (0, 0, cap, source.get_height()))
+            middle = source.subsurface((cap, 0, cap, source.get_height()))
+            image.blit(pygame.transform.scale(middle, (width - 2 * cap, source.get_height())), (cap, 0))
+            image.blit(source, (width - cap, 0), (source.get_width() - cap, 0, cap, source.get_height()))
+        image.set_alpha(int(255 * alpha))
+        self.screen.blit(image, (x + ox, y + oy))
 
     def _draw_hotcover(self, widget: Widget, x: int, y: int, alpha: float) -> None:
         """A tab's hotcover is always drawn at its hotrect: frame 1 while the

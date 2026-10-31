@@ -395,6 +395,9 @@ type Rules struct {
 	// eliminated actor back. The round deadline still ends the engine. Timed
 	// respawn rules (3, 4, 5, 6, 13) need it; rule 1 leaves it false.
 	ExternalConclusion bool
+	// RulePickupSceneIDs are consumed through the normal pickup protocol; the
+	// caller applies their rule-specific effect. Empty for ordinary matches.
+	RulePickupSceneIDs [8]uint32
 	// RecordItemEffects captures event-local before/after evidence only for
 	// diagnostic matches. It does not alter physics, visibility or rewards.
 	RecordItemEffects bool
@@ -473,7 +476,16 @@ func (rules Rules) pickupSupported(sceneID uint32) bool {
 	if _, _, supported := supportedPickupEffect(sceneID); supported {
 		return true
 	}
-	return rules.objectiveIndex(sceneID) >= 0
+	return rules.objectiveIndex(sceneID) >= 0 || rules.rulePickup(sceneID)
+}
+
+func (rules Rules) rulePickup(sceneID uint32) bool {
+	for _, id := range rules.RulePickupSceneIDs {
+		if id != 0 && id == sceneID {
+			return true
+		}
+	}
+	return false
 }
 
 func (rules Rules) looseObject(sceneID uint32) bool {

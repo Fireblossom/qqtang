@@ -253,3 +253,31 @@ class PracticeTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+class TankTest(unittest.TestCase):
+    def test_base_damage_stages_and_team_numbers(self):
+        scene = BattleScene.__new__(BattleScene)
+        scene.state = {"clock": 5000, "tank": {"bases": [
+            {"team": 2, "row": 9, "col": 11, "hp": 70},
+            {"team": 1, "row": 1, "col": 1, "hp": 0},
+        ]}}
+        draws, calls = [], []
+        scene.shown_tank_hp = {}
+        scene._draw_frames = lambda *args: draws.append(args)
+        scene._script = lambda *args: calls.append(args)
+        scene._draw_tank_bases(None, 9)
+        scene._draw_tank_bases(None, 1)
+        self.assertEqual([row[1] for row in draws], ["object/misc/misc624_stand.img", "object/misc/misc630_stand.img"])
+        scene._update_tank_bases()
+        self.assertEqual(calls, [("ui_UpdateTankBaseLife", 2, 70), ("ui_UpdateTankBaseLife", 1, 0)])
+
+    def test_binary_element_catalog_supplements_script(self):
+        binary = struct.pack("<II", 2, 2)
+        binary += struct.pack("<Ihhhh iII I", 19033, 1, 1, 3, 12, 1, 0, 0, 0)
+        binary += struct.pack("<Ihhhh iII I", 3004, 1, 1, 9, 9, 99, 0, 0, 0)
+        script = b"class QQTMapElem3004:\n    offset=(2,13)\n    LifeTime=1\n"
+        elements = mapfile.load_elements(FakeResources({"object/mapElem/mapElem.prop": binary, "object/mapElem/mapElem.py": script}))
+        self.assertEqual((elements[19033].offset, elements[19033].life_time), ((3, 12), 1))
+        self.assertEqual((elements[3004].offset, elements[3004].life_time), ((2, 13), 1))
+        with self.assertRaises(ValueError):
+            mapfile.parse_element_properties(binary[:-1])

@@ -145,6 +145,22 @@ def build_natives(runtime: UIRuntime, resources: Resources, audio: Audio) -> dic
     def Win_SetImg(widget, image):
         widget.image = image or None
 
+    @with_widget()
+    def Win_SetStripNum(widget, value):
+        widget.strip_current = float(value)
+
+    @with_widget()
+    def Win_SetStripTotalNum(widget, value):
+        widget.strip_total = float(value)
+
+    @with_widget()
+    def Win_SetStripDestNum(widget, value):
+        widget.strip_destination = float(value)
+
+    @with_widget()
+    def Win_SetStripStepNum(widget, value):
+        widget.strip_step = float(value)
+
     def Win_SetDragImg(_path, image):
         runtime.drag_image = str(image or "")
 

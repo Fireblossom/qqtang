@@ -195,6 +195,9 @@ func loadCompetitiveMapElements(path string) (map[uint32]competitiveMapElement, 
 	if len(elements) == 0 {
 		return nil, fmt.Errorf("map-element catalog contains no elements")
 	}
+	if err := supplementCompetitiveMapElements(path, elements); err != nil {
+		return nil, err
+	}
 	return elements, nil
 }
 

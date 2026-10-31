@@ -1191,3 +1191,22 @@ func TestTankBattleDepartureDoesNotBlockDestroyedTeamElimination(t *testing.T) {
 		t.Fatalf("departed final teammate blocked tank settlement: %+v err:%v", resolution, err)
 	}
 }
+
+func TestTankDamageRequiresArbitratorAndIncludesFriendlyBase(t *testing.T) {
+	battle, err := NewCompetitiveBattleWithRuleConfig(19, 1701, 1, []CompetitiveParticipant{{PlayerID: 1, RoleID: 7, TeamID: 1}, {PlayerID: 2, RoleID: 8, TeamID: 2}}, CompetitiveRuleConfig{ConclusionPolicy: CompetitiveConclusionClientRule, PlayerLifecycle: CompetitivePlayerTimedRespawn, Objective: CompetitiveObjectiveTankBase})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, team := range []byte{1, 2} {
+		if _, err = battle.RecordTankBaseHPChange(2, team, -10); err == nil {
+			t.Fatalf("non-arbitrator damaged team %d", team)
+		}
+		hit, err := battle.RecordTankBaseHPChange(1, team, -10)
+		if err != nil || hit.HP != 90 {
+			t.Fatalf("arbitrator team %d damage: %+v %v", team, hit, err)
+		}
+	}
+	if _, err = battle.RecordTankBaseHPChange(2, 1, 30); err == nil {
+		t.Fatal("repaired opposing base")
+	}
+}

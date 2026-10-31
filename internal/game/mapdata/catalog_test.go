@@ -638,9 +638,8 @@ func TestCompetitiveObjectiveSceneItemsUseNativeRulePools(t *testing.T) {
 	}
 
 	wantTank := []CompetitiveWallItem{
-		{SceneID: 201, Quantity: 2},
-		{SceneID: 203, Quantity: 2},
-		{SceneID: 204, Quantity: 2},
+		{SceneID: 119, Quantity: 2},
+		{SceneID: 120, Quantity: 2},
 	}
 	if got := (CompetitiveMap{Rule: CompetitiveRuleTank}).CompetitiveObjectiveSceneItems(2, 1); fmt.Sprint(got) != fmt.Sprint(wantTank) {
 		t.Fatalf("tank objective scene pool = %+v, want %+v", got, wantTank)

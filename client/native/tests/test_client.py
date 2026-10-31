@@ -384,3 +384,27 @@ class ConversionTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+class LifeStripTest(unittest.TestCase):
+    def test_health_change_animates_and_zero_draws_nothing(self):
+        import pygame
+        from qqtclient.render import Renderer
+        widget = Widget("UI.health", type("Health", (), {"type": "DYLIFESTRIP", "rect": (0, 0, 90, 5), "totalnum": 100, "curnum": 100, "destnum": 60, "stepnum": 20, "bkimage": "bar"}), None, 0)
+        runtime = UIRuntime(types.SimpleNamespace(namespace={}))
+        runtime.widgets["ui.health"] = widget
+        runtime.tick(1000)
+        self.assertEqual(widget.strip_current, 80)
+        runtime.tick(10000)
+        self.assertEqual(widget.strip_current, 60)
+        source = pygame.Surface((9, 5), pygame.SRCALPHA)
+        source.fill((255, 0, 0, 255))
+        renderer = Renderer.__new__(Renderer)
+        renderer.screen = pygame.Surface((100, 10), pygame.SRCALPHA)
+        renderer.sprites = types.SimpleNamespace(get=lambda path: [(source, 0, 0)])
+        renderer._draw_life_strip(widget, 0, 0, 1)
+        self.assertEqual(renderer.screen.get_at((53, 2)).a, 255)
+        self.assertEqual(renderer.screen.get_at((54, 2)).a, 0)
+        renderer.screen.fill((0, 0, 0, 0))
+        widget.strip_current = 0
+        renderer._draw_life_strip(widget, 0, 0, 1)
+        self.assertEqual(renderer.screen.get_at((0, 0)).a, 0)

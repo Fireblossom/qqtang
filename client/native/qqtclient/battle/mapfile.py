@@ -93,9 +93,8 @@ def parse_map(data: bytes) -> MapFile:
 def load_elements(resources: Resources) -> dict[int, ElementInfo]:
     """object/mapElem/mapElem.py: class QQTMapElem<ID>(QQTMapElem) with literal attributes."""
     data = resources.read("object/mapElem/mapElem.py")
-    if data is None:
-        return {}
     elements: dict[int, ElementInfo] = {}
+    data = data or b""
     for node in ast.parse(data.decode("utf-8", "replace")).body:
         if not isinstance(node, ast.ClassDef) or not node.name.startswith("QQTMapElem") or node.name == "QQTMapElem":
             continue
@@ -112,7 +111,35 @@ def load_elements(resources: Resources) -> dict[int, ElementInfo]:
             level=int(values.get("Level", 256)), life_time=int(values.get("LifeTime", -1)),
             can_hide=bool(values.get("canHide", 0)),
         )
+    # The binary catalog includes the tank family omitted from mapElem.py.
+    # Preserve explicit script definitions; supplement only absent IDs.
+    binary = resources.read("object/mapElem/mapElem.prop")
+    if binary is not None:
+        for element_id, info in parse_element_properties(binary).items():
+            elements.setdefault(element_id, info)
     return elements
+
+
+def parse_element_properties(data: bytes) -> dict[int, ElementInfo]:
+    """Version 2: count, then 24-byte headers and width*height grid DWORDs."""
+    if len(data) < 8:
+        raise ValueError("map element properties header is truncated")
+    version, count = struct.unpack_from("<II", data)
+    if version != 2:
+        raise ValueError(f"unsupported map element properties version {version}")
+    result = {}
+    offset = 8
+    for _ in range(count):
+        if offset + 24 > len(data):
+            raise ValueError("map element properties record is truncated")
+        element_id, width, height, dx, dy, life, flags, move = struct.unpack_from("<Ihhhh iII", data, offset)
+        if width <= 0 or height <= 0 or offset + 24 + width * height * 4 > len(data):
+            raise ValueError("map element properties grid is invalid")
+        result[element_id] = ElementInfo(offset=(dx, dy), size=(width, height), life_time=life)
+        offset += 24 + width * height * 4
+    if offset != len(data):
+        raise ValueError("map element properties has trailing data")
+    return result
 
 
 def element_image(element_id: int, action: str = "stand") -> str | None:

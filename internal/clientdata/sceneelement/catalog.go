@@ -35,13 +35,12 @@ const (
 	SculptureFragment14 ID = 163
 	SculptureFragment15 ID = 164
 	SculptureFragment16 ID = 165
-	// TankRepair, TankArmor and TankShell are the three rule-13-only scene
-	// objects constructed by Client.exe's 0xC9/0xCB/0xCC factory branches.
-	// Their pickup handlers respectively operate on the base repair path, the
-	// armour damage state, and the one-hit player shell state.
-	TankRepair     ID = 201
-	TankArmor      ID = 203
-	TankShell      ID = 204
+	// Client.exe factory 005CB79A: 0x77 -> 005CEC6B -> 005CECAB repairs
+	// the player's base; 0x78 -> 005CED3A -> 005CED7A armours it.
+	// 201/203/204 are persistent detonation/slide/slow fields, not these
+	// base powerups. There is no "tank shell" pickup in that factory.
+	TankRepair     ID = 119
+	TankArmor      ID = 120
 	RewardChest211 ID = 211
 	RewardChest212 ID = 212
 	RewardChest213 ID = 213

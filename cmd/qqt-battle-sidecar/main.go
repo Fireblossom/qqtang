@@ -13,7 +13,7 @@
 // step also exchanges the match's UDP traffic.
 //
 // Offline practice supports native rule 1 (ordinary bubble battle) maps;
-// online matches also play rule 5 (treasure, see ruleOptions).
+// online matches also play rules 3, 4, 5, 6 and 13 (see ruleOptions).
 package main
 
 import (
@@ -166,7 +166,8 @@ type stateView struct {
 	Net   *netView   `json:"net,omitempty"`
 	// The local player's room props left, in GAME_BEGIN order.
 	Prepared  []preparedView `json:"prepared,omitempty"`
-	Bun       *bunView       `json:"bun,omitempty"`       // rule 3
+	Bun       *bunView       `json:"bun,omitempty"` // rule 3
+	Tank      *tankView      `json:"tank,omitempty"`
 	Sculpture *sculptureView `json:"sculpture,omitempty"` // rule 6
 	// Kills and kill streaks by player ID, from the kill notices.
 	Kills   map[string]int `json:"kills,omitempty"`
@@ -236,6 +237,9 @@ func runOnline(init command, lines *bufio.Scanner, out *json.Encoder) error {
 	if match.bun != nil {
 		state.Bun = match.bun.view()
 	}
+	if match.tank != nil {
+		state.Tank = match.tank.view()
+	}
 	if match.sculpture != nil {
 		state.Sculpture = match.sculpture.view()
 		match.markStyleNine(state.Bombs)
@@ -260,6 +264,9 @@ func runOnline(init command, lines *bufio.Scanner, out *json.Encoder) error {
 		state.Kills, state.Streaks = byPlayer(match.kills), byPlayer(match.streaks)
 		if match.bun != nil {
 			state.Bun = match.bun.view()
+		}
+		if match.tank != nil {
+			state.Tank = match.tank.view()
 		}
 		if match.sculpture != nil {
 			state.Sculpture = match.sculpture.view()

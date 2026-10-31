@@ -267,6 +267,7 @@ class BattleScene:
         self.state = state
         self._place_bun_houses()
         self._place_statues()
+        self._place_tank_bases()
         self.statue_changed: dict[tuple[int, int], tuple[int, float]] = {}  # by cell: (progress, now_ms of the change)
         self.realtime = realtime
         begin = state.get("begin") or {}
@@ -314,6 +315,7 @@ class BattleScene:
         self.titles = {player["id"]: player_title(player.get("points", 0), player.get("gender", 0)) for player in players}
         self.runtime: UIRuntime | None = None
         self.shown_seconds = -1
+        self.shown_tank_hp: dict[int, int] = {}
         self.font: Callable[[int], pygame.font.Font] | None = None
         self.text: Callable[[str, int, tuple[int, int, int]], pygame.Surface] | None = None
         log(f"[battle] map {map_id} {self.map_name} ({self.map.width}x{self.map.height}, rule {self.map.rule})")
@@ -328,6 +330,7 @@ class BattleScene:
         self._script("ui_InitPVEBoss")  # hides the boss bars when there are none
         self._script("game_setMapID", map_id)
         self._update_timer()
+        self._update_tank_bases()
 
     def _script(self, name: str, *args: Any) -> Any:
         function = self.runtime.namespace.get(name) if self.runtime else None
@@ -459,6 +462,7 @@ class BattleScene:
             self._apply(event)
         self._update_timer()
         self._update_status_bar()
+        self._update_tank_bases()
         if self.outcome["ended"] and not self.end_logged:
             self.end_logged = True
             log(f"[battle] ended: {self.outcome}")
@@ -528,6 +532,7 @@ class BattleScene:
                         self._draw_dying(field, dying, row, col)
             self._draw_bun_houses(field, row)
             self._draw_statues(field, row)
+            self._draw_tank_bases(field, row)
             for actor in sorted(actors_by_row.get(row, ()), key=lambda item: item["y"]):
                 self._draw_actor(field, actor)
         self._draw_streak(field)
@@ -550,6 +555,32 @@ class BattleScene:
                 for col in range(house["col"], min(house["col"] + 3, self.map.width)):
                     if abs(self.map.element(mapfile.LAYER_TOP, row, col)) in BUN_HOUSE_ELEMENTS:
                         self._set(mapfile.LAYER_TOP, row, col, 0)
+
+    def _place_tank_bases(self) -> None:
+        for base in (self.state.get("tank") or {}).get("bases", ()):
+            for row in range(base["row"], min(base["row"] + 3, self.map.height)):
+                for col in range(base["col"], min(base["col"] + 3, self.map.width)):
+                    if abs(self.map.element(mapfile.LAYER_TOP, row, col)) == 19031:
+                        self._set(mapfile.LAYER_TOP, row, col, 0)
+
+    def _update_tank_bases(self) -> None:
+        for base in (self.state.get("tank") or {}).get("bases", ()):
+            if self.shown_tank_hp.get(base["team"]) != base["hp"]:
+                self._script("ui_UpdateTankBaseLife", base["team"], base["hp"])
+                self.shown_tank_hp[base["team"]] = base["hp"]
+
+    def _draw_tank_bases(self, field: pygame.Surface, row: int) -> None:
+        # 005F64E5 / 005F65F0: first base misc623..626, second 627..630;
+        # sprite point = anchor cell centre, image anchor (31,47).
+        for index, base in enumerate((self.state.get("tank") or {}).get("bases", ())):
+            if base["row"] != row:
+                continue
+            hp = base["hp"]
+            stage = 3 if hp == 0 else 2 if hp <= 40 else 1 if hp <= 70 else 0
+            path = f"object/misc/misc{623 + index * 4 + stage}_stand.img"
+            self._draw_frames(field, path, self.clock // 100,
+                              FIELD_ORIGIN[0] + base["col"] * CELL - 31,
+                              FIELD_ORIGIN[1] + base["row"] * CELL - 47)
 
     def _draw_streak(self, field: pygame.Surface) -> None:
         """The local player's N 连斩 badge (0x005DD4E6, 0x005DD5AE)."""

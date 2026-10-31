@@ -58,7 +58,7 @@ func validateInitialPickups(grid Grid, rules Rules, participants []Participant, 
 	requiredSpeedRates := [MaxNativeSpeedRate + 1]bool{}
 	for index, pickup := range pickups {
 		attribute, _, supported := supportedPickupEffect(pickup.SceneID)
-		if !supported && rules.objectiveIndex(pickup.SceneID) < 0 {
+		if !supported && !rules.pickupSupported(pickup.SceneID) {
 			return fmt.Errorf("battle pickup %d uses unsupported scene ID %d", index, pickup.SceneID)
 		}
 		if attribute == AttributeSpeedRate || pickup.SceneID == SceneRandomAttribute {
@@ -188,6 +188,8 @@ func (engine *Engine) collectPickup(actor *Actor, pickup *Pickup) Event {
 	reward, isReward := sceneelement.NativeReward(sceneelement.ID(pickup.SceneID))
 	objective := engine.rules.objectiveIndex(pickup.SceneID)
 	switch {
+	case engine.rules.rulePickup(pickup.SceneID):
+		// The authenticated pickup event is the rule layer's input.
 	case objective >= 0:
 		event.Effect = PickupEffectObjective
 		event.RewardBefore = uint32(actor.CarriedObjectives[objective])

@@ -201,6 +201,7 @@ type onlineMatch struct {
 	carryRequestSent uint32
 	// Rule 6's style-9 bubbles (held item 48) by engine bomb ID.
 	styleNine map[uint32]bool
+	tank      *tankRule
 }
 
 // respawnRule is a special rule's relive timing, from Client.exe's rule
@@ -308,6 +309,11 @@ func newOnlineMatch(init command) (*onlineMatch, beginView, error) {
 	if err != nil {
 		return nil, beginView{}, err
 	}
+	var tank *tankRule
+	if entry.Rule == mapdata.CompetitiveRuleTank {
+		tank = newTankRule(entry, begin)
+		installTankBases(&config, tank)
+	}
 	engine, err := battleengine.New(config)
 	if err != nil {
 		return nil, beginView{}, err
@@ -338,7 +344,7 @@ func newOnlineMatch(init command) (*onlineMatch, beginView, error) {
 		fieldContacts: map[fieldContactKey]bool{}, itemUses: map[[3]uint32]bool{}, useRequested: map[uint8]uint32{},
 		preparedRequested: map[uint32]uint32{},
 		pickupRequests:    map[pickupKey]pickupRequest{}, sceneRequests: map[sceneRequestKey]uint32{},
-		respawn: respawn, eliminatedAt: map[uint16]uint32{}, departed: map[uint16]bool{},
+		tank: tank, respawn: respawn, eliminatedAt: map[uint16]uint32{}, departed: map[uint16]bool{},
 		kills: map[uint16]int{}, streaks: map[uint16]int{},
 	}
 	switch entry.Rule {
@@ -357,6 +363,7 @@ func newOnlineMatch(init command) (*onlineMatch, beginView, error) {
 	if options.Autoplay {
 		match.bot = newAutoplayBot(match.local)
 		match.bot.bun, match.bot.sculpture = match.bun, match.sculpture
+		match.bot.tank = match.tank
 		match.logf("autoplay: the test bot plays player %d", match.local)
 	}
 	for _, entry := range view.Players {
@@ -379,11 +386,9 @@ func onlineRules(local, arbitrator uint16) battleengine.Rules {
 	return battleengine.Rules{TickMS: tickMS, NativeOutcomeAuthority: true, NativeRequestPlayerID: local}
 }
 
-// ruleOptions adds a special rule's engine options to onlineRules. Only
-// treasure (rule 5) is implemented besides rule 1: gems 150..152 are carried
-// objectives, a player who dies with gems drops only them, players relive
-// 5 s after death once their spawn cell is free, and the server decides the
-// result.
+// ruleOptions adds the selected rule's default-off engine extensions to the
+// ordinary online authority options. Rules 3/4/5/6/13 use server conclusions
+// and timed respawns; their objectives are implemented by the sidecar.
 func ruleOptions(entry mapdata.CompetitiveMap, local, arbitrator uint16) (battleengine.Rules, *respawnRule, error) {
 	rules := onlineRules(local, arbitrator)
 	switch entry.Rule {
@@ -411,6 +416,10 @@ func ruleOptions(entry mapdata.CompetitiveMap, local, arbitrator uint16) (battle
 		for index := range rules.LooseObjectSceneIDs {
 			rules.LooseObjectSceneIDs[index] = uint32(sculptureFirstScene + index)
 		}
+		return rules, &respawnRule{delayMS: 5000}, nil
+	case mapdata.CompetitiveRuleTank:
+		rules.ExternalConclusion = true
+		rules.RulePickupSceneIDs = [8]uint32{tankRepairScene, tankArmorScene}
 		return rules, &respawnRule{delayMS: 5000}, nil
 	case mapdata.CompetitiveRuleTreasure:
 		rules.ObjectiveSceneIDs = [battleengine.MaxObjectiveKinds]uint32{
@@ -818,6 +827,9 @@ func (match *onlineMatch) applyRemote(sender uint16, message game.BattleMessageD
 			match.logf("pickup %d by %d rejected: %v", item.ItemID, item.PlayerID, err)
 			return nil
 		}
+		ruleEvent := accepted
+		ruleEvent.TimeMS = item.ClientTime
+		match.tankPickup(ruleEvent)
 		delete(match.pickupRequests, pickupKey{scene: item.ItemID, cell: accepted.Cell})
 		return []battleengine.Event{accepted}
 	case game.NotifyDispatchItem:
@@ -977,6 +989,11 @@ func (match *onlineMatch) respawnDue() []battleengine.Event {
 		if !dead || actor.State != battleengine.ActorEliminated || now-diedAt < match.respawn.delayMS {
 			continue
 		}
+		if match.tank != nil {
+			if base := match.tank.base(actor.TeamID); base == nil || base.hp == 0 {
+				continue
+			}
+		}
 		if match.respawn.waitFree && match.spawnBlocked(actor.Spawn) {
 			return events
 		}
@@ -1044,6 +1061,9 @@ func (match *onlineMatch) applyExplosion(event game.GameEvent) []battleengine.Ev
 	}
 	hits := make([]battleengine.VerifiedMapElementHit, 0, len(explosion.MapElems))
 	for _, element := range explosion.MapElems {
+		if match.tank != nil && element.MapElementID == tankBaseElement && match.tank.atAnchor(battleengine.Cell{Row: int16(element.Row), Col: int16(element.Column)}) {
+			continue
+		}
 		hits = append(hits, battleengine.VerifiedMapElementHit{MapElementID: uint32(element.MapElementID), Cell: battleengine.Cell{Row: int16(element.Row), Col: int16(element.Column)}})
 	}
 	items := make([]battleengine.Pickup, 0, len(explosion.Items))
@@ -1053,6 +1073,8 @@ func (match *onlineMatch) applyExplosion(event game.GameEvent) []battleengine.Ev
 	events, err := match.runtime.AcceptNativeBombExplosionAt(explosion.ClientTime, bombs, hits, items)
 	if err != nil {
 		match.logf("explosion rejected: %v", err)
+	} else {
+		match.tankExplosion(&explosion, false)
 	}
 	return events
 }
@@ -1111,6 +1133,8 @@ func (match *onlineMatch) arbitratePickup(event game.GameEvent) []battleengine.E
 		match.logf("pickup %d at %d,%d by %d refused: taken by %d", request.ItemID, key.cell.Row, key.cell.Col, request.PlayerID, owner)
 	} else if accepted, err := match.runtime.AcceptNativePickup(request.PlayerID, request.ItemID, position); err == nil {
 		match.collected[key] = request.PlayerID
+		answer.ClientTime = accepted.TimeMS
+		match.tankPickup(accepted)
 		events = append(events, accepted)
 	} else {
 		answer.PlayerID = 0xffff
@@ -1775,6 +1799,7 @@ func (match *onlineMatch) publishEvents(after *battleengine.Engine, events []bat
 				continue // granted on request (arbitratePickup), already announced
 			}
 			match.collected[key] = event.PlayerID
+			match.tankPickup(event)
 			if arbitrator {
 				position := event.Position
 				if actor, ok := actorByID(after.Actors(), event.PlayerID); ok && position == (battleengine.Position{}) {
@@ -1849,6 +1874,7 @@ func (match *onlineMatch) publishEvents(after *battleengine.Engine, events []bat
 	}
 	if len(explosion.Bombs) > 0 {
 		explosion.PlayerID, explosion.ClientTime = match.local, now
+		match.tankExplosion(&explosion, true)
 		if body, err := explosion.MarshalNetworkBinary(); err == nil {
 			match.queue(game.NotifyBombExplode, now, now, body)
 			match.mirror(game.NotifyBombExplode, body)

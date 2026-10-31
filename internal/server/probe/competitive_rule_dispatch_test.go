@@ -366,6 +366,28 @@ func TestTankBaseReportSettlesAfterDestroyedTeamIsAlreadyDead(t *testing.T) {
 		t.Fatalf("tank rule setup: %v", requireErr)
 	}
 
+	// Negative HP deltas are scene-arbitrator reports, including its own
+	// base. A peer cannot author damage or impersonate the arbitrator.
+	baseProbe := make([]byte, 10)
+	binary.BigEndian.PutUint16(baseProbe[0:2], peer.Profile.PlayerID)
+	binary.BigEndian.PutUint16(baseProbe[6:8], 1)
+	binary.BigEndian.PutUint16(baseProbe[8:10], 0xfff6)
+	sendReliableBossRuleEvent(t, server, peer, 100, game.RequestTankBaseHP, baseProbe)
+	if !bytes.Contains(tankLogs.Bytes(), []byte("not arbitrator")) {
+		t.Fatalf("peer damage was not rejected: %s", tankLogs.String())
+	}
+	tankLogs.Reset()
+	binary.BigEndian.PutUint16(baseProbe[0:2], owner.Profile.PlayerID)
+	spoof := sendReliableBossRuleEvent(t, server, peer, 101, game.RequestTankBaseHP, baseProbe)
+	if len(spoof.response) != 0 || !bytes.Contains(tankLogs.Bytes(), []byte("game_event_rejected")) {
+		t.Fatalf("peer impersonated arbitrator: %s", tankLogs.String())
+	}
+	tankLogs.Reset()
+	ownHit := sendReliableBossRuleEvent(t, server, owner, 102, game.RequestTankBaseHP, baseProbe)
+	if !bytes.Contains([]byte(ownHit.result), []byte("base_team_1_change_-10_hp_90")) {
+		t.Fatalf("arbitrator own-base report failed: %s", tankLogs.String())
+	}
+
 	deathBody := make([]byte, 11)
 	binary.BigEndian.PutUint16(deathBody[0:2], peer.Profile.PlayerID)
 	binary.BigEndian.PutUint32(deathBody[2:6], 1_000)

@@ -22,10 +22,11 @@ import "qqtang/internal/clientdata/sceneelement"
 // special appearance per round. itemSeed makes that choice deterministic for
 // every client without inventing coordinates.
 //
-// Tank's repair, armour and shell objects are wall rewards too. Keeping them
+// Tank's repair and armour objects are wall rewards too. Keeping them
 // in this rule-owned group merges them with the recovered ordinary pool in the
 // same GAME_BEGIN.NewItems list; a second coordinate-bearing 0x0FAE path would
-// create two independent scene histories.
+// create two independent scene histories. One of each per team member is
+// the local server supply policy; no original recording confirms quantities.
 func (entry CompetitiveMap) CompetitiveObjectiveSceneItems(teamMemberCount int, itemSeed uint32) []CompetitiveWallItem {
 	if teamMemberCount < 1 {
 		return nil
@@ -51,7 +52,6 @@ func (entry CompetitiveMap) CompetitiveObjectiveSceneItems(teamMemberCount int, 
 		return []CompetitiveWallItem{
 			{SceneID: uint32(sceneelement.TankRepair), Quantity: int16(teamMemberCount)},
 			{SceneID: uint32(sceneelement.TankArmor), Quantity: int16(teamMemberCount)},
-			{SceneID: uint32(sceneelement.TankShell), Quantity: int16(teamMemberCount)},
 		}
 	default:
 		return nil
