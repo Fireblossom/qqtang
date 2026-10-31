@@ -198,6 +198,7 @@ type onlineMatch struct {
 	carryRequestSent uint32
 	// Rule 6's style-9 bubbles (held item 48) by engine bomb ID.
 	styleNine map[uint32]bool
+	kick      *kickRule // rule 2; nil otherwise
 }
 
 // respawnRule is a special rule's relive timing, from Client.exe's rule
@@ -300,7 +301,7 @@ func newOnlineMatch(init command) (*onlineMatch, beginView, error) {
 		RecordedWallItems:    wallItems(begin.NewItems),
 		RecordedDelayedItems: wallItems(begin.Items),
 		UseRecordedWallItems: true,
-		AllowSpecialRules:    respawn != nil,
+		AllowSpecialRules:    entry.Rule != mapdata.CompetitiveRuleOrdinary,
 	})
 	if err != nil {
 		return nil, beginView{}, err
@@ -350,9 +351,13 @@ func newOnlineMatch(init command) (*onlineMatch, beginView, error) {
 			match.sculpture.bombLeft[info.PlayerID] = true
 		}
 	}
+	if entry.Rule == mapdata.CompetitiveRuleKickBomb {
+		match.kick = newKickRule(entry, int64(begin.SpawnSeed)<<32|int64(begin.ItemSeed)^int64(options.LocalID))
+	}
 	if options.Autoplay {
 		match.bot = newAutoplayBot(match.local)
 		match.bot.bun, match.bot.sculpture = match.bun, match.sculpture
+		match.bot.kick = match.kick != nil
 		match.logf("autoplay: the test bot plays player %d", match.local)
 	}
 	for _, entry := range view.Players {
@@ -384,6 +389,16 @@ func ruleOptions(entry mapdata.CompetitiveMap, local, arbitrator uint16) (battle
 	rules := onlineRules(local, arbitrator)
 	switch entry.Rule {
 	case mapdata.CompetitiveRuleOrdinary:
+		return rules, nil, nil
+	case mapdata.CompetitiveRuleKickBomb:
+		// Rule 2 (kickbomb.go): no own bubbles or pushing, everyone kicks
+		// with the wrapping kick, 2-pixel corner slides; elimination as in
+		// rule 1.
+		rules.DisableBombPlacement = true
+		rules.DisableMapElementPush = true
+		rules.UniversalKick = true
+		rules.WrappingKick = true
+		rules.CornerSlideTolerancePixels = 2
 		return rules, nil, nil
 	case mapdata.CompetitiveRuleBun:
 		// Rule 3's slots 4 and 5: relive after 10 s (Tutorial2.qbv agrees),
@@ -525,6 +540,7 @@ func (match *onlineMatch) step(step command) ([]battleengine.Event, error) {
 		match.noteEliminations(tickEvents)
 		tickEvents = append(tickEvents, match.respawnDue()...)
 		match.carryTick()
+		tickEvents = append(tickEvents, match.kickTick()...)
 		events = append(events, tickEvents...)
 	}
 	match.retryPickupRequests()
@@ -897,7 +913,19 @@ func (match *onlineMatch) applyRemote(sender uint16, message game.BattleMessageD
 		}
 		match.moveWireBomb(bombID, target)
 		delete(match.sceneRequests, sceneRequestKey{schema: game.RequestMoveBomb, object: bombID, from: source, to: target})
+		if match.kick != nil {
+			match.kick.kicked(match.engine, accepted, moved.Direction)
+		}
 		return []battleengine.Event{accepted}
+	case game.NotifyDispatchBomb:
+		if match.kick == nil || sender != match.arbitrator || match.isArbitrator() {
+			return nil
+		}
+		batch, err := game.ParseDispatchBombEvent(event)
+		if err != nil {
+			return nil
+		}
+		return match.dropBatch(batch)
 	case game.NotifyPlayerUseItem:
 		// The server publishes its AIs' item uses on the scene channel; human
 		// uses arrive as TCP notifications (handleTCP).
@@ -1175,6 +1203,9 @@ func (match *onlineMatch) arbitrateBombMove(sender uint16, event game.GameEvent)
 		now := match.engine.ElapsedMS()
 		match.queue(game.NotifyPlayerMoveBomb, now, now, body)
 		match.mirror(game.NotifyPlayerMoveBomb, body)
+	}
+	if match.kick != nil {
+		match.kick.kicked(match.engine, accepted, request.Direction)
 	}
 	return []battleengine.Event{accepted}
 }
@@ -1518,12 +1549,28 @@ func (match *onlineMatch) publishBombKicked(after *battleengine.Engine, event ba
 	now := after.ElapsedMS()
 	match.queue(game.NotifyPlayerMoveBomb, now, now, body)
 	match.mirror(game.NotifyPlayerMoveBomb, body)
+	if match.kick != nil {
+		direction, _ := match.kickDirection(after, event)
+		match.kick.kicked(after, event, direction)
+	}
+}
+
+// kickDirection is the wire direction of a kick. Rule 2's kick can wrap
+// around the field, so it is the kicker's facing rather than the way from
+// source to target.
+func (match *onlineMatch) kickDirection(snapshot *battleengine.Engine, event battleengine.Event) (byte, bool) {
+	if match.kick != nil {
+		if actor, ok := actorByID(snapshot.Actors(), event.PlayerID); ok {
+			return nativeWalkDirection(actor.Facing), true
+		}
+	}
+	return nativeMoveDirection(event.FromCell, event.Cell)
 }
 
 // bombMoveBody is the 0x0FB4/0x139C body of a kick event. Its bubble is
 // named the way peers know it.
 func (match *onlineMatch) bombMoveBody(snapshot *battleengine.Engine, event battleengine.Event) ([]byte, bool) {
-	direction, ok := nativeMoveDirection(event.FromCell, event.Cell)
+	direction, ok := match.kickDirection(snapshot, event)
 	known, placed := match.bombs[event.BombID]
 	bomb, found := bombByID(snapshot.Bombs(), event.BombID)
 	if !ok || !placed || !found {
@@ -2058,6 +2105,50 @@ func pickupsFromItems(items []game.GameItem) []battleengine.Pickup {
 		pickups = append(pickups, battleengine.Pickup{SceneID: item.ItemID, Cell: battleengine.Cell{Row: int16(item.Row), Col: int16(item.Col)}, State: battleengine.PickupAvailable})
 	}
 	return pickups
+}
+
+// Kick bomb (rule 2) -------------------------------------------------------------
+
+// kickTick is the arbitrator's airdrop component (0x0061988B): a due batch
+// is applied here at once and announced to every peer and the server.
+func (match *onlineMatch) kickTick() []battleengine.Event {
+	if match.kick == nil {
+		return nil
+	}
+	defer match.kick.forget(match.engine)
+	now := match.engine.ElapsedMS()
+	if !match.isArbitrator() || match.engine.Terminal().Ended || !match.kick.due(now) {
+		return nil
+	}
+	batch := match.kick.batch(match.engine, now)
+	batch.PlayerID, batch.Time = match.local, now
+	body, err := batch.MarshalNetworkBinary()
+	if err != nil {
+		match.logf("airdrop: %v", err)
+		return nil
+	}
+	events := match.dropBatch(batch)
+	match.kick.applied(now)
+	match.queue(game.NotifyDispatchBomb, now, now, body)
+	match.mirror(game.NotifyDispatchBomb, body)
+	return events
+}
+
+// dropBatch applies a 0x10E1 and names its bubbles the way peers do: by the
+// arbitrator, the batch time and the cell.
+func (match *onlineMatch) dropBatch(batch game.DispatchBombData) []battleengine.Event {
+	events, err := match.kick.apply(match.engine, batch)
+	if err != nil {
+		match.logf("airdrop from %d rejected: %v", batch.PlayerID, err)
+		return nil
+	}
+	for _, event := range events {
+		if event.Kind == battleengine.EventBombPlaced {
+			match.bombs[event.BombID] = wireBomb{owner: batch.PlayerID, placedAt: batch.Time, cell: event.Cell}
+		}
+	}
+	match.forgetPickups(events)
+	return events
 }
 
 // Carry rules (3 and 6) ------------------------------------------------------

@@ -13,7 +13,8 @@
 // step also exchanges the match's UDP traffic.
 //
 // Offline practice supports native rule 1 (ordinary bubble battle) maps;
-// online matches also play rule 5 (treasure, see ruleOptions).
+// online matches also play rules 2, 3 and 5 (kick bomb, bun and treasure,
+// see ruleOptions).
 package main
 
 import (
@@ -167,6 +168,7 @@ type stateView struct {
 	Prepared  []preparedView `json:"prepared,omitempty"`
 	Bun       *bunView       `json:"bun,omitempty"`       // rule 3
 	Sculpture *sculptureView `json:"sculpture,omitempty"` // rule 6
+	Kick      *kickView      `json:"kick,omitempty"`      // rule 2
 	TCPOut    []tcpPacket    `json:"tcp_out,omitempty"`
 }
 
@@ -235,6 +237,9 @@ func runOnline(init command, lines *bufio.Scanner, out *json.Encoder) error {
 		state.Sculpture = match.sculpture.view()
 		match.markStyleNine(state.Bombs)
 	}
+	if match.kick != nil {
+		state.Kick = match.kick.view()
+	}
 	if err := out.Encode(state); err != nil {
 		return err
 	}
@@ -258,6 +263,9 @@ func runOnline(init command, lines *bufio.Scanner, out *json.Encoder) error {
 		if match.sculpture != nil {
 			state.Sculpture = match.sculpture.view()
 			match.markStyleNine(state.Bombs)
+		}
+		if match.kick != nil {
+			state.Kick = match.kick.view()
 		}
 		if err := out.Encode(state); err != nil {
 			return err

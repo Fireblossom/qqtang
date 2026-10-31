@@ -29,6 +29,8 @@ type autoplayBot struct {
 	// The rule's objectives, when the map has them (rules 3 and 6).
 	bun       *bunRule
 	sculpture *sculptureRule
+	// Rule 2: no own bubbles; kick the dropped ones instead.
+	kick bool
 }
 
 func newAutoplayBot(player uint16) *autoplayBot {
@@ -71,6 +73,9 @@ func (bot *autoplayBot) act(engine *battleengine.Engine) battleengine.Action {
 	msPerCell := uint32(1000 * battleengine.CellSizePixels / max(1, int(actor.SpeedPixelsPerSecond)))
 	here := actor.Position.Cell()
 	world := newAutoplayWorld(engine)
+	if bot.kick {
+		return bot.actKick(engine, world, actor, action, msPerCell)
+	}
 
 	// 1. Leave a cell a known blast will reach.
 	if _, threatened := bot.timeline.ImpactAt(here); threatened {
