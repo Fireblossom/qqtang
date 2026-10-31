@@ -309,6 +309,10 @@ class BattleScene:
                text: Callable[[str, int, tuple[int, int, int]], pygame.Surface] | None = None) -> None:
         """Prepare UI.game the way the native host does when a match starts."""
         self.runtime, self.font, self.text = runtime, font, text
+        # Client.exe (0x005A3C7F) hides the replay recorder and player; it
+        # shows the player again only when playing a replay back.
+        self._script("showRecordRecorder", 0)
+        self._script("showRecordPlayer", 0)
         self._script("ui_SetGameMode", GAME_MODE_NORMAL)
         self._script("ui_InitPVEBoss")  # hides the boss bars when there are none
         self._script("game_setMapID", map_id)

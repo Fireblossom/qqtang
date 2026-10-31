@@ -78,6 +78,11 @@ class Widget:
         self.editable = bool(attr("editable", 1))
         self.group_id = int(attr("groupid", 0) or 0)
         self.dark_background = bool(attr("darkBG", 0))
+        # DYMASK angles (gameUI.dll 0x10011E82 reads curangle, stepangle and
+        # destangle; the constructor 0x10011E2A starts them at 0).
+        self.angle_cur = float(attr("curangle", 0) or 0)
+        self.angle_step = float(attr("stepangle", 0) or 0)
+        self.angle_dest = float(attr("destangle", 0) or 0)
         self.checked = 0
         self.values: dict[int, Any] = {}
         # List lines (value_channel_itemtext) with their colours.

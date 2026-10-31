@@ -102,6 +102,18 @@ def build_natives(runtime: UIRuntime, resources: Resources, audio: Audio) -> dic
     def Win_ShowWidget(widget, show=1):
         runtime.show(widget, bool(show))
 
+    @with_widget()
+    def Win_SetAngleCur(widget, angle):
+        widget.angle_cur = float(angle)
+
+    @with_widget()
+    def Win_SetAngleDest(widget, angle):
+        widget.angle_dest = float(angle)
+
+    @with_widget()
+    def Win_SetAngleStep(widget, step):
+        widget.angle_step = float(step)
+
     @with_widget(0)
     def Win_IsVisible(widget):
         return int(widget.visible)

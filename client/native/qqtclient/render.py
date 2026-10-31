@@ -146,6 +146,12 @@ class Renderer:
             if widget.text.strip("\n"):
                 self._draw_tip_box(widget, x, y, alpha)
                 self._draw_text(widget, x, y, alpha, False)
+        elif widget.type == "DYMASK":
+            # A cooldown mask draws nothing outside 0 <= angle < 360
+            # (0x100120E7). Within it the original draws only a sector of the
+            # image; the whole image stands in for it here.
+            if 0 <= widget.angle_cur < 360 and widget.image:
+                self._draw_image(widget, x, y, alpha)
         else:
             if widget.image:
                 self._draw_image(widget, x, y, alpha)
