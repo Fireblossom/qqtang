@@ -10,7 +10,7 @@ import (
 )
 
 const (
-	kickUrgentMS = 1200 // a blast this close sends the bot away before anything else
+	kickUrgentMS = 1500 // a blast this close sends the bot away before anything else
 	kickSlackMS  = 300
 )
 
@@ -29,11 +29,17 @@ func (bot *autoplayBot) actKick(engine *battleengine.Engine, world autoplayWorld
 		clear, _ := bot.timeline.ClearAt(cell)
 		return impact > arrive+msPerCell+kickSlackMS || clear < arrive
 	}
-	if impact, threatened := bot.timeline.ImpactAt(here); threatened && impact < now+kickUrgentMS {
-		if path := world.escape(here, bot.timeline, now, msPerCell); len(path) > 1 {
+	hide := func() battleengine.Action {
+		if path := bot.shelter(world, here, timely); len(path) > 1 {
 			action.Move = steer(actor.Position, path[1])
+		} else if !onCentre(actor.Position) {
+			action.Move = steer(actor.Position, here)
 		}
 		return action
+	}
+	impact, threatened := bot.timeline.ImpactAt(here)
+	if threatened && impact < now+kickUrgentMS {
+		return hide()
 	}
 	var kickDirection battleengine.Direction
 	kickFrom := func(cell battleengine.Cell, _ int) bool {
@@ -54,12 +60,29 @@ func (bot *autoplayBot) actKick(engine *battleengine.Engine, world autoplayWorld
 	if path := world.search(here, timely, func(cell battleengine.Cell, _ int) bool { return world.pickupAt(cell) }, -1); len(path) > 0 {
 		return bot.follow(action, actor, path)
 	}
-	if _, threatened := bot.timeline.ImpactAt(here); threatened {
-		if path := world.escape(here, bot.timeline, now, msPerCell); len(path) > 1 {
-			action.Move = steer(actor.Position, path[1])
-		}
+	if threatened {
+		return hide()
 	}
 	return action
+}
+
+// shelter is the way to the reachable cell no known blast reaches, or
+// failing that the one whose first blast comes last.
+func (bot *autoplayBot) shelter(world autoplayWorld, here battleengine.Cell, timely func(battleengine.Cell, int) bool) []battleengine.Cell {
+	if path := world.search(here, timely, func(cell battleengine.Cell, _ int) bool {
+		_, threatened := bot.timeline.ImpactAt(cell)
+		return !threatened
+	}, -1); len(path) > 0 {
+		return path
+	}
+	best, latest := here, uint32(0)
+	world.search(here, timely, func(cell battleengine.Cell, _ int) bool {
+		if impact, _ := bot.timeline.ImpactAt(cell); impact > latest {
+			best, latest = cell, impact
+		}
+		return false
+	}, -1)
+	return world.search(here, timely, func(cell battleengine.Cell, _ int) bool { return cell == best }, -1)
 }
 
 // kickToward is the direction from cell into a landed bubble next to it

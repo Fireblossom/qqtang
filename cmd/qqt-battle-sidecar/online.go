@@ -913,9 +913,7 @@ func (match *onlineMatch) applyRemote(sender uint16, message game.BattleMessageD
 		}
 		match.moveWireBomb(bombID, target)
 		delete(match.sceneRequests, sceneRequestKey{schema: game.RequestMoveBomb, object: bombID, from: source, to: target})
-		if match.kick != nil {
-			match.kick.kicked(match.engine, accepted, moved.Direction)
-		}
+		match.noteKick(match.engine, accepted, moved.Direction)
 		return []battleengine.Event{accepted}
 	case game.NotifyDispatchBomb:
 		if match.kick == nil || sender != match.arbitrator || match.isArbitrator() {
@@ -1204,9 +1202,7 @@ func (match *onlineMatch) arbitrateBombMove(sender uint16, event game.GameEvent)
 		match.queue(game.NotifyPlayerMoveBomb, now, now, body)
 		match.mirror(game.NotifyPlayerMoveBomb, body)
 	}
-	if match.kick != nil {
-		match.kick.kicked(match.engine, accepted, request.Direction)
-	}
+	match.noteKick(match.engine, accepted, request.Direction)
 	return []battleengine.Event{accepted}
 }
 
@@ -1549,10 +1545,17 @@ func (match *onlineMatch) publishBombKicked(after *battleengine.Engine, event ba
 	now := after.ElapsedMS()
 	match.queue(game.NotifyPlayerMoveBomb, now, now, body)
 	match.mirror(game.NotifyPlayerMoveBomb, body)
-	if match.kick != nil {
-		direction, _ := match.kickDirection(after, event)
-		match.kick.kicked(after, event, direction)
+	direction, _ := match.kickDirection(after, event)
+	match.noteKick(after, event, direction)
+}
+
+// noteKick records a rule-2 kick for drawing.
+func (match *onlineMatch) noteKick(snapshot *battleengine.Engine, event battleengine.Event, direction byte) {
+	if match.kick == nil {
+		return
 	}
+	match.kick.kicked(snapshot, event, direction)
+	match.logf("player %d kicks a bubble from %d,%d to %d,%d at %d", event.PlayerID, event.FromCell.Row, event.FromCell.Col, event.Cell.Row, event.Cell.Col, event.TimeMS)
 }
 
 // kickDirection is the wire direction of a kick. Rule 2's kick can wrap
