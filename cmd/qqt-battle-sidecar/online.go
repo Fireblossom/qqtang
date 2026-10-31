@@ -377,6 +377,9 @@ func newOnlineMatch(init command) (*onlineMatch, beginView, error) {
 		}
 	}
 	go match.receive()
+	// Register before returning init: the Python host loads the scene before
+	// its first step, which can otherwise postpone presence past Ready/Go.
+	match.negotiate()
 	match.logf("game %d map %d: local %d, arbitrator %d, %d players", begin.GameID, begin.MapID, match.local, match.arbitrator, len(begin.Players))
 	return match, view, nil
 }
@@ -1491,14 +1494,11 @@ func (match *onlineMatch) mirror(schema uint16, body []byte) {
 // per message: requests to the arbitrator, everything else to every other
 // participant.
 func (match *onlineMatch) flush() {
-	if len(match.outbound) == 0 {
+	if len(match.outbound) == 0 || !match.presence {
 		return
 	}
 	outbound := match.outbound
 	match.outbound = nil
-	if !match.presence {
-		return
-	}
 	var everyone, arbitratorOnly []game.BattleMessageData
 	for _, message := range outbound {
 		if message.arbitratorOnly {
