@@ -145,7 +145,7 @@ func ConfigFromCompetitiveMap(entry mapdata.CompetitiveMap, options CompetitiveM
 	rules.FlameDurationMS = NativeFlameDurationMS
 	rules.ActorHalfSizePixels = NativeActorHalfSizePixels
 	rules.SpeedPixelsPerSecondByRate = nativeSpeedPixelsPerSecondByRate
-	participants, err := PlaceNativeSpawns(options.SpawnSeed, options.SpawnMode, competitiveCells(entry.SpawnGroupA), competitiveCells(entry.SpawnGroupB), options.Participants)
+	participants, err := placeNativeSpawns(options.SpawnSeed, options.SpawnMode, competitiveCells(entry.SpawnGroupA), competitiveCells(entry.SpawnGroupB), options.Participants, entry.Rule == mapdata.CompetitiveRuleBox)
 	if err != nil {
 		return Config{}, fmt.Errorf("competitive map %d: %w", entry.ID, err)
 	}

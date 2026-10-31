@@ -327,6 +327,8 @@ type Rules struct {
 	// NativeDurabilityLayers replaces the ordinary trap with native rule-7
 	// durability hits. Zero preserves ordinary combat.
 	NativeDurabilityLayers byte
+	// NativeBoxPhysics permits explicit rule-8 dynamic element registration.
+	NativeBoxPhysics bool
 	// StartClockMS is the native game clock at the first controllable frame.
 	// It is part of (and therefore consumes) the absolute RoundDurationMS scene
 	// deadline, while still letting offline/RL callers skip empty Ready/Go steps.
@@ -711,6 +713,9 @@ type Actor struct {
 	// +0x124/+0x138/+0x14c. Rule 1 uses their positive, capped values to build
 	// SceneID 1/2/3 death drops; they are not the actor's initial attributes.
 	nativeBasicPickupDelta [3]int16
+	// Rule8 needs its separate upper-power counter when item49 consumes a
+	// basic power pickup without reducing an already upper-powered blast.
+	boxUpperPower int16
 	// NativePass* mirrors the actor +0x350 state initialized by FUN_005cc7e4.
 	// Continuous, aligned collision with one type-1 cell is charged by
 	// FUN_005d335c. A successful local bubble placement then reaches
@@ -735,6 +740,7 @@ type Actor struct {
 }
 
 type Bomb struct {
+	Invisible     bool // native rule-8 corner launchers hide their short-fuse bubble
 	RuleOwned     bool // rule-generated batches do not consume a player's placement capacity
 	NativeStyle   byte // rule-7 types 13/14 have area fire; zero is an ordinary bubble
 	ID            uint32

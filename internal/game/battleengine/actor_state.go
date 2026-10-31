@@ -92,7 +92,7 @@ func (engine *Engine) applyFlameHazardsMatching(accept func(*Actor) bool) []Even
 			// is not the explosion hurt box; an actor whose visual body overlaps
 			// the flame but whose centre remains in the adjacent cell is the
 			// original game's 半身 safe position.
-			if (flame.ImpactAtMS != engine.elapsedMS && flame.NativeStyle != 13 && flame.NativeStyle != 14) || actor.Position.Cell() != flame.Cell {
+			if (flame.ImpactAtMS != engine.elapsedMS && flame.NativeStyle != 13 && flame.NativeStyle != 14 && !engine.rules.NativeBoxPhysics) || actor.Position.Cell() != flame.Cell {
 				continue
 			}
 			engine.resetActorOnHit(actor)

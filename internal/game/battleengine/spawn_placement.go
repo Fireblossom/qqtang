@@ -37,7 +37,7 @@ func ValidateNativeSpawnTopology(entry mapdata.CompetitiveMap, mode NativeSpawnM
 	for index, teamID := range teamIDs {
 		participants[index] = Participant{PlayerID: uint16(index + 1), TeamID: teamID}
 	}
-	_, err := PlaceNativeSpawns(0, mode, competitiveCells(entry.SpawnGroupA), competitiveCells(entry.SpawnGroupB), participants)
+	_, err := placeNativeSpawns(0, mode, competitiveCells(entry.SpawnGroupA), competitiveCells(entry.SpawnGroupB), participants, entry.Rule == mapdata.CompetitiveRuleBox)
 	if err != nil {
 		return fmt.Errorf("competitive map %d: %w", entry.ID, err)
 	}
@@ -49,10 +49,16 @@ func ValidateNativeSpawnTopology(entry mapdata.CompetitiveMap, mode NativeSpawnM
 // Participant order is GAME_BEGIN order. The engine later canonicalizes actors
 // by PlayerID without changing the spawn assigned here.
 func PlaceNativeSpawns(spawnSeed uint32, mode NativeSpawnMode, groupA, groupB []Cell, participants []Participant) ([]Participant, error) {
+	return placeNativeSpawns(spawnSeed, mode, groupA, groupB, participants, false)
+}
+
+// Rule8 map1404 contains repeated source slots. Preserve their original
+// order/weight; the native sampler consumes slots, not a deduplicated set.
+func placeNativeSpawns(spawnSeed uint32, mode NativeSpawnMode, groupA, groupB []Cell, participants []Participant, allowRepeated bool) ([]Participant, error) {
 	if len(participants) == 0 || len(participants) > MaxParticipants {
 		return nil, fmt.Errorf("spawn participant count %d is outside 1..%d", len(participants), MaxParticipants)
 	}
-	if err := validateSpawnPools(groupA, groupB); err != nil {
+	if err := validateSpawnPoolsAllowRepeated(allowRepeated, groupA, groupB); err != nil {
 		return nil, err
 	}
 	result := append([]Participant(nil), participants...)
@@ -152,13 +158,17 @@ func selectNativeSpawnCells(seed uint32, source []Cell, count int) ([]Cell, erro
 }
 
 func validateSpawnPools(groups ...[]Cell) error {
+	return validateSpawnPoolsAllowRepeated(false, groups...)
+}
+
+func validateSpawnPoolsAllowRepeated(allowRepeated bool, groups ...[]Cell) error {
 	seen := make(map[Cell]struct{})
 	for groupIndex, group := range groups {
 		for cellIndex, cell := range group {
 			if cell.Row < 0 || cell.Col < 0 {
 				return fmt.Errorf("spawn group %d cell %d has negative coordinate %d,%d", groupIndex, cellIndex, cell.Row, cell.Col)
 			}
-			if _, duplicate := seen[cell]; duplicate {
+			if _, duplicate := seen[cell]; duplicate && !allowRepeated {
 				return fmt.Errorf("spawn coordinate %d,%d is repeated", cell.Row, cell.Col)
 			}
 			seen[cell] = struct{}{}

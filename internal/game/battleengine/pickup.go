@@ -188,6 +188,25 @@ func (engine *Engine) collectPickup(actor *Actor, pickup *Pickup) Event {
 	reward, isReward := sceneelement.NativeReward(sceneelement.ID(pickup.SceneID))
 	objective := engine.rules.objectiveIndex(pickup.SceneID)
 	switch {
+	case engine.rules.NativeBoxPhysics && pickup.SceneID == SceneBombCapacitySmall:
+		// 005CD196: rule 8 grants held item49 to humans; NPCs only consume
+		// the scene object. It never increments the basic capacity counter.
+		if actor.Source == ParticipantHuman {
+			event.ValueBefore = actorHeldActionCount(actor, 49)
+			grantHeldAction(actor, 49, 1)
+			event.ValueAfter = actorHeldActionCount(actor, 49)
+			event.Effect, event.ActionID, event.ActionCount = PickupEffectBattleAction, 49, 1
+		}
+	case engine.rules.NativeBoxPhysics && (pickup.SceneID == SceneBombPowerSmall || pickup.SceneID == SceneBombPowerLarge):
+		event.Attribute = AttributeBombPower
+		event.ValueBefore = actor.BombPower
+		if pickup.SceneID == SceneBombPowerSmall {
+			actor.nativeBasicPickupDelta[1]++
+		} else {
+			actor.boxUpperPower++
+		}
+		engine.updateBoxPower(actor)
+		event.ValueAfter = actor.BombPower
 	case engine.rules.rulePickup(pickup.SceneID):
 		// The authenticated pickup event is the rule layer's input.
 	case objective >= 0:
@@ -249,8 +268,17 @@ func (engine *Engine) collectPickup(actor *Actor, pickup *Pickup) Event {
 	case pickup.SceneID == SceneRandomAttribute:
 		attribute, delta := nativeRandomAttributeEffect(pickup.Cell)
 		event.Attribute = attribute
-		recordNativeBasicPickupDelta(actor, attribute, delta)
-		event.ValueBefore, event.ValueAfter = engine.applyPickupAttributeDelta(actor, attribute, delta)
+		if engine.rules.NativeBoxPhysics && attribute == AttributeBombPower {
+			event.ValueBefore = actor.BombPower
+			if delta >= 0 || actor.nativeBasicPickupDelta[1] >= int16(-delta) {
+				actor.nativeBasicPickupDelta[1] += int16(delta)
+			}
+			engine.updateBoxPower(actor)
+			event.ValueAfter = actor.BombPower
+		} else {
+			recordNativeBasicPickupDelta(actor, attribute, delta)
+			event.ValueBefore, event.ValueAfter = engine.applyPickupAttributeDelta(actor, attribute, delta)
+		}
 	default:
 		attribute, amount, _ := supportedPickupEffect(pickup.SceneID)
 		event.Attribute = attribute
