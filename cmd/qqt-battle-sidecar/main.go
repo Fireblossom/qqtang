@@ -101,6 +101,7 @@ type actorView struct {
 }
 
 type bombView struct {
+	Hidden    bool   `json:"hidden,omitempty"`
 	ID        uint32 `json:"id"`
 	Owner     uint16 `json:"owner"`
 	Row       int16  `json:"row"`
@@ -176,6 +177,7 @@ type stateView struct {
 	Streaks map[string]int `json:"streaks,omitempty"`
 	TCPOut  []tcpPacket    `json:"tcp_out,omitempty"`
 	Kick    *kickView      `json:"kick,omitempty"` // rule 2
+	Box     *boxView       `json:"box,omitempty"`
 	Machine *machineView   `json:"machine,omitempty"`
 }
 
@@ -248,6 +250,9 @@ func runOnline(init command, lines *bufio.Scanner, out *json.Encoder) error {
 		state.Sculpture = match.sculpture.view()
 		match.markStyleNine(state.Bombs)
 	}
+	if match.box != nil {
+		state.Box = match.boxView()
+	}
 	if match.machine != nil {
 		state.Machine = match.machineView()
 	}
@@ -282,6 +287,9 @@ func runOnline(init command, lines *bufio.Scanner, out *json.Encoder) error {
 		if match.sculpture != nil {
 			state.Sculpture = match.sculpture.view()
 			match.markStyleNine(state.Bombs)
+		}
+		if match.box != nil {
+			state.Box = match.boxView()
 		}
 		if match.machine != nil {
 			state.Machine = match.machineView()
@@ -424,7 +432,7 @@ func view(runtime *battleengine.Runtime, events []battleengine.Event) stateView 
 	}
 	for _, bomb := range engine.Bombs() {
 		state.Bombs = append(state.Bombs, bombView{
-			ID: bomb.ID, Owner: bomb.OwnerID, Row: bomb.Cell.Row, Col: bomb.Cell.Col, Power: bomb.Power, ExplodeAt: bomb.ExplodeAtMS, Style: bomb.NativeStyle,
+			ID: bomb.ID, Owner: bomb.OwnerID, Row: bomb.Cell.Row, Col: bomb.Cell.Col, Power: bomb.Power, ExplodeAt: bomb.ExplodeAtMS, Style: bomb.NativeStyle, Hidden: bomb.Invisible,
 		})
 	}
 	for _, flame := range engine.Flames() {

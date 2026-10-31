@@ -201,6 +201,7 @@ type onlineMatch struct {
 	carryRequestSent uint32
 	// Rule 6's style-9 bubbles (held item 48) by engine bomb ID.
 	styleNine map[uint32]bool
+	box       *boxRule
 	machine   *machineRule
 	tank      *tankRule
 	kick      *kickRule // rule 2; nil otherwise
@@ -311,6 +312,14 @@ func newOnlineMatch(init command) (*onlineMatch, beginView, error) {
 	if err != nil {
 		return nil, beginView{}, err
 	}
+	var box *boxRule
+	if entry.Rule == mapdata.CompetitiveRuleBox {
+		elements, loadErr := mapdata.LoadNativeBoxElements(init.ClientRoot)
+		if loadErr != nil {
+			return nil, beginView{}, loadErr
+		}
+		box = newBoxRule(entry, begin, &config, elements)
+	}
 	var machine *machineRule
 	if entry.Rule == mapdata.CompetitiveRuleMachine {
 		machine = newMachineRule(entry, begin)
@@ -355,8 +364,14 @@ func newOnlineMatch(init command) (*onlineMatch, beginView, error) {
 		fieldContacts: map[fieldContactKey]bool{}, itemUses: map[[3]uint32]bool{}, useRequested: map[uint8]uint32{},
 		preparedRequested: map[uint32]uint32{},
 		pickupRequests:    map[pickupKey]pickupRequest{}, sceneRequests: map[sceneRequestKey]uint32{},
-		machine: machine, tank: tank, respawn: respawn, eliminatedAt: map[uint16]uint32{}, departed: map[uint16]bool{},
+		box: box, machine: machine, tank: tank, respawn: respawn, eliminatedAt: map[uint16]uint32{}, departed: map[uint16]bool{},
 		kills: map[uint16]int{}, streaks: map[uint16]int{},
+	}
+	if box != nil {
+		match.installBoxLaunchers()
+		for _, player := range begin.Players {
+			engine.GrantHeldAction(player.PlayerID, boxBombItem, 2)
+		}
 	}
 	switch entry.Rule {
 	case mapdata.CompetitiveRuleBun:
@@ -379,6 +394,7 @@ func newOnlineMatch(init command) (*onlineMatch, beginView, error) {
 		match.bot.bun, match.bot.sculpture = match.bun, match.sculpture
 		match.bot.tank = match.tank
 		match.bot.machine = match.machine
+		match.bot.box = match.box
 		match.bot.kick = match.kick != nil
 		match.logf("autoplay: the test bot plays player %d", match.local)
 	}
@@ -412,6 +428,13 @@ func ruleOptions(entry mapdata.CompetitiveMap, local, arbitrator uint16) (battle
 	rules := onlineRules(local, arbitrator)
 	switch entry.Rule {
 	case mapdata.CompetitiveRuleOrdinary:
+		return rules, nil, nil
+	case mapdata.CompetitiveRuleBox:
+		rules.NativeDurabilityLayers = 4
+		rules.NativeBoxPhysics = true
+		rules.DisableBombPlacement = true
+		rules.DisableMapElementPush = true
+		rules.ExternalConclusion = true
 		return rules, nil, nil
 	case mapdata.CompetitiveRuleMachine:
 		rules.NativeDurabilityLayers = 4
@@ -527,7 +550,8 @@ func (match *onlineMatch) step(step command) ([]battleengine.Event, error) {
 	var events []battleengine.Event
 	events = append(events, match.drain()...)
 	match.noteEliminations(events)
-	if match.machineFinishing() {
+	events = append(events, match.takeBoxEvents()...)
+	if match.machineFinishing() || match.boxFinishing() {
 		match.flush()
 		return events, nil
 	}
@@ -550,7 +574,7 @@ func (match *onlineMatch) step(step command) ([]battleengine.Event, error) {
 	if target <= battleengine.NativeRoundStartClockMS {
 		match.bombPressed = false // Ready/Go: no control yet
 	}
-	for ticks := 0; ticks < maxCatchUpTicks && match.engine.ElapsedMS() < target && !match.engine.Terminal().Ended && !match.machineFinishing(); ticks++ {
+	for ticks := 0; ticks < maxCatchUpTicks && match.engine.ElapsedMS() < target && !match.engine.Terminal().Ended && !match.machineFinishing() && !match.boxFinishing(); ticks++ {
 		before := match.runtime.EngineSnapshot()
 		action := local
 		action.PlaceBomb, match.bombPressed = match.bombPressed, false
@@ -561,6 +585,7 @@ func (match *onlineMatch) step(step command) ([]battleengine.Event, error) {
 				match.requestItemUse(chosen.UseActionID)
 			}
 		}
+		match.boxInput(&action)
 		match.launchMachine(&action)
 		events = append(events, match.throwMachine(&action)...)
 		var actions []battleengine.Action
@@ -580,10 +605,11 @@ func (match *onlineMatch) step(step command) ([]battleengine.Event, error) {
 		match.carryTick()
 		tickEvents = append(tickEvents, match.kickTick()...)
 		tickEvents = append(tickEvents, match.machineTick()...)
+		tickEvents = append(tickEvents, match.boxTick()...)
 		events = append(events, tickEvents...)
 	}
 	match.collectLooseDispatches()
-	if !match.machineFinishing() {
+	if !match.machineFinishing() && !match.boxFinishing() {
 		match.retryPickupRequests()
 	}
 	match.flush()
@@ -732,12 +758,13 @@ func (match *onlineMatch) handleDatagram(data []byte) []battleengine.Event {
 		}
 		var events []battleengine.Event
 		for _, entry := range batch.Entries {
-			if entry.Package.PlayerID != sender {
+			author := entry.Package.PlayerID
+			if author != sender && !match.boxNPCProxy(sender, author) {
 				continue
 			}
 			for _, message := range entry.Package.Messages {
 				match.received++
-				applied := match.applyRemote(sender, message)
+				applied := match.applyRemote(author, message)
 				match.forgetPickups(applied)
 				events = append(events, applied...)
 			}
@@ -755,6 +782,9 @@ func (match *onlineMatch) applyRemote(sender uint16, message game.BattleMessageD
 	}
 	schema := uint16(message.DataID)
 	event := game.GameEvent{Schema: schema, Body: message.Data}
+	if events, handled := match.boxRemote(sender, event); handled {
+		return events
+	}
 	if events, handled := match.machineRemote(sender, event); handled {
 		return events
 	}
@@ -820,6 +850,9 @@ func (match *onlineMatch) applyRemote(sender uint16, message game.BattleMessageD
 		}
 		if match.machine != nil && err == nil {
 			match.machineFinalDeath(death)
+		}
+		if match.box != nil && err == nil {
+			match.boxFinalDeath(death)
 		}
 		if match.carry != nil {
 			match.carry.onDeath(death.PlayerID, 0, false, battleengine.Position{X: int32(death.PosX), Y: int32(death.PosY)})
@@ -1154,6 +1187,7 @@ func (match *onlineMatch) applyExplosion(event game.GameEvent) []battleengine.Ev
 	} else {
 		match.tankExplosion(&explosion, false)
 		match.machineExplosion(explosion)
+		match.boxObserve(events)
 	}
 	return events
 }
@@ -1309,6 +1343,12 @@ func (match *onlineMatch) handleTCP(packet tcpPacket) {
 		return
 	}
 	switch packet.Command {
+	case requestPlayCommand:
+		// A native scene entity must be registered by the server before
+		// its arbitrator sends UDP packages using that entity identity.
+		if event, err := game.ParseGameEventPayload(payload); err == nil && match.box != nil {
+			match.boxNPCAcknowledged(event)
+		}
 	case leaveRoomNotifyCommand:
 		if len(payload) >= 2 {
 			match.depart(uint16(payload[0])<<8 | uint16(payload[1]))
@@ -1316,6 +1356,9 @@ func (match *onlineMatch) handleTCP(packet tcpPacket) {
 	case gameEventNotifyCommand:
 		notify, err := game.ParseNotifyGameEventPayload(payload)
 		if err != nil {
+			return
+		}
+		if _, handled := match.boxNPCRemote(match.arbitrator, game.GameEvent{Schema: notify.Schema, Body: notify.Body}); handled {
 			return
 		}
 		switch notify.Schema {
@@ -1395,6 +1438,10 @@ func (match *onlineMatch) applyItemUse(body []byte) {
 		return
 	}
 	match.itemUses[key] = true
+	if match.box != nil && use.ItemID == uint32(boxBombItem) {
+		match.applyBoxItem(use)
+		return
+	}
 	if match.sculpture != nil && (use.ItemID == sculptureBombItem || use.ItemID == sculpturePutDownItem) {
 		match.applySculptureItem(use)
 		return
@@ -1808,6 +1855,7 @@ func (match *onlineMatch) expireLocalTrap() []battleengine.Event {
 // The local player's own facts are always published; shared outcomes only
 // by the arbitrator.
 func (match *onlineMatch) publishEvents(after *battleengine.Engine, events []battleengine.Event) {
+	match.boxObserve(events)
 	now := after.ElapsedMS()
 	arbitrator := match.isArbitrator()
 	var explosion game.BombExplodeEvent
@@ -1890,6 +1938,8 @@ func (match *onlineMatch) publishEvents(after *battleengine.Engine, events []bat
 		case battleengine.EventActorHarmed:
 			if match.machine != nil {
 				match.machineHarm(event, false)
+			} else if match.box != nil {
+				match.boxHarm(event, false)
 			}
 		case battleengine.EventActorTrapped:
 			if event.TargetID == match.local {
@@ -1899,6 +1949,8 @@ func (match *onlineMatch) publishEvents(after *battleengine.Engine, events []bat
 			if event.PlayerID == match.local && event.TransformationEnd == battleengine.TransformationEndHit {
 				if match.machine != nil {
 					match.machineHarm(event, true)
+				} else if match.box != nil {
+					match.boxHarm(event, true)
 				} else {
 					match.publishHit(event, true)
 				}
@@ -1986,7 +2038,7 @@ func (match *onlineMatch) publishEvents(after *battleengine.Engine, events []bat
 				}
 			}
 		case battleengine.EventActorEliminated:
-			if match.machine == nil {
+			if match.machine == nil && match.box == nil {
 				match.publishElimination(event, drops[event.TargetID], arbitrator)
 			}
 		}

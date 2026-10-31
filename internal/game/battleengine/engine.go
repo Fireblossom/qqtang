@@ -34,6 +34,7 @@ type Engine struct {
 	pendingMapRetirements   map[Cell]pendingMapRetirement
 	nativeBombRegistrations map[uint32]nativeBombRegistration
 	nativeBombLinks         map[uint32][]uint32
+	ruleNPCOwners           map[uint16]struct{}
 }
 
 type nativeContactRequestKey struct {
@@ -178,6 +179,7 @@ func (engine *Engine) Reset(config Config) error {
 	engine.pendingMapRetirements = nil
 	engine.nativeBombRegistrations = nil
 	engine.nativeBombLinks = nil
+	engine.ruleNPCOwners = nil
 	return nil
 }
 
@@ -186,6 +188,12 @@ func (engine *Engine) Clone() *Engine {
 		return nil
 	}
 	clone := *engine
+	if engine.ruleNPCOwners != nil {
+		clone.ruleNPCOwners = make(map[uint16]struct{}, len(engine.ruleNPCOwners))
+		for id := range engine.ruleNPCOwners {
+			clone.ruleNPCOwners[id] = struct{}{}
+		}
+	}
 	clone.grid = engine.grid.Clone()
 	clone.actors = append([]Actor(nil), engine.actors...)
 	for index := range clone.actors {

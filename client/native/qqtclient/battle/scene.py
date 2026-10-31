@@ -307,6 +307,7 @@ class BattleScene:
         self._place_bun_houses()
         self._place_statues()
         self._place_tank_bases()
+        self._place_boxes()
         self.statue_changed: dict[tuple[int, int], tuple[int, float]] = {}  # by cell: (progress, now_ms of the change)
         self.realtime = realtime
         begin = state.get("begin") or {}
@@ -545,7 +546,8 @@ class BattleScene:
             for col in range(self.map.width):
                 self._draw_element(field, self.map.element(mapfile.LAYER_FLOOR, row, col), row, col)
         for pickup in self.state["pickups"] or ():
-            self._draw_frames(field, f"object/item/item{pickup['scene']}_stand.img", self.clock // ITEM_FRAME_MS,
+            image_id = pickup["scene"] + 800 if self.map.rule == 8 and pickup["scene"] in (1, 2, 7) else pickup["scene"]
+            self._draw_frames(field, f"object/item/item{image_id}_stand.img", self.clock // ITEM_FRAME_MS,
                               *self._item_at(pickup["scene"], pickup["row"], pickup["col"]))
         for fragment in (self.state.get("sculpture") or {}).get("loose") or ():
             if not fragment["hidden"]:
@@ -571,6 +573,8 @@ class BattleScene:
         flights = dict(kick.get("flights") or {})
         flights.update((self.state.get("machine") or {}).get("flights") or {})
         for bomb in self.state["bombs"] or ():
+            if bomb.get("hidden"):
+                continue
             # Rule 6's style-9 bubble uses that bubble type's image, placed like
             # the others (its size was not checked against a recording).
             image = f"object/bomb/bomb{bomb['style']}_stand.img" if bomb.get("style") else BOMB_IMAGE
@@ -595,9 +599,13 @@ class BattleScene:
             self._draw_statues(field, row)
             self._draw_tank_bases(field, row)
             self._draw_machine_gates(field, row)
+            self._draw_boxes(field, row)
             for actor in sorted(actors_by_row.get(row, ()), key=lambda item: item["y"]):
                 self._draw_actor(field, actor)
+                if self.map.rule == 8:
+                    self._draw_box_health(field, actor)
         self._draw_streak(field)
+        self._draw_box_effects(field)
         charge = (self.state.get("machine") or {}).get("charge")
         actor = self._local_actor() if charge is not None else None
         if actor is not None and actor["state"] != ACTOR_ELIMINATED:
@@ -640,6 +648,65 @@ class BattleScene:
             if self.shown_tank_hp.get(base["team"]) != base["hp"]:
                 self._script("ui_UpdateTankBaseLife", base["team"], base["hp"])
                 self.shown_tank_hp[base["team"]] = base["hp"]
+
+    def _place_boxes(self) -> None:
+        state = self.state.get("box") or {}
+        for entry in list(state.get("objects") or ()) + list(state.get("launchers") or ()):
+            for layer in (mapfile.LAYER_WALL, mapfile.LAYER_TOP):
+                self._set(layer, entry["row"], entry["col"], 0)
+
+    def _draw_boxes(self, field: pygame.Surface, row: int) -> None:
+        state = self.state.get("box") or {}
+        for box in state.get("objects") or ():
+            if box.get("hidden") or box["y"] // CELL != row:
+                continue
+            action = "die" if box["destroy_at"] else "stand"
+            started = box["destroy_at"] - 500 if box["destroy_at"] else 0
+            path = mapfile.element_image(box["element"], action)
+            info = self.elements.get(box["element"], mapfile.ElementInfo())
+            if path:
+                self._draw_frames(field, path, max(0, self.clock - started) // 100,
+                                  FIELD_ORIGIN[0] + box["x"] - 20 - info.offset[0],
+                                  FIELD_ORIGIN[1] + box["y"] - 20 - info.offset[1])
+        for corner in state.get("launchers") or ():
+            if corner["row"] != row:
+                continue
+            elapsed = self.clock - corner["fired"]
+            if corner["fired"] and 0 <= elapsed < 1300:
+                self._draw_frames(field, "object/misc/misc480_stand.img", elapsed // 100,
+                                  FIELD_ORIGIN[0] + corner["col"] * CELL - 12,
+                                  FIELD_ORIGIN[1] + row * CELL - 12)
+            else:
+                self._draw_element(field, corner["element"], row, corner["col"])
+        for npc in (state.get("npc") or {}).get("actors") or ():
+            if npc.get("dead") or npc["y"] // CELL != row:
+                continue
+            record = {"id": npc["id"], "role": npc["role"], "avatar_role": 0, "team": npc["team"],
+                      "x": npc["x"], "y": npc["y"], "facing": npc["facing"],
+                      "state": ACTOR_TRAPPED if npc.get("trapped") else 0, "protected_until": 0}
+            if npc.get("moving"):
+                self.walk_started.setdefault(npc["id"], self.clock)
+            else:
+                self.walk_started.pop(npc["id"], None)
+            self._draw_actor(field, record)
+
+    def _draw_box_effects(self, field: pygame.Surface) -> None:
+        for effect in (self.state.get("box") or {}).get("effects") or ():
+            if not effect["start"] <= self.clock < effect["until"]:
+                continue
+            for row in range(max(0, effect["row"] - 1), min(self.map.height, effect["row"] + 2)):
+                for col in range(max(0, effect["col"] - 1), min(self.map.width, effect["col"] + 2)):
+                    self._draw_frames(field, f"object/flame/flame{effect['style']}_stand.img",
+                                      (self.clock - effect["start"]) // 50, FIELD_ORIGIN[0] + col * CELL, FIELD_ORIGIN[1] + row * CELL)
+
+    def _draw_box_health(self, field: pygame.Surface, actor: dict[str, Any]) -> None:
+        hp = actor.get("durability", 0)
+        if hp <= 0 or actor["state"] == ACTOR_ELIMINATED:
+            return
+        if actor["id"] != self.local_id:
+            self._draw_frames(field, "object/misc/misc196_stand.img", 0, actor["x"] - 11, actor["y"] - 43)
+        number = 190 + hp if hp <= 5 else 191 + min(hp, 10)
+        self._draw_frames(field, f"object/misc/misc{number}_stand.img", 0, actor["x"] - 10, actor["y"] - 42)
 
     def _draw_machine_gates(self, field: pygame.Surface, row: int) -> None:
         # 0x005EF91F locates machine images one column left, two rows up.

@@ -279,6 +279,33 @@ class MachineDrawingTest(unittest.TestCase):
                                 ("object/misc/misc400_stand.img", 230, 67)])
 
 
+class BoxDrawingTest(unittest.TestCase):
+    def test_box_uses_moving_pixel_position(self) -> None:
+        scene = BattleScene.__new__(BattleScene)
+        scene.state = {"clock": 1000, "box": {"objects": [
+            {"id": 67, "element": 14112, "row": 4, "col": 3, "x": 200, "y": 180,
+             "moving": True, "destroy_at": 0, "born": 0, "hidden": False}]}}
+        scene.elements = {14112: mapfile.ElementInfo(offset=(3, 15))}
+        drawn = []
+        scene._draw_frames = lambda _screen, path, frame, x, y: drawn.append((path, x, y))
+        scene._draw_boxes(None, 4)
+        self.assertEqual(drawn, [("object/mapElem/box/elem112_stand.img", 187, 172)])
+
+    def test_box_health_is_above_actor_and_other_player_has_background(self) -> None:
+        scene = BattleScene.__new__(BattleScene)
+        scene.local_id = 1
+        drawn = []
+        scene._draw_frames = lambda _screen, path, frame, x, y: drawn.append((path, x, y))
+        actor = {"id": 1, "state": 0, "durability": 4, "x": 100, "y": 200}
+        scene._draw_box_health(None, actor)
+        self.assertEqual(drawn, [("object/misc/misc194_stand.img", 90, 158)])
+        drawn.clear()
+        actor.update(id=2, durability=3)
+        scene._draw_box_health(None, actor)
+        self.assertEqual(drawn, [("object/misc/misc196_stand.img", 89, 157),
+                                ("object/misc/misc193_stand.img", 90, 158)])
+
+
 class EffectTest(unittest.TestCase):
     def test_effect_frames_wrap_at_the_last_key(self) -> None:
         # default_MapElement.eff: 4 frames of 100 ms, keys 0..1000.

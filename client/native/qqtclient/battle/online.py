@@ -98,9 +98,15 @@ class OnlineBattle:
             if room_left is not None:
                 room_left(packet)
 
+        def accepted_play(packet: game.Packet) -> None:
+            # Rule 8 waits for CREATE_NPC_BOSS registration before authoring
+            # UDP traffic for the new entity. Other echoes need no action.
+            if self.scene.rule == "box":
+                self.scene.pending_tcp.append((packet.command, packet.payload))
+
         session.handlers.update({
             room.LEAVE_ROOM_NOTIFY_COMMAND: member_left,
-            match.REQUEST_PLAY_COMMAND: lambda _packet: None,  # echo of each accepted copy
+            match.REQUEST_PLAY_COMMAND: accepted_play,
             match.GAME_EVENT_NOTIFY_COMMAND: self.on_game_event,
             match.NOTIFY_UDP_OK_COMMAND: lambda packet: self.scene.pending_tcp.append((packet.command, packet.payload)),
             match.HELLO_COMMAND: lambda _packet: None,

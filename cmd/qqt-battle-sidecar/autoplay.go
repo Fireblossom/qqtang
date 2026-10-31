@@ -31,6 +31,7 @@ type autoplayBot struct {
 	sculpture *sculptureRule
 	tank      *tankRule
 	machine   *machineRule
+	box       *boxRule
 	// Rule 2: no own bubbles; kick the dropped ones instead.
 	kick bool
 }
@@ -75,6 +76,9 @@ func (bot *autoplayBot) act(engine *battleengine.Engine) battleengine.Action {
 	msPerCell := uint32(1000 * battleengine.CellSizePixels / max(1, int(actor.SpeedPixelsPerSecond)))
 	here := actor.Position.Cell()
 	world := newAutoplayWorld(engine)
+	if bot.box != nil {
+		return bot.actBox(engine, world, actor, action, msPerCell)
+	}
 	if bot.kick {
 		return bot.actKick(engine, world, actor, action, msPerCell)
 	}

@@ -269,7 +269,7 @@ func (runtime *Runtime) AcceptNativeBombExplosionAt(sceneMS uint32, bombs []Veri
 		return nil, fmt.Errorf("battle runtime is nil")
 	}
 	for _, bomb := range bombs {
-		if runtime.engine.actorIndex(bomb.OwnerID) < 0 {
+		if runtime.engine.actorIndex(bomb.OwnerID) < 0 && !runtime.engine.HasRuleNPCOwner(bomb.OwnerID) {
 			return nil, fmt.Errorf("battle runtime explosion owner %d is not a participant", bomb.OwnerID)
 		}
 	}
