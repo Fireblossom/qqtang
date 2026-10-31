@@ -7,6 +7,8 @@ import struct
 import sys
 import unittest
 
+import pygame
+
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
 
 from qqtclient.battle import mapfile  # noqa: E402
@@ -203,6 +205,32 @@ class FlightTest(unittest.TestCase):
         flight = {"from": {"row": 10, "col": 10}, "dir": 3, "cells": 8, "start": 0, "until": 800}
         self.assertEqual(flight_position(flight, 400, 600, 520), (400, 40))  # past the bottom edge, back at the top
         self.assertEqual(flight_position(flight, 800, 600, 520), (400, 200))
+
+
+    def test_edge_crossing_uses_the_bubble_centre(self) -> None:
+        right = {"from": {"row": 5, "col": 14}, "dir": 0, "cells": 8, "start": 0, "until": 800}
+        # At 40 ms its centre is 596, still at the right edge; at 60 ms it
+        # is 604 and appears at the left edge, not 20 px later.
+        self.assertEqual(flight_position(right, 40, 600, 520), (576, 185))
+        self.assertEqual(flight_position(right, 60, 600, 520), (-16, 178))
+        down = {"from": {"row": 12, "col": 5}, "dir": 3, "cells": 8, "start": 0, "until": 800}
+        self.assertEqual(flight_position(down, 40, 600, 520), (200, 496))
+        self.assertEqual(flight_position(down, 60, 600, 520), (200, -16))
+
+    def test_normal_and_power_bubbles_use_native_anchor(self) -> None:
+        scene = BattleScene.__new__(BattleScene)
+        scene.map = mapfile.MapFile(3, 2, 15, 13, [[0] * 195 for _ in range(3)])
+        scene.dying = {}
+        scene.state = {"clock": 0, "actors": [], "pickups": [], "flames": [], "bombs": [
+            {"id": 1, "row": 1, "col": 2}, {"id": 2, "row": 2, "col": 3, "style": 2}]}
+        drawn = []
+        scene._draw_frames = lambda _screen, path, frame, x, y: drawn.append((path, x, y))
+        scene._draw_element = lambda *_args: None
+        scene.draw(pygame.Surface((800, 600)))
+        # 0x005DF590 places both at cell centres; 0x005DF6FB subtracts
+        # anchor (0,15), as confirmed against the calibrated rule-2 video.
+        self.assertEqual(drawn[:2], [("object/bomb/bomb1_stand.img", 90, 52),
+                                     ("object/bomb/bomb2_stand.img", 130, 92)])
 
 
 class EffectTest(unittest.TestCase):

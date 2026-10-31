@@ -28,6 +28,9 @@ FIELD_ORIGIN = (10, 27)
 FRAME_TOP = "object/ui/game/gametop.img"
 FRAME_LEFT = "object/ui/game/gameleft.img"
 BOMB_IMAGE = "object/bomb/bomb1_stand.img"
+# 0x005DF6FB gives ordinary and power bubbles the same (0, 15) anchor
+# as scene items. This is not half of the DIMG canvas size.
+BOMB_ANCHOR = (0, 15)
 # Kicked and dropped bubbles, and dropped items, move at 400 px/s
 # (Client.exe 0x005D3C1D, 0x005A467D).
 FLIGHT_PX_PER_MS = 0.4
@@ -207,11 +210,15 @@ def flight_position(flight: dict[str, Any], clock: int, width: int, height: int)
     step_x, step_y = FLIGHT_STEPS[flight["dir"] & 3]
     length = flight["cells"] * CELL
     progress = min(max((clock - flight["start"]) / max(flight["until"] - flight["start"], 1), 0.0), 1.0)
-    x = flight["from"]["col"] * CELL + step_x * length * progress
-    y = flight["from"]["row"] * CELL + step_y * length * progress
-    if step_x:
-        y -= length / 4 * (1 - (2 * progress - 1) ** 2)
-    return int(x) % width, int(y) % height if not step_x else int(y)
+    # 0x005DF724 passes cell centres to the mover. Wrap those centres before
+    # applying the arc (0x005A47E4 / 0x005A4983), then return a cell corner.
+    # Wrapping the corner instead makes the bubble cross an edge 20 px late.
+    x = flight["from"]["col"] * CELL + CELL // 2 + step_x * length * progress
+    y = flight["from"]["row"] * CELL + CELL // 2 + step_y * length * progress
+    x = x + width if x < 0 else x - width if x > width else x
+    y = y + height if y < 0 else y - height if y > height else y
+    arc = -length / 4 * (1 - (2 * progress - 1) ** 2) if step_x else 0
+    return int(x) - CELL // 2, int(y) - CELL // 2 + int(arc)
 
 
 @dataclasses.dataclass
@@ -529,7 +536,7 @@ class BattleScene:
             flight = flights.get(str(bomb["id"]))
             if flight is not None and flight["start"] <= self.clock < flight["until"]:
                 x, y = flight_position(flight, self.clock, self.map.width * CELL, self.map.height * CELL)
-            self._draw_frames(field, image, self.clock // 150, ox + x - 2, oy + y - 1)
+            self._draw_frames(field, image, self.clock // 150, ox + x - BOMB_ANCHOR[0], oy + y - BOMB_ANCHOR[1])
         for flame in self.state["flames"] or ():
             self._draw_flame(field, flame)
         actors_by_row: dict[int, list[dict[str, Any]]] = {}
