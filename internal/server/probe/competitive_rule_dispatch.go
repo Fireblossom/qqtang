@@ -6,6 +6,7 @@ import (
 	"qqtang/internal/game/mapdata"
 	"qqtang/internal/game/match"
 	roomstate "qqtang/internal/game/room"
+	"qqtang/internal/protocol/game"
 )
 
 func competitivePlayerLifecycle(lifecycle mapdata.CompetitivePlayerLifecycle) (match.CompetitivePlayerLifecycle, error) {
@@ -218,6 +219,28 @@ func (server *Server) requireCompetitiveRule(session *connectionSession, kind ma
 		return nil, fmt.Errorf("%s event player %d is not a battle participant", kind, playerID)
 	}
 	return battle, nil
+}
+
+// requireCompetitiveBoxObservation preserves ordinary peer observations of
+// participants, while a registered rule NPC remains owned by the arbitrator.
+// 005FED14 removes a normal NPC on 0x1162; an avatar hit only removes its form.
+func (server *Server) requireCompetitiveBoxObservation(session *connectionSession, schema uint16, target uint16) (*match.CompetitiveBattle, bool, error) {
+	battle, err := server.requireCompetitiveRule(session, mapdata.CompetitiveRuleBox, 0)
+	if err != nil {
+		return nil, false, err
+	}
+	if target == 0 || battle.HasParticipant(target) {
+		return battle, false, nil
+	}
+	if schema != game.NotifyPlayerKnocked || !battle.HasNativeNPCEntity(target) {
+		return nil, false, fmt.Errorf("box observation target %d is not a participant or registered knocked NPC", target)
+	}
+	// HasNativeNPCEntity intentionally survives death: exact TCP/UDP repeats
+	// must be acknowledged without restoring a retired entity's proxy rights.
+	if !battle.IsArbitrator(session.Profile.PlayerID) {
+		return nil, false, fmt.Errorf("box NPC observation reporter %d is not arbitrator", session.Profile.PlayerID)
+	}
+	return battle, true, nil
 }
 
 // authorizeCompetitiveActor keeps gameplay identity independent from the

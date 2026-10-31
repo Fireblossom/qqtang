@@ -777,6 +777,9 @@ func validateGameplayFastPackagesForMatch(packages []game.GameplayDataPackage, p
 		if err := validateAvatarRecoveryFastMessages(packet, playerID, battle); err != nil {
 			return fmt.Errorf("gameplay package %d: %w", index, err)
 		}
+		if err := validateNativeNPCObservationFastMessages(packet, playerID, battle); err != nil {
+			return fmt.Errorf("gameplay package %d: %w", index, err)
+		}
 		if packet.PlayerID == playerID {
 			continue
 		}
@@ -830,6 +833,45 @@ func validateAvatarRecoveryFastMessages(packet game.GameplayDataPackage, authent
 			!battle.AuthorizesBossProxy(authenticatedPlayerID, recovery.PlayerID) &&
 			!battle.AuthorizesNativeNPCProxy(authenticatedPlayerID, recovery.PlayerID) {
 			return fmt.Errorf("avatar-recovery target %d is neither a participant nor an active native entity", recovery.PlayerID)
+		}
+	}
+	return nil
+}
+
+// Normal participant observations do not grant authority over rule NPCs.
+// This runs before the own-package shortcut, and before retirement/relay
+// deduplication, so an observer cannot consume a legitimate authority report.
+func validateNativeNPCObservationFastMessages(packet game.GameplayDataPackage, authenticated uint16, battle *match.CompetitiveBattle) error {
+	if battle == nil {
+		return nil
+	}
+	for _, message := range packet.Messages {
+		if message.DataID > 0xffff {
+			continue
+		}
+		event := game.GameEvent{Schema: uint16(message.DataID), Body: message.Data}
+		var target uint16
+		switch event.Schema {
+		case game.NotifyPlayerKnocked:
+			knocked, err := game.ParsePlayerKnockedEvent(event)
+			if err != nil {
+				return err
+			}
+			target = knocked.PlayerID
+		case game.NotifyPlayerKilled:
+			killed, err := game.ParsePlayerKilledEvent(event)
+			if err != nil {
+				return err
+			}
+			target = killed.DestinationPlayerID
+			if battle.HasNativeNPCEntity(target) && !battle.HasParticipant(killed.PlayerID) {
+				return fmt.Errorf("native NPC kill source %d is not a participant", killed.PlayerID)
+			}
+		default:
+			continue
+		}
+		if battle.HasNativeNPCEntity(target) && !battle.IsArbitrator(authenticated) {
+			return fmt.Errorf("native NPC observation reporter %d is not arbitrator", authenticated)
 		}
 	}
 	return nil
@@ -924,7 +966,11 @@ func validateNativeNPCFastMessages(packet game.GameplayDataPackage, battle *matc
 			if err != nil {
 				return err
 			}
-			if !knownTarget(harmed.ObjectID) || harmed.LossHP != 0 {
+			// 00603564's fire-box marker is 500 for a participant. It still
+			// consumes one rule-8 layer, never 500 HP; NPC targets retain the
+			// existing zero marker. Only an authenticated NPC proxy gets here.
+			validLoss := harmed.LossHP == 0 || harmed.LossHP == 500 && battle.HasParticipant(harmed.ObjectID)
+			if !knownTarget(harmed.ObjectID) || !validLoss {
 				return fmt.Errorf("message %d native-durability harm target/loss %d/%d is invalid", index, harmed.ObjectID, harmed.LossHP)
 			}
 		case game.NotifyPlayerDieEvent:
@@ -1152,12 +1198,20 @@ func consumeCompetitiveFastPackages(packages []game.GameplayDataPackage, battle 
 					}
 				}
 			case game.NotifyPlayerKilled:
-				if !battle.HasBossEntity(packet.PlayerID) {
-					continue
-				}
 				killed, err := game.ParsePlayerKilledEvent(event)
 				if err != nil {
 					return nil, err
+				}
+				if battle.HasNativeNPCEntity(killed.DestinationPlayerID) {
+					// The authenticated arbiter's box-kill notification and
+					// 1162 may arrive in either order; retirement is idempotent.
+					if _, err = battle.RecordNativeNPCDeath(killed.DestinationPlayerID); err != nil {
+						return nil, err
+					}
+					continue
+				}
+				if !battle.HasBossEntity(packet.PlayerID) {
+					continue
 				}
 				itemIDs := make([]uint32, 0, len(killed.Items))
 				for _, item := range killed.Items {
@@ -1173,6 +1227,16 @@ func consumeCompetitiveFastPackages(packages []game.GameplayDataPackage, battle 
 				if resolution.NewlyConcluded && settlement == nil {
 					gameOver := competitiveGameOverData(killed.ClientTime, resolution)
 					settlement = &competitiveRoomSettlementCommit{GameOver: gameOver, Battle: battle}
+				}
+			case game.NotifyPlayerKnocked:
+				knocked, err := game.ParsePlayerKnockedEvent(event)
+				if err != nil {
+					return nil, err
+				}
+				if !knocked.IsAvatar && battle.HasNativeNPCEntity(knocked.PlayerID) {
+					if _, err = battle.RecordNativeNPCDeath(knocked.PlayerID); err != nil {
+						return nil, err
+					}
 				}
 			case game.NotifyPlayerDieEvent:
 				death, err := game.ParsePlayerDeathEvent(event)
