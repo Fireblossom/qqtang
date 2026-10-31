@@ -28,6 +28,9 @@ func (engine *Engine) placeBombOnSnapshotEmptyCell(actorIndex int) (Event, bool)
 // producer without mutating engine state. requireEmpty distinguishes ordinary
 // sequential placement from Step's already-validated simultaneous stack race.
 func (engine *Engine) prospectiveBomb(actorIndex int, requireEmpty bool) (Bomb, bool) {
+	if engine.rules.DisableBombPlacement {
+		return Bomb{}, false
+	}
 	actor := &engine.actors[actorIndex]
 	cell := actor.Position.Cell()
 	if requireEmpty && engine.bombAt(cell) >= 0 {

@@ -25,6 +25,7 @@ func (engine *Engine) actorCapabilities(actor *Actor, direction Direction) Actor
 	}
 	capabilities.EffectiveSpeedRate = actor.SpeedRate
 	capabilities.EffectiveBombCapacity = actor.BombCapacity
+	capabilities.CanKickBomb = engine.rules.UniversalKick
 	definition, ok := sceneelement.NativeTransformation(sceneelement.ID(actor.TransformationSceneID))
 	if !ok || definition.AvatarRoleID != actor.AvatarRoleID {
 		return capabilities
@@ -33,7 +34,7 @@ func (engine *Engine) actorCapabilities(actor *Actor, direction Direction) Actor
 	capabilities.CanCollectItems = definition.CanCollectItems
 	capabilities.RecoverOnlyOnOpenCell = definition.RecoverOnlyOnOpenCell
 	capabilities.ReverseDirection = definition.ReverseDirection
-	capabilities.CanKickBomb = definition.CanKickBomb
+	capabilities.CanKickBomb = capabilities.CanKickBomb || definition.CanKickBomb
 	capabilities.CanPushBreakable = definition.CanPushBreakable
 	capabilities.GrantedActionID = definition.GrantedActionID
 	capabilities.GrantedActionCount = definition.GrantedActionCount
