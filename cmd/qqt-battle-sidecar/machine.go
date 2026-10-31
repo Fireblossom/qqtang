@@ -666,7 +666,11 @@ func (match *onlineMatch) machineExplosion(explosion game.BombExplodeEvent) {
 }
 
 func machineChargePeriod(actor battleengine.Actor) uint32 {
-	return uint32(2000 - min(5, max(0, int(actor.NativeBombPickupCount())))*200)
+	count := int(actor.NativeBombPickupCount())
+	if count < 0 || count > 4 {
+		return 1000
+	}
+	return uint32(2000 - count*200)
 }
 func (rule *machineRule) updateCharges(engine *battleengine.Engine, now uint32, local uint16) {
 	if rule.charges == nil {

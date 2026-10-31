@@ -221,6 +221,14 @@ class FlightTest(unittest.TestCase):
         self.assertEqual(flight_position(flight, 800, 600, 520), (400, 200))
 
 
+    def test_machine_throw_interpolates_diagonal_and_wraps(self) -> None:
+        flight = {"from": {"row": 5, "col": 14}, "to": {"row": 6, "col": 5},
+                  "dir": 0, "cells": 0, "start": 0, "until": 800}
+        self.assertEqual(flight_position(flight, 0, 600, 520), (560, 200))
+        # 240 px horizontally, 40 px down; at half flight the arc is 60 high.
+        self.assertEqual(flight_position(flight, 400, 600, 520), (80, 160))
+        self.assertEqual(flight_position(flight, 800, 600, 520), (200, 240))
+
     def test_edge_crossing_uses_the_bubble_centre(self) -> None:
         right = {"from": {"row": 5, "col": 14}, "dir": 0, "cells": 8, "start": 0, "until": 800}
         # At 40 ms its centre is 596, still at the right edge; at 60 ms it
