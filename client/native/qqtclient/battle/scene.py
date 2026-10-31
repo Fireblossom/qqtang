@@ -127,15 +127,28 @@ RESULT_TEXT = (16, 62, 112)
 RESULT_HEAD = (16, 15)
 RESULT_NAME = (264, 31)
 RESULT_STATS = ((129, 55, 303), (319, 55, 302), (129, 91, 307), (319, 91, 306))
-# Treasure (rule 5) scoreboard, Client.exe 0x005DB0B5 and 0x005E1F3A: per
-# room seat (actor +0x396, which uiGame's ui_NotifyShowLevelIcon passes to
+# Treasure (rule 5) and wrestle (rule 4) scoreboard, Client.exe 0x005DB0B5
+# and 0x005E1F3A (rule 4 builds it in slot 10, 0x0060B789): per room seat
+# (actor +0x396, which uiGame's ui_NotifyShowLevelIcon passes to
 # GetSeatInfo), a badge (frame 1 while that player's team has the highest
-# total) and the player's carried gem value in ally or opponent digits.
+# total; all blue before the first update) and the player's value in ally
+# or opponent digits: the carried gem value under rule 5, the player's own
+# kills under rule 4 (0x0060583E, 0x005ADDE8). The sprite points (636, 110),
+# (640, 120) and (633/647, 120) draw (-12, +1) off them (0x005C477E); the
+# 2021 wrestle recording BV1WK4y1Q7Nq matches to a pixel.
 TREASURE_BADGE = "object/misc/misc350_stand.img"
 TREASURE_DIGITS = ("object/misc/misc353_stand.img", "object/misc/misc351_stand.img")  # opponent, ally
-TREASURE_BADGE_AT = (636, 110)
-TREASURE_ONE_DIGIT_AT = (640, 120)
-TREASURE_TWO_DIGITS_X = (633, 647)
+TREASURE_BADGE_AT = (636 - 12, 110 + 1)
+TREASURE_ONE_DIGIT_AT = (640 - 12, 120 + 1)
+TREASURE_TWO_DIGITS_X = (633 - 12, 647 - 12)
+# Rule 4's kill streak badge for the local player (0x005DD427, drawn by
+# 0x005DD5AE from the actor's position): streak 2..9 as misc(250 + n), 10 and
+# more as two digits misc(260 + d), then misc270 连斩, at x + 30 (+ 22 per
+# digit), rising from 20 to 40 pixels above over 1000 ms and fading out in
+# the last 500 ms. Our field point is the position - (20, 20).
+STREAK_MS, STREAK_FADE_MS = 1000, 500
+STREAK_X, STREAK_DIGIT_STEP, STREAK_TEXT_GAP = 30, 22, 23
+STREAK_TEXT = "object/misc/misc270_stand.img"
 TREASURE_STEP = 51
 TREASURE_GEM_VALUES = (1, 2, 3)  # scene items 150, 151, 152
 # Bun (rule 3). Client.exe builds both houses at the start (0x005B720C, map
@@ -284,6 +297,8 @@ class BattleScene:
         self.trapped_at: dict[int, float] = {}  # by now_ms
         self.flash_ms: dict[int, int] = {}  # protection effect time per actor, advanced only while protected
         self.premultiplied: dict[tuple[str, int], pygame.Surface] = {}  # additive frames, colour * alpha
+        self.local_streak = 0
+        self.streak_badge: tuple[int, float] | None = None  # (streak, now_ms shown)
         self.explosions: dict[int, Explosion] = {}
         self.dying: dict[tuple[int, int, int], tuple[int, int]] = {}  # (layer, row, col) -> (element, clock)
         self.held: list[int] = []
@@ -433,6 +448,10 @@ class BattleScene:
             elif not moved:
                 self.walk_started.pop(actor["id"], None)
         self._note_statue_changes()
+        streak = (self.state.get("streaks") or {}).get(str(self.local_id), 0)
+        if self.rule == "wrestle" and streak > self.local_streak and streak >= 2:
+            self.streak_badge = (min(streak, 99), self.now_ms)
+        self.local_streak = streak
         for actor in self.state["actors"]:
             if actor.get("protected_until", 0) > previous_clock:
                 self.flash_ms[actor["id"]] = self.flash_ms.get(actor["id"], 0) + min(self.clock, actor["protected_until"]) - previous_clock
@@ -511,6 +530,7 @@ class BattleScene:
             self._draw_statues(field, row)
             for actor in sorted(actors_by_row.get(row, ()), key=lambda item: item["y"]):
                 self._draw_actor(field, actor)
+        self._draw_streak(field)
         for path, position in ((FRAME_TOP, (0, 0)), (FRAME_LEFT, (0, oy))):
             self._draw_frames(screen, path, 0, *position)
 
@@ -530,6 +550,36 @@ class BattleScene:
                 for col in range(house["col"], min(house["col"] + 3, self.map.width)):
                     if abs(self.map.element(mapfile.LAYER_TOP, row, col)) in BUN_HOUSE_ELEMENTS:
                         self._set(mapfile.LAYER_TOP, row, col, 0)
+
+    def _draw_streak(self, field: pygame.Surface) -> None:
+        """The local player's N 连斩 badge (0x005DD4E6, 0x005DD5AE)."""
+        if self.streak_badge is None:
+            return
+        streak, shown_at = self.streak_badge
+        left = STREAK_MS - (self.now_ms - shown_at)
+        actor = self._local_actor()
+        if left < 0 or actor is None:
+            self.streak_badge = None
+            return
+        if streak < 10:
+            parts = [f"object/misc/misc{250 + streak}_stand.img"]
+        else:
+            parts = [f"object/misc/misc{260 + digit}_stand.img" for digit in divmod(streak, 10)]
+        parts.append(STREAK_TEXT)
+        alpha = 255 if left >= STREAK_FADE_MS else max(0, int(255 - (STREAK_FADE_MS - left) ** 2 / 1000))
+        ox, oy = FIELD_ORIGIN
+        y = oy + actor["y"] - (40 - left / 50) - 20
+        x = ox + actor["x"] + STREAK_X - 20
+        for index, path in enumerate(parts):
+            frames = self.sprites.get(path)
+            if not frames or frames[0][0] is None:
+                continue
+            image, offset_x, offset_y = frames[0]
+            if alpha < 255:
+                image = image.copy()
+                image.set_alpha(alpha)
+            dx = index * STREAK_DIGIT_STEP if path != STREAK_TEXT else (len(parts) - 1) * STREAK_DIGIT_STEP + 1
+            field.blit(image, (x + dx + offset_x, int(y) + offset_y))
 
     def _place_statues(self) -> None:
         """Statues replace the map file's own statue elements (0x005D839C)."""
@@ -734,11 +784,15 @@ class BattleScene:
         """Each player's carried gem value, in the row of the player's room
         seat; a player whose seat is unknown uses its list position."""
         actors = self.state["actors"]
-        values = [sum(count * value for count, value in zip(actor.get("carried") or (), TREASURE_GEM_VALUES)) for actor in actors]
+        if self.rule == "wrestle":
+            kills = self.state.get("kills") or {}
+            values = [kills.get(str(actor["id"]), 0) for actor in actors]
+        else:
+            values = [sum(count * value for count, value in zip(actor.get("carried") or (), TREASURE_GEM_VALUES)) for actor in actors]
         teams: dict[int, int] = {}
         for actor, value in zip(actors, values):
             teams[actor["team"]] = teams.get(actor["team"], 0) + value
-        self.treasure_scored = self.treasure_scored or any(values) or any(actor["state"] == ACTOR_ELIMINATED for actor in actors)
+        self.treasure_scored = self.treasure_scored or any(values) or (self.rule == "treasure" and any(actor["state"] == ACTOR_ELIMINATED for actor in actors))
         best = max(teams.values(), default=0)
         local = self._local_actor()
         for index, (actor, value) in enumerate(zip(actors, values)):
@@ -832,7 +886,7 @@ class BattleScene:
             slot = pygame.Rect(SLOT_ORIGIN[0] + self.selected_slot * SLOT_STEP, SLOT_ORIGIN[1], SLOT_SIZE, SLOT_SIZE)
             pygame.draw.rect(screen, (255, 230, 80), slot, 2)
         self._draw_player_list(screen)
-        if self.rule == "treasure":
+        if self.rule in ("treasure", "wrestle"):
             self._draw_treasure(screen)
         if self.result_rows:
             self._draw_results(screen)

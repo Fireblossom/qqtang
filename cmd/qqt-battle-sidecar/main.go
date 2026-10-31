@@ -23,6 +23,7 @@ import (
 	"io"
 	"math/rand"
 	"os"
+	"strconv"
 
 	"qqtang/internal/game/battleengine"
 	"qqtang/internal/game/mapdata"
@@ -167,7 +168,10 @@ type stateView struct {
 	Prepared  []preparedView `json:"prepared,omitempty"`
 	Bun       *bunView       `json:"bun,omitempty"`       // rule 3
 	Sculpture *sculptureView `json:"sculpture,omitempty"` // rule 6
-	TCPOut    []tcpPacket    `json:"tcp_out,omitempty"`
+	// Kills and kill streaks by player ID, from the kill notices.
+	Kills   map[string]int `json:"kills,omitempty"`
+	Streaks map[string]int `json:"streaks,omitempty"`
+	TCPOut  []tcpPacket    `json:"tcp_out,omitempty"`
 }
 
 func main() {
@@ -228,6 +232,7 @@ func runOnline(init command, lines *bufio.Scanner, out *json.Encoder) error {
 	defer match.close()
 	state := view(match.runtime, nil)
 	state.Begin, state.Net, state.Prepared = &begin, match.netView(), match.preparedView()
+	state.Kills, state.Streaks = byPlayer(match.kills), byPlayer(match.streaks)
 	if match.bun != nil {
 		state.Bun = match.bun.view()
 	}
@@ -252,6 +257,7 @@ func runOnline(init command, lines *bufio.Scanner, out *json.Encoder) error {
 		}
 		state := view(match.runtime, events)
 		state.Net, state.TCPOut, state.Prepared = match.netView(), match.takeTCP(), match.preparedView()
+		state.Kills, state.Streaks = byPlayer(match.kills), byPlayer(match.streaks)
 		if match.bun != nil {
 			state.Bun = match.bun.view()
 		}
@@ -412,4 +418,12 @@ func view(runtime *battleengine.Runtime, events []battleengine.Event) stateView 
 	outcome := engine.Terminal()
 	state.Outcome = outcomeView{outcome.Ended, outcome.Draw, outcome.TimedOut, outcome.WinnerTeamID, outcome.EndedAtMS}
 	return state
+}
+
+func byPlayer(values map[uint16]int) map[string]int {
+	result := make(map[string]int, len(values))
+	for playerID, value := range values {
+		result[strconv.Itoa(int(playerID))] = value
+	}
+	return result
 }

@@ -184,6 +184,9 @@ type onlineMatch struct {
 	eliminatedAt map[uint16]uint32
 	// Players who left the room mid-match; they never relive.
 	departed map[uint16]bool
+	// Kills and the current kill streak by player (rule 4's scoreboard and
+	// 连斩 badge).
+	kills, streaks map[uint16]int
 
 	bot *autoplayBot // --autoplay; nil when the keyboard plays
 	// The carry rule (3 or 6), nil otherwise; bun and sculpture are the same
@@ -336,6 +339,7 @@ func newOnlineMatch(init command) (*onlineMatch, beginView, error) {
 		preparedRequested: map[uint32]uint32{},
 		pickupRequests:    map[pickupKey]pickupRequest{}, sceneRequests: map[sceneRequestKey]uint32{},
 		respawn: respawn, eliminatedAt: map[uint16]uint32{}, departed: map[uint16]bool{},
+		kills: map[uint16]int{}, streaks: map[uint16]int{},
 	}
 	switch entry.Rule {
 	case mapdata.CompetitiveRuleBun:
@@ -938,11 +942,19 @@ func (match *onlineMatch) applyRemote(sender uint16, message game.BattleMessageD
 
 // noteEliminations remembers when each player died, for respawnDue.
 func (match *onlineMatch) noteEliminations(events []battleengine.Event) {
-	if match.respawn == nil {
-		return
-	}
 	for _, event := range events {
-		if event.Kind == battleengine.EventActorEliminated && !match.departed[event.TargetID] {
+		if event.Kind != battleengine.EventActorEliminated {
+			continue
+		}
+		// 0x0060583E: a kill notice adds a kill and a streak step to the
+		// killer (0x005ADDE8, 0x005AA01B); any death ends the victim's
+		// streak (0x005AA040). A player's own bubble is no kill.
+		match.streaks[event.TargetID] = 0
+		if event.PlayerID != 0 && event.PlayerID != event.TargetID {
+			match.kills[event.PlayerID]++
+			match.streaks[event.PlayerID]++
+		}
+		if match.respawn != nil && !match.departed[event.TargetID] {
 			match.eliminatedAt[event.TargetID] = event.TimeMS
 		}
 	}

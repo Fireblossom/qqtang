@@ -102,7 +102,7 @@ class TreasureScoreTest(unittest.TestCase):
     @staticmethod
     def scene(actors: list[dict]) -> tuple[BattleScene, list[tuple[str, int, int, int]]]:
         scene = BattleScene.__new__(BattleScene)
-        scene.local_id, scene.treasure_scored, scene.seats = 1, False, {}
+        scene.local_id, scene.treasure_scored, scene.seats, scene.rule = 1, False, {}, "treasure"
         scene.state = {"actors": actors}
         drawn: list[tuple[str, int, int, int]] = []
         scene._draw_frames = lambda _screen, path, frame, x, y: drawn.append((path, frame, x, y))  # type: ignore[method-assign]
@@ -114,14 +114,14 @@ class TreasureScoreTest(unittest.TestCase):
         scene, drawn = self.scene(actors)
         scene._draw_treasure(None)  # type: ignore[arg-type]
         # No score yet: both badges plain, both values 0.
-        self.assertEqual(drawn, [(TREASURE_BADGE, 0, 636, 110), (TREASURE_DIGITS[1], 0, 640, 120),
-                                 (TREASURE_BADGE, 0, 636, 161), (TREASURE_DIGITS[0], 0, 640, 171)])
+        self.assertEqual(drawn, [(TREASURE_BADGE, 0, 624, 111), (TREASURE_DIGITS[1], 0, 628, 121),
+                                 (TREASURE_BADGE, 0, 624, 162), (TREASURE_DIGITS[0], 0, 628, 172)])
         actors[1]["carried"] = [2, 1, 3, 0]  # 2 + 2 + 9 = 13
         drawn.clear()
         scene._draw_treasure(None)  # type: ignore[arg-type]
-        self.assertEqual(drawn, [(TREASURE_BADGE, 0, 636, 110), (TREASURE_DIGITS[1], 0, 640, 120),
-                                 (TREASURE_BADGE, 1, 636, 161), (TREASURE_DIGITS[0], 1, 633, 171),
-                                 (TREASURE_DIGITS[0], 3, 647, 171)])
+        self.assertEqual(drawn, [(TREASURE_BADGE, 0, 624, 111), (TREASURE_DIGITS[1], 0, 628, 121),
+                                 (TREASURE_BADGE, 1, 624, 162), (TREASURE_DIGITS[0], 1, 621, 172),
+                                 (TREASURE_DIGITS[0], 3, 635, 172)])
 
     def test_rows_follow_room_seats(self) -> None:
         actors = [{"id": 1, "team": 1, "state": 0, "carried": [1, 0, 0, 0]},
@@ -129,7 +129,21 @@ class TreasureScoreTest(unittest.TestCase):
         scene, drawn = self.scene(actors)
         scene.seats = {1: 3, 2: 0}
         scene._draw_treasure(None)  # type: ignore[arg-type]
-        self.assertEqual([(path, y) for path, _frame, _x, y in drawn if path == TREASURE_BADGE], [(TREASURE_BADGE, 110 + 51 * 3), (TREASURE_BADGE, 110)])
+        self.assertEqual([(path, y) for path, _frame, _x, y in drawn if path == TREASURE_BADGE], [(TREASURE_BADGE, 111 + 51 * 3), (TREASURE_BADGE, 111)])
+
+    def test_wrestle_counts_kills(self) -> None:
+        actors = [{"id": 1, "team": 1, "state": ACTOR_ELIMINATED}, {"id": 2, "team": 2, "state": 0}]
+        scene, drawn = self.scene(actors)
+        scene.rule = "wrestle"
+        scene.state["kills"] = {}
+        scene._draw_treasure(None)  # type: ignore[arg-type]
+        # A death without a kill leaves every badge blue.
+        self.assertEqual([frame for path, frame, _x, _y in drawn if path == TREASURE_BADGE], [0, 0])
+        drawn.clear()
+        scene.state["kills"] = {"2": 5}
+        scene._draw_treasure(None)  # type: ignore[arg-type]
+        self.assertEqual(drawn, [(TREASURE_BADGE, 0, 624, 111), (TREASURE_DIGITS[1], 0, 628, 121),
+                                 (TREASURE_BADGE, 1, 624, 162), (TREASURE_DIGITS[0], 5, 628, 172)])
 
     def test_respawn_clears_death_timers(self) -> None:
         scene, _drawn = self.scene([{"id": 2, "team": 2, "state": ACTOR_ELIMINATED, "carried": [0, 0, 0, 0]}])

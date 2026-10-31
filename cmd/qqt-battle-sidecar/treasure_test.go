@@ -56,6 +56,7 @@ func treasureMatchOn(t *testing.T, arbitrator uint16, edit func(*battleengine.Gr
 		useRequested: map[uint8]uint32{}, preparedRequested: map[uint32]uint32{},
 		pickupRequests: map[pickupKey]pickupRequest{}, sceneRequests: map[sceneRequestKey]uint32{},
 		respawn: respawn, eliminatedAt: map[uint16]uint32{}, departed: map[uint16]bool{},
+		kills: map[uint16]int{}, streaks: map[uint16]int{},
 	}
 }
 
@@ -249,5 +250,20 @@ func TestActiveLeaverIsRemovedAtOnce(t *testing.T) {
 	advanceTo(t, match, match.engine.ElapsedMS()+6000)
 	if relived := match.respawnDue(); len(relived) != 0 {
 		t.Fatalf("a leaver relived: %+v", relived)
+	}
+}
+
+func TestKillsAndStreaks(t *testing.T) {
+	match := treasureMatch(t, 1)
+	eliminated := func(killer, victim uint16) battleengine.Event {
+		return battleengine.Event{Kind: battleengine.EventActorEliminated, PlayerID: killer, TargetID: victim}
+	}
+	match.noteEliminations([]battleengine.Event{eliminated(1, 2), eliminated(1, 2), eliminated(2, 2), eliminated(0, 1)})
+	if match.kills[1] != 2 || match.kills[2] != 0 || match.streaks[1] != 0 || match.streaks[2] != 0 {
+		t.Fatalf("kills %v streaks %v", match.kills, match.streaks)
+	}
+	match.noteEliminations([]battleengine.Event{eliminated(2, 1)})
+	if match.kills[2] != 1 || match.streaks[2] != 1 {
+		t.Fatalf("kills %v streaks %v", match.kills, match.streaks)
 	}
 }
