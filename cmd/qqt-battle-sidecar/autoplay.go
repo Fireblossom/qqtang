@@ -113,6 +113,27 @@ func (bot *autoplayBot) act(engine *battleengine.Engine) battleengine.Action {
 		}
 	}
 	if bot.machine != nil && bot.machine.charges[actor.PlayerID] != nil && bot.machine.charges[actor.PlayerID].count > 0 && engine.CanThrowMachineBomb(actor.PlayerID) {
+		// Walk to a firing line whose native cursor blast can reach an opponent.
+		// Otherwise two bots can throw safely past each other for a whole round.
+		aim := func(at battleengine.Cell) bool {
+			facing := battleengine.DirectionRight
+			if at.Col >= 7 {
+				facing = battleengine.DirectionLeft
+			}
+			target, _, ok := machineThrowTarget(engine, at, facing)
+			if !ok {
+				return false
+			}
+			for _, other := range engine.Actors() {
+				if other.TeamID != actor.TeamID && other.State == battleengine.ActorActive && world.blastCovers(target, actor.BombPower, other.Position.Cell()) {
+					return true
+				}
+			}
+			return false
+		}
+		if path := world.nearest(here, safe, aim); len(path) > 1 {
+			return bot.follow(action, actor, path)
+		}
 		// Outside a launcher, space throws toward the native aiming cursor.
 		// Face across the centre rather than place ordinary bubbles at our feet.
 		facing := battleengine.DirectionRight

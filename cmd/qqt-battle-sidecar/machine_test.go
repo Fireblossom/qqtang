@@ -315,3 +315,16 @@ func TestMachineThrowOriginsAndDiagonalSpeed(t *testing.T) {
 		t.Fatalf("boundary origin %+v", from)
 	}
 }
+
+func TestMachineBotSeeksAFiringLineInsteadOfThrowingPastOpponent(t *testing.T) {
+	m := machineMatch(t, 1)
+	m.engine.ApplyVerifiedMovementCheckpoint(1, battleengine.PositionAtCellCenter(battleengine.Cell{Row: 6, Col: 2}))
+	m.engine.ApplyVerifiedMovementCheckpoint(2, battleengine.PositionAtCellCenter(battleengine.Cell{Row: 4, Col: 12}))
+	m.machine.charges[1] = &machineCharge{count: 1}
+	bot := newAutoplayBot(1)
+	bot.machine = m.machine
+	action := bot.act(m.engine)
+	if action.PlaceBomb || action.Move != battleengine.DirectionUp {
+		t.Fatalf("bot failed to find an attacking firing line: %+v", action)
+	}
+}
