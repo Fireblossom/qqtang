@@ -354,6 +354,10 @@ func (match *onlineMatch) applyBoxStop(notice game.MapElementStopEvent) {
 }
 func (match *onlineMatch) addBox(w game.MapElementWire, at uint32, hidden bool) {
 	rule := match.box
+	// 005E50F9 refuses a repeated generated UID before installing it.
+	if !hidden && rule.objects[w.UniqueID()] != nil {
+		return
+	}
 	cell := battleengine.Cell{Row: int16(w[6]), Col: int16(w[7])}
 	tile, ok := rule.tile(uint32(w.ElementID()))
 	if !ok {

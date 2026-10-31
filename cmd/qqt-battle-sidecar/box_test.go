@@ -241,3 +241,46 @@ func TestBoxLauncherCannotUnderflowAnUnquantizedPreviousClock(t *testing.T) {
 		t.Fatalf("past tick fired mask%x", mask)
 	}
 }
+
+func TestBoxRegenerationMirrorsIdentityAndInitialProtection(t *testing.T) {
+	owner, peer := boxTestMatch(t, 1), boxTestMatch(t, 2)
+	for _, m := range []*onlineMatch{owner, peer} {
+		for id, b := range m.box.objects {
+			m.engine.ClearNativeBox(b.Cell, b.Element)
+			delete(m.box.objects, id)
+		}
+		advanceTo(t, m, 30020)
+	}
+	owner.boxGenerate(30020)
+	notices := mirrored(t, owner, game.NotifyGenerateBox)
+	if len(notices) != 1 {
+		t.Fatal("depleted map did not regenerate")
+	}
+	peer.applyRemote(1, game.BattleMessageData{DataID: game.NotifyGenerateBox, Data: notices[0].Body})
+	if len(owner.box.objects) < 2 || len(owner.box.objects) > 4 || len(peer.box.objects) != len(owner.box.objects) {
+		t.Fatal("wrong regenerated count")
+	}
+	for id, b := range owner.box.objects {
+		other := peer.box.objects[id]
+		if id>>8 != 1 || other == nil || other.Cell != b.Cell || b.breakable(31519) || !b.breakable(31520) {
+			t.Fatalf("new object identity/protection differs: %+v %+v", b, other)
+		}
+	}
+	for _, m := range []*onlineMatch{owner, peer} {
+		advanceTo(t, m, 31520)
+		m.box.lastFire = 31520
+		m.boxTick()
+		for _, b := range m.box.objects {
+			tile, _ := m.engine.Grid().Cell(b.Cell)
+			if tile.Durability != 1 {
+				t.Fatal("generation protection did not expire")
+			}
+		}
+	}
+	peer.applyRemote(1, game.BattleMessageData{DataID: game.NotifyGenerateBox, Data: notices[0].Body})
+	for _, b := range peer.box.objects {
+		if b.BornAt != 30020 {
+			t.Fatal("repeated UID reset an existing box")
+		}
+	}
+}
