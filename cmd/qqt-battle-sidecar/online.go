@@ -524,6 +524,10 @@ func (match *onlineMatch) step(step command) ([]battleengine.Event, error) {
 	var events []battleengine.Event
 	events = append(events, match.drain()...)
 	match.noteEliminations(events)
+	if match.machineFinishing() {
+		match.flush()
+		return events, nil
+	}
 	// A held item is not used directly: its use is a TCP request (0x0FAF)
 	// and takes effect when the server's 0x0FB0 comes back (handleTCP).
 	local := battleengine.Action{PlayerID: match.local}
@@ -543,7 +547,7 @@ func (match *onlineMatch) step(step command) ([]battleengine.Event, error) {
 	if target <= battleengine.NativeRoundStartClockMS {
 		match.bombPressed = false // Ready/Go: no control yet
 	}
-	for ticks := 0; ticks < maxCatchUpTicks && match.engine.ElapsedMS() < target && !match.engine.Terminal().Ended; ticks++ {
+	for ticks := 0; ticks < maxCatchUpTicks && match.engine.ElapsedMS() < target && !match.engine.Terminal().Ended && !match.machineFinishing(); ticks++ {
 		before := match.runtime.EngineSnapshot()
 		action := local
 		action.PlaceBomb, match.bombPressed = match.bombPressed, false
@@ -575,7 +579,9 @@ func (match *onlineMatch) step(step command) ([]battleengine.Event, error) {
 		tickEvents = append(tickEvents, match.machineTick()...)
 		events = append(events, tickEvents...)
 	}
-	match.retryPickupRequests()
+	if !match.machineFinishing() {
+		match.retryPickupRequests()
+	}
 	match.flush()
 	return events, nil
 }

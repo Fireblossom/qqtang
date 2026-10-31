@@ -6,6 +6,7 @@ import (
 	"qqtang/internal/game/mapdata"
 	"qqtang/internal/protocol/game"
 	"testing"
+	"time"
 )
 
 func machineMatch(t *testing.T, local uint16) *onlineMatch {
@@ -326,5 +327,34 @@ func TestMachineBotSeeksAFiringLineInsteadOfThrowingPastOpponent(t *testing.T) {
 	action := bot.act(m.engine)
 	if action.PlaceBomb || action.Move != battleengine.DirectionUp {
 		t.Fatalf("bot failed to find an attacking firing line: %+v", action)
+	}
+}
+
+func TestMachineFinalHitStopsProducersWhileKeepingDeathReport(t *testing.T) {
+	m := machineMatch(t, 1)
+	pos := m.engine.Actors()[1].Position
+	for hit := uint32(0); hit < 4; hit++ {
+		m.receiveMachineHarm(game.EntityHarmedEvent{ObjectID: 2, Time: 1000 + hit*3000, PosX: uint16(pos.X), PosY: uint16(pos.Y)})
+	}
+	if !m.machineFinishing() {
+		t.Fatal("final durability loss did not stop producers")
+	}
+	if len(mirrored(t, m, game.NotifyPlayerDieEvent)) != 4 {
+		t.Fatal("final reliable death report was discarded")
+	}
+	// The final scene death stays queued for flush; test the following step
+	// after that batch has already flushed, without a real UDP transport.
+	m.outbound = nil
+	m.presence = true
+	m.lastRendezvous = time.Now()
+	m.started = time.Now().Add(-time.Minute)
+	m.bot = newAutoplayBot(1)
+	m.bot.machine = m.machine
+	before := m.engine.ElapsedMS()
+	if _, err := m.step(command{}); err != nil {
+		t.Fatal(err)
+	}
+	if m.engine.ElapsedMS() != before || len(m.outbound) != 0 || len(m.takeTCP()) != 0 {
+		t.Fatal("gameplay continued while waiting for server result")
 	}
 }
