@@ -376,6 +376,13 @@ type Rules struct {
 	// (+0x3108, 0x005E2B40). Like burned pickups, only an engine without
 	// NativeOutcomeAuthority queues them. Off by default.
 	ObjectiveDepartureRecycle bool
+	// DeathDropRecycle replaces the death drop with rule 4's slot 6
+	// (0x0060B264): nothing lands near the dead actor. Each of the three basic
+	// pickup counts above 6 sends its excess to the bird's recycle queue as
+	// scene items 1..3; otherwise one item, picked at random weighted by those
+	// counts, goes there. Held items are not dropped. Only an engine without
+	// NativeOutcomeAuthority queues them. Off by default.
+	DeathDropRecycle bool
 	// LooseObjectSceneIDs lists rule-owned GAME_BEGIN wall items that are not
 	// pickups, such as the rule-6 sculpture fragments 161..165. They still take
 	// their places in the wall-item placement, so ordinary items land where

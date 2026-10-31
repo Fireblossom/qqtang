@@ -435,9 +435,13 @@ func (engine *Engine) eliminateActorWithDrops(actorIndex int, killerID uint16, v
 		removeHeldAction(actor, definition.GrantedActionID)
 	}
 	drops := verifiedDrops
-	if drops == nil {
+	switch {
+	case engine.rules.DeathDropRecycle:
+		engine.recycleDeathDrops(actor)
+		drops = nil
+	case drops == nil:
 		drops = engine.scatterNativeDeathDrops(actor)
-	} else {
+	default:
 		drops = append([]Pickup(nil), drops...)
 	}
 	for index := range actor.HeldActions {

@@ -79,6 +79,34 @@ func (engine *Engine) recycleDepartingObjectives(actor *Actor) {
 	actor.CarriedObjectives = [MaxObjectiveKinds]uint16{}
 }
 
+// recycleDeathDrops is rule 4's death drop under Rules.DeathDropRecycle.
+func (engine *Engine) recycleDeathDrops(actor *Actor) {
+	if engine.rules.NativeOutcomeAuthority {
+		return
+	}
+	var counts [3]int
+	total, excess := 0, false
+	for index, delta := range actor.nativeBasicPickupDelta {
+		counts[index] = max(0, int(delta))
+		total += counts[index]
+		for item := 6; item < counts[index]; item++ {
+			engine.recycledPickupSceneIDs = append(engine.recycledPickupSceneIDs, uint32(index+1))
+			excess = true
+		}
+	}
+	if excess || total == 0 {
+		return
+	}
+	pick := int(engine.nextSimulationRandom() % uint64(total))
+	for index, count := range counts {
+		if pick < count {
+			engine.recycledPickupSceneIDs = append(engine.recycledPickupSceneIDs, uint32(index+1))
+			return
+		}
+		pick -= count
+	}
+}
+
 func ordinaryDeathDropSceneIDs(actor *Actor) []uint32 {
 	sceneIDs := make([]uint32, 0, nativeDeathDropMaximum)
 	for index, delta := range actor.nativeBasicPickupDelta {

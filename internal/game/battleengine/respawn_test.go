@@ -396,3 +396,34 @@ func TestRuleGrantedHeldActions(t *testing.T) {
 		t.Fatal("granted to an unknown player")
 	}
 }
+
+func TestDeathDropRecycleQueuesForTheBird(t *testing.T) {
+	for _, test := range []struct {
+		delta    [3]int16
+		recycled []uint32
+	}{
+		{delta: [3]int16{8, 2, 7}, recycled: []uint32{1, 1, 3}}, // excess over 6 only
+		{delta: [3]int16{0, 4, 0}, recycled: []uint32{2}},       // one, weighted
+		{delta: [3]int16{0, 0, 0}},
+	} {
+		config := testConfig()
+		config.Rules.DeathDropRecycle = true
+		engine := mustEngine(t, config)
+		actor := &engine.actors[0]
+		actor.nativeBasicPickupDelta = test.delta
+		actor.HeldActions[0] = HeldActionSlot{ActionID: 41, Count: 1}
+		actor.State = ActorTrapped
+		events, err := engine.ConfirmTrappedDeath(1)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, event := range events {
+			if event.Kind == EventPickupDropped {
+				t.Fatalf("delta %v dropped %+v on the field", test.delta, event)
+			}
+		}
+		if got := engine.recycledPickupSceneIDs; len(got) != len(test.recycled) || (len(got) > 0 && got[0] != test.recycled[0]) || (len(got) == 3 && (got[1] != 1 || got[2] != 3)) {
+			t.Fatalf("delta %v recycled %v, want %v", test.delta, got, test.recycled)
+		}
+	}
+}

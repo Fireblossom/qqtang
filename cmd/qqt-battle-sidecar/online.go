@@ -390,6 +390,16 @@ func ruleOptions(entry mapdata.CompetitiveMap, local, arbitrator uint16) (battle
 		// without waiting for the spawn cell (that is rules 4 and 5 only).
 		rules.ExternalConclusion = true
 		return rules, &respawnRule{delayMS: 10_000}, nil
+	case mapdata.CompetitiveRuleWrestle:
+		// Rule 4 (比武): ordinary combat scored by kills on the server.
+		// Slots 4 and 5 (vtable 0x007A4464): relive after 5 s once the spawn
+		// cell is free; slot 6 (0x0060B264): the death drop goes to the bird.
+		// The charged skills (0x115C/0x115B) are left out: their key combos
+		// are in protected code and their pose images (misc214..219) are not
+		// in this client's files.
+		rules.ExternalConclusion = true
+		rules.DeathDropRecycle = true
+		return rules, &respawnRule{delayMS: 5000, waitFree: true}, nil
 	case mapdata.CompetitiveRuleSculpture:
 		// Rule 6's slots 4 and 5 (vtable 0x7A43CC): relive after 5 s, not
 		// waiting for the spawn cell. Fragments 161..165 are loose objects.
