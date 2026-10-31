@@ -7,12 +7,15 @@ import struct
 import sys
 import unittest
 
+import pygame
+
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
 
 from qqtclient.battle import mapfile  # noqa: E402
 from qqtclient.battle.practice import practice_players  # noqa: E402
 from qqtclient.battle.scene import (ACTOR_TRAPPED, BUN_HOUSES, BUN_ICONS, FLASH_IMAGE, NEEDLE_ACTION, TREASURE_BADGE,  # noqa: E402
-                                   TREASURE_DIGITS, BattleScene, Explosion, effect_frame, flame_image, player_title)
+                                   TREASURE_DIGITS, BattleScene, Explosion, effect_frame, flame_image, flight_position,
+                                   player_title)
 from qqtclient.battle.sidecar import ACTOR_ELIMINATED, EVENT_ACTOR_RESPAWNED  # noqa: E402
 
 
@@ -201,6 +204,48 @@ class StatueTest(unittest.TestCase):
             ("object/misc/misc222_stand.img", 0, 10 + 440 - 11, 27 + 440 - 47),
             ("object/misc/misc229_stand.img", 0, 10 + 440 - 11, 27 + 440 - 104),
             ("object/misc/misc233_stand.img", 0, 10 + 440 - 12, 27 + 440 - 150)])
+
+
+class FlightTest(unittest.TestCase):
+    def test_sideways_flight_arcs_and_lands(self) -> None:
+        # A bubble dropped in from column 14 of row 5 onto column 11.
+        flight = {"from": {"row": 5, "col": 14}, "dir": 2, "cells": 3, "start": 5000, "until": 5300}
+        self.assertEqual(flight_position(flight, 5000, 600, 520), (560, 200))
+        self.assertEqual(flight_position(flight, 5150, 600, 520), (500, 170))  # 120 px flight, 30 px high mid-way
+        self.assertEqual(flight_position(flight, 5300, 600, 520), (440, 200))
+
+    def test_kick_wraps_round_the_field(self) -> None:
+        # Tutorial3.qbv's first kick: down from row 10 to row 5, eight cells.
+        flight = {"from": {"row": 10, "col": 10}, "dir": 3, "cells": 8, "start": 0, "until": 800}
+        self.assertEqual(flight_position(flight, 400, 600, 520), (400, 40))  # past the bottom edge, back at the top
+        self.assertEqual(flight_position(flight, 800, 600, 520), (400, 200))
+
+
+    def test_edge_crossing_uses_the_bubble_centre(self) -> None:
+        right = {"from": {"row": 5, "col": 14}, "dir": 0, "cells": 8, "start": 0, "until": 800}
+        # At 40 ms its centre is 596, still at the right edge; at 60 ms it
+        # is 604 and appears at the left edge, not 20 px later.
+        self.assertEqual(flight_position(right, 40, 600, 520), (576, 185))
+        self.assertEqual(flight_position(right, 60, 600, 520), (-16, 178))
+        down = {"from": {"row": 12, "col": 5}, "dir": 3, "cells": 8, "start": 0, "until": 800}
+        self.assertEqual(flight_position(down, 40, 600, 520), (200, 496))
+        self.assertEqual(flight_position(down, 60, 600, 520), (200, -16))
+
+    def test_normal_and_power_bubbles_use_native_anchor(self) -> None:
+        scene = BattleScene.__new__(BattleScene)
+        scene.streak_badge = None
+        scene.map = mapfile.MapFile(3, 2, 15, 13, [[0] * 195 for _ in range(3)])
+        scene.dying = {}
+        scene.state = {"clock": 0, "actors": [], "pickups": [], "flames": [], "bombs": [
+            {"id": 1, "row": 1, "col": 2}, {"id": 2, "row": 2, "col": 3, "style": 2}]}
+        drawn = []
+        scene._draw_frames = lambda _screen, path, frame, x, y: drawn.append((path, x, y))
+        scene._draw_element = lambda *_args: None
+        scene.draw(pygame.Surface((800, 600)))
+        # 0x005DF590 places both at cell centres; 0x005DF6FB subtracts
+        # anchor (0,15), as confirmed against the calibrated rule-2 video.
+        self.assertEqual(drawn[:2], [("object/bomb/bomb1_stand.img", 90, 52),
+                                     ("object/bomb/bomb2_stand.img", 130, 92)])
 
 
 class EffectTest(unittest.TestCase):

@@ -139,7 +139,7 @@ func (engine *Engine) tryActorWorldInteraction(actorIndex int, direction Directi
 	}
 	if capabilities.CanKickBomb {
 		if engine.rules.NativeOutcomeAuthority && engine.authorsNativeRequests(actor) {
-			if index := engine.bombAt(front); index >= 0 {
+			if index := engine.bombAt(front); index >= 0 && engine.kickable(engine.bombs[index]) {
 				if target, found := engine.kickBombDestination(front, direction); found {
 					return Event{
 						Kind: EventBombKickRequested, TimeMS: engine.elapsedMS,
@@ -152,6 +152,9 @@ func (engine *Engine) tryActorWorldInteraction(actorIndex int, direction Directi
 		if event, kicked := engine.kickBomb(actor.PlayerID, front, direction); kicked {
 			return event, true
 		}
+	}
+	if engine.rules.DisableMapElementPush {
+		return Event{}, false
 	}
 	// FUN_0060cac9 selects one of two CMapElem predicates. Normal actors use
 	// canMove&2; the panda avatar uses LifeTime>=0. Both feed the same native
@@ -172,12 +175,12 @@ func (engine *Engine) canActorWorldInteract(actor *Actor, direction Direction) b
 	if !touching {
 		return false
 	}
-	if capabilities.CanKickBomb && engine.bombAt(front) >= 0 {
+	if index := engine.bombAt(front); capabilities.CanKickBomb && index >= 0 && engine.kickable(engine.bombs[index]) {
 		if _, found := engine.kickBombDestination(front, direction); found {
 			return true
 		}
 	}
-	return engine.canRequestMapElementPush(front, direction, capabilities.CanPushBreakable)
+	return !engine.rules.DisableMapElementPush && engine.canRequestMapElementPush(front, direction, capabilities.CanPushBreakable)
 }
 
 func nativeWorldInteractionCell(position Position, direction Direction) (Cell, bool) {
@@ -200,36 +203,86 @@ func nativeWorldInteractionCell(position Position, direction Direction) (Cell, b
 
 func (engine *Engine) kickBomb(playerID uint16, source Cell, direction Direction) (Event, bool) {
 	index := engine.bombAt(source)
-	if index < 0 {
+	if index < 0 || !engine.kickable(engine.bombs[index]) {
 		return Event{}, false
 	}
-	target, found := engine.kickBombDestination(source, direction)
+	target, distance, found := engine.kickBombProbe(source, direction)
 	if !found {
 		return Event{}, false
 	}
 	bomb := &engine.bombs[index]
 	bomb.Cell = target
-	bomb.FlightUntilMS = saturatingAdd(engine.elapsedMS, NativeBombFlightMS)
+	bomb.FlightUntilMS = saturatingAdd(engine.elapsedMS, engine.kickFlightMS(distance))
 	engine.syncNativeBombLinks()
 	return Event{Kind: EventBombKicked, TimeMS: engine.elapsedMS, PlayerID: playerID, BombID: bomb.ID, FromCell: source, Cell: target}, true
 }
 
+// kickable: under WrappingKick only a landed bubble (native state 1) can be
+// kicked.
+func (engine *Engine) kickable(bomb Bomb) bool {
+	return !engine.rules.WrappingKick || bomb.FlightUntilMS <= engine.elapsedMS
+}
+
+// KickDestination is where a bubble at source kicked in direction would land
+// under the engine's rules; false when it could not be kicked that way.
+func (engine *Engine) KickDestination(source Cell, direction Direction) (Cell, bool) {
+	if engine == nil {
+		return Cell{}, false
+	}
+	return engine.kickBombDestination(source, direction)
+}
+
 func (engine *Engine) kickBombDestination(source Cell, direction Direction) (Cell, bool) {
+	target, _, found := engine.kickBombProbe(source, direction)
+	return target, found
+}
+
+// kickBombProbe returns the kick's destination and how many cells ahead of
+// the bubble it lies.
+func (engine *Engine) kickBombProbe(source Cell, direction Direction) (Cell, int16, bool) {
 	dx, dy, ok := direction.delta()
 	if !ok || direction == DirectionNone {
-		return Cell{}, false
+		return Cell{}, 0, false
 	}
 	// The native producer probes from eight cells beyond the adjacent bomb
 	// back toward it and chooses the farthest cell without a static map
 	// element. Dynamic actors and bombs do not participate in this probe.
+	// Rule 2's producer (0x005B438D) takes every probe modulo the field.
+	height, width := int16(engine.grid.Height), int16(engine.grid.Width)
 	for distance := int16(8); distance >= 1; distance-- {
 		candidate := Cell{Row: source.Row + int16(dy)*distance, Col: source.Col + int16(dx)*distance}
+		if engine.rules.WrappingKick {
+			candidate = Cell{Row: (candidate.Row%height + height) % height, Col: (candidate.Col%width + width) % width}
+			if candidate == source {
+				return Cell{}, 0, false
+			}
+		}
 		tile, inside := engine.grid.Cell(candidate)
 		if inside && tile.Kind == CellOpen && !tile.MapElementOccupied {
-			return candidate, true
+			return candidate, distance, true
 		}
 	}
-	return Cell{}, false
+	return Cell{}, 0, false
+}
+
+// kickFlightMS is how long a bubble kicked distance cells stays in flight.
+func (engine *Engine) kickFlightMS(distance int16) uint32 {
+	if !engine.rules.WrappingKick {
+		return NativeBombFlightMS
+	}
+	return NativeBombFlightMSPerCell * uint32(distance)
+}
+
+// kickDistance is how far ahead of source a kick that landed on target went,
+// found by probing the four directions as the producer does.
+func (engine *Engine) kickDistance(source, target Cell) int16 {
+	for _, direction := range [...]Direction{DirectionRight, DirectionUp, DirectionLeft, DirectionDown} {
+		if cell, distance, found := engine.kickBombProbe(source, direction); found && cell == target {
+			return distance
+		}
+	}
+	rows, cols := target.Row-source.Row, target.Col-source.Col
+	return max(rows, -rows) + max(cols, -cols)
 }
 
 // ApplyVerifiedBombMovement reconciles one native 0x139C confirmation. The
@@ -255,7 +308,7 @@ func (engine *Engine) ApplyVerifiedBombMovement(playerID uint16, bombID uint32, 
 		return Event{}, fmt.Errorf("verified bomb %d target %d,%d is not static-open", bombID, target.Row, target.Col)
 	}
 	engine.bombs[index].Cell = target
-	engine.bombs[index].FlightUntilMS = saturatingAdd(engine.elapsedMS, NativeBombFlightMS)
+	engine.bombs[index].FlightUntilMS = saturatingAdd(engine.elapsedMS, engine.kickFlightMS(engine.kickDistance(source, target)))
 	engine.syncNativeBombLinks()
 	return Event{Kind: EventBombKicked, TimeMS: engine.elapsedMS, PlayerID: playerID, BombID: bombID, FromCell: source, Cell: target}, nil
 }
@@ -703,16 +756,17 @@ func (engine *Engine) applyNativeCornerCorrection(actor *Actor, blockedCandidate
 		negativeDirection, positiveDirection = DirectionLeft, DirectionRight
 	}
 	remainder := positiveRemainder(coordinate, CellSizePixels)
+	tolerance := engine.rules.cornerSlideTolerance()
 	correction := DirectionNone
 	switch {
 	case negativeBlocked && remainder < CellSizePixels/2:
 		correction = positiveDirection
-	case negativeBlocked && remainder >= CellSizePixels-int32(NativeCornerSlideTolerancePixels) &&
+	case negativeBlocked && remainder >= CellSizePixels-tolerance &&
 		engine.nativeCornerSideCellPassable(actor, positiveDirection):
 		correction = positiveDirection
 	case positiveBlocked && remainder >= CellSizePixels/2:
 		correction = negativeDirection
-	case positiveBlocked && remainder <= int32(NativeCornerSlideTolerancePixels) &&
+	case positiveBlocked && remainder <= tolerance &&
 		engine.nativeCornerSideCellPassable(actor, negativeDirection):
 		correction = negativeDirection
 	default:

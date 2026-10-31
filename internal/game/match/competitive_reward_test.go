@@ -230,3 +230,42 @@ func TestCompetitiveBossDeathAllowsPartialInventoryButRejectsOverflow(t *testing
 		t.Fatalf("Boss death with native base items and complete configured inventories: %v", err)
 	}
 }
+
+func TestCompetitiveRuleRewardsShareBoundedPoolWithoutDropOrdering(t *testing.T) {
+	pool := map[uint32]uint32{uint32(sceneelement.SugarCoin50): 50}
+	battle, err := NewCompetitiveBattleWithRuleConfig(4, 704, 1, []CompetitiveParticipant{
+		{PlayerID: 1, RoleID: 1, TeamID: 1}, {PlayerID: 2, RoleID: 2, TeamID: 2},
+	}, CompetitiveRuleConfig{RuleSceneItems: pool})
+	if err != nil {
+		t.Fatal(err)
+	}
+	pool[uint32(sceneelement.SugarCoin50)] = 100 // the match owns a snapshot
+	for n := uint32(0); n < 50; n++ {
+		player := uint16(n%2 + 1)
+		clock := 10_000 + n*4_000
+		if recorded, err := battle.RecordNativeSceneReward(player, clock, uint32(sceneelement.SugarCoin50), 20, 40); err != nil || !recorded {
+			t.Fatalf("rule reward %d before dispatch notification = %t, %v", n, recorded, err)
+		}
+		if recorded, err := battle.RecordNativeSceneReward(player, clock, uint32(sceneelement.SugarCoin50), 20, 40); err != nil || recorded {
+			t.Fatalf("duplicate rule reward %d = %t, %v", n, recorded, err)
+		}
+	}
+	if _, err := battle.RecordNativeSceneReward(1, 220_000, uint32(sceneelement.SugarCoin50), 20, 40); err == nil {
+		t.Fatal("accepted a 51st reward from the 50-item pool")
+	}
+	if _, err := battle.RecordNativeSceneReward(1, 220_001, uint32(sceneelement.SugarCoin100), 20, 40); err == nil {
+		t.Fatal("accepted a different reward absent from the rule pool")
+	}
+	for player, reward := range battle.SceneRewards() {
+		if reward.Money != 1250 || reward.Experience != 0 {
+			t.Fatalf("player %d reward = %+v", player, reward)
+		}
+	}
+	ordinary, err := NewCompetitiveBattle(5, 211, 1, []CompetitiveParticipant{{PlayerID: 1, RoleID: 1, TeamID: 1}, {PlayerID: 2, RoleID: 2, TeamID: 2}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ordinary.RecordNativeSceneReward(1, 10_000, uint32(sceneelement.SugarCoin50), 20, 40); err == nil {
+		t.Fatal("ordinary battle gained an implicit rule reward pool")
+	}
+}

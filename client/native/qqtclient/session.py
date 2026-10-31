@@ -21,6 +21,8 @@ from .net import accountauth, directory, game, player
 from .runtime import UIRuntime
 from .script import call_script, log
 
+# A second local server (for tests running side by side) can be reached
+# through QQT_AUTH_PORT and QQT_DIRECTORY_PORT.
 ACCOUNT_AUTH_PORT = int(os.environ.get("QQT_AUTH_PORT", "18000"))
 DIRECTORY_PORT = int(os.environ.get("QQT_DIRECTORY_PORT", "18080"))
 DEFAULT_ROLE_ID = 1

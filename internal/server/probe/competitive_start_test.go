@@ -1242,6 +1242,16 @@ func TestKickBombMapStartsWithServerElimination(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// Rule-2 coins come from the native 50-item pool, not GAME_BEGIN.
+	// Reliable dispatch and fast pickup order must not matter.
+	for n := uint32(0); n < 50; n++ {
+		if accepted, err := battle.RecordNativeSceneReward(1, 10_000+n*4_000, uint32(sceneelement.SugarCoin50), 20, 40); err != nil || !accepted {
+			t.Fatalf("kick-bomb reward %d = %t, %v", n, accepted, err)
+		}
+	}
+	if _, err := battle.RecordNativeSceneReward(2, 220_000, uint32(sceneelement.SugarCoin50), 20, 40); err == nil {
+		t.Fatal("kick-bomb reward exceeded its native pool")
+	}
 	owner.CurrentMapID = kickBombMapID
 	if battle.RequiresArbitratorConclusion() {
 		t.Fatal("kick-bomb battle still waits for an arbitrator GAME_OVER")

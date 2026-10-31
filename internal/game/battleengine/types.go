@@ -24,8 +24,13 @@ const (
 	// NativeBombFlightMS is the duration passed to the native bomb move
 	// animation. While state 3 is active the fuse continues to count down, but
 	// FUN_005df7d0 only permits detonation after the object returns to state 1.
-	NativeBombFlightMS    uint32 = 400
-	NativeFlameDurationMS uint32 = 500
+	NativeBombFlightMS uint32 = 400
+	// NativeBombFlightMSPerCell is one 40-pixel cell at the 400 px/s that
+	// 0x005D3C1D actually passes to the mover (0x005A467D multiplies it by
+	// the elapsed milliseconds / 1000). Only WrappingKick and rule drops use
+	// it; NativeBombFlightMS stays for rule 1.
+	NativeBombFlightMSPerCell uint32 = 100
+	NativeFlameDurationMS     uint32 = 500
 	// NativeRoundStartClockMS is the first controllable game clock after the
 	// client's Ready/Go scene countdown. The deterministic engine starts here
 	// directly; live projection still waits the same wall-clock interval.
@@ -398,6 +403,25 @@ type Rules struct {
 	// RulePickupSceneIDs are consumed through the normal pickup protocol; the
 	// caller applies their rule-specific effect. Empty for ordinary matches.
 	RulePickupSceneIDs [8]uint32
+	// DisableBombPlacement rejects every actor's own bubble placement, as
+	// rule 2's slot 3 (0x0060C0E0, returning false) does for 0x005B08E0.
+	// Verified remote placements are still applied. Rule 1 leaves it false.
+	DisableBombPlacement bool
+	// DisableMapElementPush stops actors from pushing map elements: rule 2's
+	// component list (0x0060BD76) has no push producer (0x0060CAC9).
+	DisableMapElementPush bool
+	// UniversalKick lets every actor kick a bubble it walks into, not only
+	// the panda avatar. Rule 1 leaves it false.
+	UniversalKick bool
+	// WrappingKick is rule 2's kick: the destination probe (0x005B438D)
+	// wraps around the field edges, only a landed bubble can be kicked
+	// (0x005B4506), and the bubble flies at the native mover's 400 px/s
+	// (0x005A467D) instead of the fixed NativeBombFlightMS. Rule 1 leaves it
+	// false.
+	WrappingKick bool
+	// CornerSlideTolerancePixels overrides NativeCornerSlideTolerancePixels
+	// when non-zero: rule 2's slot 11 (0x0060BCC1) returns 2.
+	CornerSlideTolerancePixels uint16
 	// RecordItemEffects captures event-local before/after evidence only for
 	// diagnostic matches. It does not alter physics, visibility or rewards.
 	RecordItemEffects bool
@@ -454,7 +478,17 @@ func (rules Rules) validate() error {
 			}
 		}
 	}
+	if rules.CornerSlideTolerancePixels >= CellSizePixels/2 {
+		return fmt.Errorf("corner slide tolerance %d must be below %d pixels", rules.CornerSlideTolerancePixels, CellSizePixels/2)
+	}
 	return nil
+}
+
+func (rules Rules) cornerSlideTolerance() int32 {
+	if rules.CornerSlideTolerancePixels != 0 {
+		return int32(rules.CornerSlideTolerancePixels)
+	}
+	return int32(NativeCornerSlideTolerancePixels)
 }
 
 // objectiveIndex is the Actor.CarriedObjectives index of sceneID, or -1.

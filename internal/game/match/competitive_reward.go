@@ -177,8 +177,8 @@ func (battle *CompetitiveBattle) RecordBossPermanentItemPickup(playerID uint16, 
 }
 
 // RecordNativeSceneReward records a source-proven currency or experience
-// pickup. The item must still exist in GAME_BEGIN.NewItems or in the bounded
-// aggregate BOSS_INFO NormalItems/OutfitItems inventory. A native 0x116B or
+// pickup. The item must still exist in GAME_BEGIN.NewItems, a bounded native
+// rule producer pool, or the aggregate BOSS_INFO NormalItems/OutfitItems inventory. A native 0x116B or
 // lethal 0x0FA7 announcement is
 // useful evidence that an object reached the scene, but it is not an ordering
 // prerequisite: the final client can author/drop/collect through different
@@ -212,9 +212,10 @@ func (battle *CompetitiveBattle) RecordNativeSceneReward(playerID uint16, client
 		return false, nil
 	}
 	fromInitialScene := battle.initialSceneItems[itemID] > 0
+	fromRuleInventory := battle.ruleSceneItems[itemID] > 0
 	fromBossInventory := battle.bossSceneItemPickups[itemID] < battle.bossSceneItemCapacity[itemID]
-	if !fromInitialScene && !fromBossInventory {
-		return false, fmt.Errorf("scene-reward item %d exceeds initialized and BOSS_INFO inventory", itemID)
+	if !fromInitialScene && !fromRuleInventory && !fromBossInventory {
+		return false, fmt.Errorf("scene-reward item %d exceeds initialized, rule and BOSS_INFO inventory", itemID)
 	}
 	rewards := battle.sceneRewards[playerID]
 	switch definition.Kind {
@@ -238,6 +239,8 @@ func (battle *CompetitiveBattle) RecordNativeSceneReward(playerID uint16, client
 	// for a valid retry rather than partially committing the transaction.
 	if fromInitialScene {
 		battle.initialSceneItems[itemID]--
+	} else if fromRuleInventory {
+		battle.ruleSceneItems[itemID]--
 	} else {
 		battle.bossSceneItemPickups[itemID]++
 		// This counter is diagnostic landing state only. A missing or reordered
