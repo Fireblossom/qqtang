@@ -33,6 +33,7 @@ type machineCharge struct {
 }
 
 type machineRule struct {
+	finishing   bool // final durability loss observed; wait for server settlement
 	charges     map[uint16]*machineCharge
 	destroyed   [2]bool
 	teams       [2]byte
@@ -325,7 +326,7 @@ func (match *onlineMatch) applyMachineMove(state game.MachineBombState) []battle
 }
 func (match *onlineMatch) machineTick() []battleengine.Event {
 	rule := match.machine
-	if rule == nil {
+	if rule == nil || rule.finishing {
 		return nil
 	}
 	now := match.engine.ElapsedMS()
@@ -422,6 +423,7 @@ func (match *onlineMatch) machineFinalDeath(death game.PlayerDeathEvent) {
 	if actor, ok := actorByID(match.engine.Actors(), death.PlayerID); ok {
 		match.machine.hits[match.machine.side(actor.TeamID)]++
 	}
+	match.finishMachineIfDecided()
 }
 
 func (match *onlineMatch) machineHarmReport(harm game.EntityHarmedEvent) {
@@ -430,6 +432,9 @@ func (match *onlineMatch) machineHarmReport(harm game.EntityHarmedEvent) {
 		return
 	}
 	match.machine.hits[match.machine.side(actor.TeamID)]++
+	if actor.DurabilityLeft == 0 {
+		match.finishMachineIfDecided()
+	}
 	match.logf("machine player %d durability %d at %d", harm.ObjectID, actor.DurabilityLeft, harm.Time)
 	if !match.isArbitrator() {
 		return
@@ -730,4 +735,22 @@ func machineFlightTime(from, to battleengine.Cell, direction byte) uint32 {
 		dy += 520
 	}
 	return uint32(math.Ceil(math.Hypot(float64(dx), float64(dy)) * 2))
+}
+
+// Do not author new gameplay in the server's 750ms settlement delay after
+// the final durability hit. This is only a producer stop, not a local result.
+// Departure alone is handled by the independent authority handover path.
+func (match *onlineMatch) finishMachineIfDecided() {
+	teams := map[byte]bool{}
+	for _, actor := range match.engine.Actors() {
+		if actor.State != battleengine.ActorEliminated && actor.DurabilityLeft > 0 {
+			teams[actor.TeamID] = true
+		}
+	}
+	if len(teams) <= 1 {
+		match.machine.finishing = true
+	}
+}
+func (match *onlineMatch) machineFinishing() bool {
+	return match.machine != nil && match.machine.finishing
 }
