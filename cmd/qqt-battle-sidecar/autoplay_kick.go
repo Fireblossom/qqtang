@@ -17,6 +17,8 @@ const (
 func (bot *autoplayBot) actKick(engine *battleengine.Engine, world autoplayWorld, actor battleengine.Actor, action battleengine.Action, msPerCell uint32) battleengine.Action {
 	now := engine.ElapsedMS()
 	here := actor.Position.Cell()
+	// A cell entered at the given step is taken to be overlapped from a step
+	// earlier (the bot is rarely on a centre) to a step later plus slack.
 	timely := func(cell battleengine.Cell, steps int) bool {
 		if cell == here {
 			return true
@@ -25,9 +27,10 @@ func (bot *autoplayBot) actKick(engine *battleengine.Engine, world autoplayWorld
 		if !threatened {
 			return true
 		}
-		arrive := now + uint32(steps)*msPerCell
+		enter := now + uint32(max(steps-1, 0))*msPerCell
+		leave := now + uint32(steps+1)*msPerCell + kickSlackMS
 		clear, _ := bot.timeline.ClearAt(cell)
-		return impact > arrive+msPerCell+kickSlackMS || clear < arrive
+		return impact > leave || clear+kickSlackMS < enter
 	}
 	hide := func() battleengine.Action {
 		if path := bot.shelter(world, here, timely); len(path) > 1 {

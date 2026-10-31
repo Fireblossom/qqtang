@@ -12,7 +12,8 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
 from qqtclient.battle import mapfile  # noqa: E402
 from qqtclient.battle.practice import practice_players  # noqa: E402
 from qqtclient.battle.scene import (ACTOR_TRAPPED, BUN_HOUSES, BUN_ICONS, FLASH_IMAGE, NEEDLE_ACTION, TREASURE_BADGE,  # noqa: E402
-                                   TREASURE_DIGITS, BattleScene, Explosion, effect_frame, flame_image, player_title)
+                                   TREASURE_DIGITS, BattleScene, Explosion, effect_frame, flame_image, flight_position,
+                                   player_title)
 from qqtclient.battle.sidecar import ACTOR_ELIMINATED, EVENT_ACTOR_RESPAWNED  # noqa: E402
 
 
@@ -187,6 +188,21 @@ class StatueTest(unittest.TestCase):
             ("object/misc/misc222_stand.img", 0, 10 + 440 - 11, 27 + 440 - 47),
             ("object/misc/misc229_stand.img", 0, 10 + 440 - 11, 27 + 440 - 104),
             ("object/misc/misc233_stand.img", 0, 10 + 440 - 12, 27 + 440 - 150)])
+
+
+class FlightTest(unittest.TestCase):
+    def test_sideways_flight_arcs_and_lands(self) -> None:
+        # A bubble dropped in from column 14 of row 5 onto column 11.
+        flight = {"from": {"row": 5, "col": 14}, "dir": 2, "cells": 3, "start": 5000, "until": 5300}
+        self.assertEqual(flight_position(flight, 5000, 600, 520), (560, 200))
+        self.assertEqual(flight_position(flight, 5150, 600, 520), (500, 170))  # 120 px flight, 30 px high mid-way
+        self.assertEqual(flight_position(flight, 5300, 600, 520), (440, 200))
+
+    def test_kick_wraps_round_the_field(self) -> None:
+        # Tutorial3.qbv's first kick: down from row 10 to row 5, eight cells.
+        flight = {"from": {"row": 10, "col": 10}, "dir": 3, "cells": 8, "start": 0, "until": 800}
+        self.assertEqual(flight_position(flight, 400, 600, 520), (400, 40))  # past the bottom edge, back at the top
+        self.assertEqual(flight_position(flight, 800, 600, 520), (400, 200))
 
 
 class EffectTest(unittest.TestCase):

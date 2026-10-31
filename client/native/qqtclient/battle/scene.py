@@ -28,6 +28,10 @@ FIELD_ORIGIN = (10, 27)
 FRAME_TOP = "object/ui/game/gametop.img"
 FRAME_LEFT = "object/ui/game/gameleft.img"
 BOMB_IMAGE = "object/bomb/bomb1_stand.img"
+# Kicked and dropped bubbles, and dropped items, move at 400 px/s
+# (Client.exe 0x005D3C1D, 0x005A467D).
+FLIGHT_PX_PER_MS = 0.4
+FLIGHT_STEPS = {0: (1, 0), 1: (0, -1), 2: (-1, 0), 3: (0, 1)}  # wire direction: right, up, left, down
 # Avatar canvas (100x100) point that sits on the actor's position.
 AVATAR_ANCHOR = (50, 64)
 WALK_FRAME_MS = 100
@@ -193,6 +197,21 @@ def effect_frame(elapsed: float, length_ms: int, frame_ms: int, frames: int) -> 
     """A looping .eff track's frame (0x00582D20, 0x0057CD10): the effect's
     time wraps at its last key, the track's frame at frames * frame_ms."""
     return int(elapsed % length_ms % (frames * frame_ms) // frame_ms)
+
+
+def flight_position(flight: dict[str, Any], clock: int, width: int, height: int) -> tuple[int, int]:
+    """Where a flying bubble's cell corner is (field pixels). The mover
+    (0x005A45CE) keeps going past the field edge and draws modulo the field
+    (0x005A47E4); a sideways flight rises in an arc a quarter of its length
+    high at the middle (0x005A48D7, 0x005A4925)."""
+    step_x, step_y = FLIGHT_STEPS[flight["dir"] & 3]
+    length = flight["cells"] * CELL
+    progress = min(max((clock - flight["start"]) / max(flight["until"] - flight["start"], 1), 0.0), 1.0)
+    x = flight["from"]["col"] * CELL + step_x * length * progress
+    y = flight["from"]["row"] * CELL + step_y * length * progress
+    if step_x:
+        y -= length / 4 * (1 - (2 * progress - 1) ** 2)
+    return int(x) % width, int(y) % height if not step_x else int(y)
 
 
 @dataclasses.dataclass
@@ -494,11 +513,23 @@ class BattleScene:
             # Banana and glue placed with items 41/42 (scene IDs 42/43).
             self._draw_frames(field, f"object/item/item{field_object['action']}_stand.img", self.clock // ITEM_FRAME_MS,
                               *self._item_at(field_object["action"], field_object["row"], field_object["col"]))
+        kick = self.state.get("kick") or {}
+        for fall in kick.get("falls") or ():
+            # Rule 2's dropped items fall from row 0 of their column at
+            # 400 px/s (0x005D9BBF) and are picked up once they land.
+            x, y = self._item_at(fall["scene"], 0, fall["col"])
+            drop = min(max(self.clock - fall["start"], 0), fall["until"] - fall["start"]) * FLIGHT_PX_PER_MS
+            self._draw_frames(field, f"object/item/item{fall['scene']}_stand.img", self.clock // ITEM_FRAME_MS, x, y + int(drop))
+        flights = kick.get("flights") or {}
         for bomb in self.state["bombs"] or ():
             # Rule 6's style-9 bubble uses that bubble type's image, placed like
             # the others (its size was not checked against a recording).
             image = f"object/bomb/bomb{bomb['style']}_stand.img" if bomb.get("style") else BOMB_IMAGE
-            self._draw_frames(field, image, self.clock // 150, ox + bomb["col"] * CELL - 2, oy + bomb["row"] * CELL - 1)
+            x, y = bomb["col"] * CELL, bomb["row"] * CELL
+            flight = flights.get(str(bomb["id"]))
+            if flight is not None and flight["start"] <= self.clock < flight["until"]:
+                x, y = flight_position(flight, self.clock, self.map.width * CELL, self.map.height * CELL)
+            self._draw_frames(field, image, self.clock // 150, ox + x - 2, oy + y - 1)
         for flame in self.state["flames"] or ():
             self._draw_flame(field, flame)
         actors_by_row: dict[int, list[dict[str, Any]]] = {}

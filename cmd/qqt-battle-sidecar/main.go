@@ -106,7 +106,7 @@ type bombView struct {
 	Col       int16  `json:"col"`
 	Power     byte   `json:"power"`
 	ExplodeAt uint32 `json:"explode_at"`
-	Style     byte   `json:"style,omitempty"` // bubble type: 9 for rule 6's held item 48
+	Style     byte   `json:"style,omitempty"` // bubble type: 9 for rule 6's held item 48, 2 for rule 2's power bubbles
 }
 
 type flameView struct {
@@ -239,6 +239,7 @@ func runOnline(init command, lines *bufio.Scanner, out *json.Encoder) error {
 	}
 	if match.kick != nil {
 		state.Kick = match.kick.view()
+		match.kick.markStyles(state.Bombs)
 	}
 	if err := out.Encode(state); err != nil {
 		return err
@@ -266,6 +267,7 @@ func runOnline(init command, lines *bufio.Scanner, out *json.Encoder) error {
 		}
 		if match.kick != nil {
 			state.Kick = match.kick.view()
+			match.kick.markStyles(state.Bombs)
 		}
 		if err := out.Encode(state); err != nil {
 			return err

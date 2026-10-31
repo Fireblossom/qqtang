@@ -302,18 +302,25 @@ func (rule *kickRule) forget(engine *battleengine.Engine) {
 	rule.falls = kept
 }
 
-// kickView is the rule state the client draws.
+// kickView is the rule state the client draws: bubbles in the air by bubble
+// ID, and items still falling.
 type kickView struct {
-	Scenes  map[string]uint32     `json:"scenes"` // by bubble ID
 	Flights map[string]kickFlight `json:"flights"`
 	Falls   []kickFall            `json:"falls"`
 }
 
-func (rule *kickRule) view() *kickView {
-	view := &kickView{Scenes: map[string]uint32{}, Flights: map[string]kickFlight{}, Falls: append([]kickFall{}, rule.falls...)}
-	for id, scene := range rule.scenes {
-		view.Scenes[strconv.FormatUint(uint64(id), 10)] = scene
+// markStyles tags the dropped power bubbles (scene object 2) for drawing
+// (object/bomb/bomb2); object 1 is the default bubble image.
+func (rule *kickRule) markStyles(bombs []bombView) {
+	for index := range bombs {
+		if scene := rule.scenes[bombs[index].ID]; scene > 1 {
+			bombs[index].Style = byte(scene)
+		}
 	}
+}
+
+func (rule *kickRule) view() *kickView {
+	view := &kickView{Flights: map[string]kickFlight{}, Falls: append([]kickFall{}, rule.falls...)}
 	for id, flight := range rule.flights {
 		view.Flights[strconv.FormatUint(uint64(id), 10)] = flight
 	}
