@@ -133,6 +133,9 @@ type CompetitiveRuleConfig struct {
 	// It caps settlement-bearing wall pickups so a syntactically valid client
 	// pickup cannot mint currency or experience by itself.
 	InitialSceneItems map[uint32]uint32
+	// RuleSceneItems is a bounded native rule producer pool, separate from
+	// GAME_BEGIN wall items. Pickups may precede a reliable drop announcement.
+	RuleSceneItems map[uint32]uint32
 	// BossSceneItems mirrors each CREATE_NPC_BOSS NormalItems inventory. The
 	// native arbitrator chooses concrete drops; the server validates that those
 	// drops do not exceed this source inventory.
@@ -193,6 +196,7 @@ type CompetitiveBattle struct {
 	rewardPickups     map[competitiveRewardPickupKey]struct{}
 	nativeRelays      map[competitiveNativeRelayKey]struct{}
 	initialSceneItems map[uint32]uint32
+	ruleSceneItems    map[uint32]uint32
 	bossSceneItems    map[uint16]map[uint32]uint32
 	bossDeathItems    map[uint16]map[uint32]uint32
 	droppedSceneItems map[uint32]uint32
@@ -287,6 +291,7 @@ func NewCompetitiveBattleWithRuleConfig(gameID, mapID uint32, arbitratorID uint1
 		sceneRewards: make(map[uint16]CompetitiveSceneRewards), collectedItems: make(map[uint16]map[uint32]uint32),
 		rewardPickups:     make(map[competitiveRewardPickupKey]struct{}),
 		nativeRelays:      make(map[competitiveNativeRelayKey]struct{}),
+		ruleSceneItems:    make(map[uint32]uint32),
 		initialSceneItems: make(map[uint32]uint32), bossSceneItems: make(map[uint16]map[uint32]uint32), bossDeathItems: make(map[uint16]map[uint32]uint32), droppedSceneItems: make(map[uint32]uint32),
 		bossSceneItemCapacity: make(map[uint32]uint32), bossSceneItemPickups: make(map[uint32]uint32),
 		conclusionPolicy: config.ConclusionPolicy, playerLifecycle: config.PlayerLifecycle,
@@ -366,6 +371,12 @@ func NewCompetitiveBattleWithRuleConfig(gameID, mapID uint32, arbitratorID uint1
 			return nil, fmt.Errorf("competitive initial scene item %d has invalid quantity %d", itemID, quantity)
 		}
 		battle.initialSceneItems[itemID] = quantity
+	}
+	for itemID, quantity := range config.RuleSceneItems {
+		if itemID == 0 || quantity == 0 {
+			return nil, fmt.Errorf("competitive rule scene item %d has invalid quantity %d", itemID, quantity)
+		}
+		battle.ruleSceneItems[itemID] = quantity
 	}
 	for entityID, items := range config.BossSceneItems {
 		if _, registered := battle.bossAlive[entityID]; !registered {

@@ -5,6 +5,7 @@ import (
 	"strings"
 	"time"
 
+	"qqtang/internal/clientdata/sceneelement"
 	"qqtang/internal/game/mapdata"
 	"qqtang/internal/game/match"
 	roomstate "qqtang/internal/game/room"
@@ -478,6 +479,15 @@ func (server *Server) prepareCompetitiveRoomMatchStart(session *connectionSessio
 	for _, item := range gameData.NewItems {
 		initialSceneItems[item.ItemID] += uint32(item.Quantity)
 	}
+	var ruleSceneItems map[uint32]uint32
+	if selectedMap.Rule == mapdata.CompetitiveRuleKickBomb {
+		// Client.exe 0x005E1AAD starts rule 2 with 50 item-81 draws. The
+		// 240 s round has fewer than 60 one-item batches, so the full pool
+		// (at least 204 items) cannot exhaust and enter the fallback draw.
+		// As with Boss inventory, reserve the source budget up front: a
+		// UDP pickup can arrive before the arbitrator's TCP 0x10E1 copy.
+		ruleSceneItems = map[uint32]uint32{uint32(sceneelement.SugarCoin50): 50}
+	}
 	bossSceneItems := make(map[uint16]map[uint32]uint32, len(bossData.Bosses))
 	bossDeathItems := make(map[uint16]map[uint32]uint32, len(bossData.Bosses))
 	bossSkills := make(map[uint16][]uint16, len(bossData.Bosses))
@@ -520,6 +530,7 @@ func (server *Server) prepareCompetitiveRoomMatchStart(session *connectionSessio
 		BossID:            activation.Candidate.ID,
 		BossSkills:        bossSkills,
 		InitialSceneItems: initialSceneItems,
+		RuleSceneItems:    ruleSceneItems,
 		BossSceneItems:    bossSceneItems,
 		BossDeathItems:    bossDeathItems,
 	}); err != nil {
