@@ -13,16 +13,19 @@ const (
 )
 
 type MachineLaunchEvent struct {
-	FirstTeam byte
-	RoleID    byte
-	PlayerID  uint16
-	Time      uint32
+	// The high nibble selects a machine; the low nibble selects the team side.
+	MachineIndex byte
+	FirstTeam    byte
+	RoleID       byte
+	PlayerID     uint16
+	Time         uint32
 }
 
 type MachineBombState struct {
-	PlayerID uint16
-	Time     uint32
-	Bombs    []DispatchBomb
+	MachineIndex byte // high nibble of count for 0x10F0..0x10F3; absent from 0x115D
+	PlayerID     uint16
+	Time         uint32
+	Bombs        []DispatchBomb
 }
 
 type MapElementWire [8]byte
@@ -135,7 +138,7 @@ func ParseMachineLaunchEvent(event GameEvent) (MachineLaunchEvent, error) {
 	if event.Schema != RequestLaunchMachine || len(event.Body) != 8 {
 		return MachineLaunchEvent{}, fmt.Errorf("machine-launch schema/body 0x%04X/%d, want 0x%04X/8", event.Schema, len(event.Body), RequestLaunchMachine)
 	}
-	decoded := MachineLaunchEvent{FirstTeam: event.Body[0], RoleID: event.Body[1], PlayerID: binary.BigEndian.Uint16(event.Body[2:4]), Time: binary.BigEndian.Uint32(event.Body[4:8])}
+	decoded := MachineLaunchEvent{MachineIndex: event.Body[0] >> 4, FirstTeam: event.Body[0] & 15, RoleID: event.Body[1], PlayerID: binary.BigEndian.Uint16(event.Body[2:4]), Time: binary.BigEndian.Uint32(event.Body[4:8])}
 	if decoded.PlayerID == 0 || decoded.RoleID == 0 {
 		return MachineLaunchEvent{}, fmt.Errorf("machine-launch player/role IDs %d/%d must be non-zero", decoded.PlayerID, decoded.RoleID)
 	}
@@ -156,11 +159,14 @@ func ParseMachineBombState(event GameEvent) (MachineBombState, error) {
 	if len(event.Body) < 7 {
 		return MachineBombState{}, fmt.Errorf("machine-bomb body length %d is too short", len(event.Body))
 	}
-	count := int(event.Body[6])
-	if count > maximum || len(event.Body) != 7+count*dispatchBombWireSize {
+	count, machine := int(event.Body[6]&15), event.Body[6]>>4
+	if event.Schema == NotifyMachineMove {
+		count, machine = int(event.Body[6]), 0
+	}
+	if machine > 7 || count > maximum || len(event.Body) != 7+count*dispatchBombWireSize {
 		return MachineBombState{}, fmt.Errorf("machine-bomb count/body %d/%d is invalid (max %d)", count, len(event.Body), maximum)
 	}
-	decoded := MachineBombState{PlayerID: binary.BigEndian.Uint16(event.Body[0:2]), Time: binary.BigEndian.Uint32(event.Body[2:6]), Bombs: make([]DispatchBomb, count)}
+	decoded := MachineBombState{MachineIndex: machine, PlayerID: binary.BigEndian.Uint16(event.Body[0:2]), Time: binary.BigEndian.Uint32(event.Body[2:6]), Bombs: make([]DispatchBomb, count)}
 	if decoded.PlayerID == 0 {
 		return MachineBombState{}, fmt.Errorf("machine-bomb player ID must be non-zero")
 	}
@@ -174,6 +180,38 @@ func ParseMachineBombState(event GameEvent) (MachineBombState, error) {
 		offset += dispatchBombWireSize
 	}
 	return decoded, nil
+}
+
+// MarshalNetworkBinary encodes the packed machine index/team byte used by
+// Client.exe 0x00618709. The first team is 1 and the second team is 0.
+func (event MachineLaunchEvent) MarshalNetworkBinary() ([]byte, error) {
+	if event.MachineIndex > 7 || event.FirstTeam > 1 || event.PlayerID == 0 || event.RoleID == 0 {
+		return nil, fmt.Errorf("invalid machine launch %+v", event)
+	}
+	body := make([]byte, 8)
+	body[0], body[1] = event.MachineIndex<<4|event.FirstTeam, event.RoleID
+	binary.BigEndian.PutUint16(body[2:], event.PlayerID)
+	binary.BigEndian.PutUint32(body[4:], event.Time)
+	return body, nil
+}
+
+func (state MachineBombState) MarshalNetworkBinary(schema uint16) ([]byte, error) {
+	if state.MachineIndex > 7 || len(state.Bombs) > maximumMachineBombs || schema == NotifyMachineMove && state.MachineIndex != 0 {
+		return nil, fmt.Errorf("invalid machine index/count %d/%d", state.MachineIndex, len(state.Bombs))
+	}
+	body := make([]byte, 7+dispatchBombWireSize*len(state.Bombs))
+	binary.BigEndian.PutUint16(body, state.PlayerID)
+	binary.BigEndian.PutUint32(body[2:], state.Time)
+	body[6] = state.MachineIndex<<4 | byte(len(state.Bombs))
+	for i, bomb := range state.Bombs {
+		offset := 7 + dispatchBombWireSize*i
+		binary.BigEndian.PutUint32(body[offset:], bomb.SceneID)
+		body[offset+4], body[offset+5], body[offset+6] = bomb.Prop, bomb.Row, bomb.Col
+	}
+	if _, err := ParseMachineBombState(GameEvent{Schema: schema, Body: body}); err != nil {
+		return nil, err
+	}
+	return body, nil
 }
 
 func ParsePushMapElementRequest(event GameEvent) (PushMapElementRequest, error) {

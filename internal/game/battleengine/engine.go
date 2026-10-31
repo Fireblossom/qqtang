@@ -124,7 +124,7 @@ func (engine *Engine) Reset(config Config) error {
 		position := PositionAtCellCenter(participant.Spawn)
 		actors = append(actors, Actor{
 			Participant: participant, Position: position, State: ActorActive, Facing: DirectionDown,
-			OxygenValue: NativeOxygenValueInitial, initial: participant,
+			OxygenValue: NativeOxygenValueInitial, initial: participant, DurabilityLeft: config.Rules.NativeDurabilityLayers,
 		})
 		teamSeen[participant.TeamID] = struct{}{}
 		participants[index] = participant

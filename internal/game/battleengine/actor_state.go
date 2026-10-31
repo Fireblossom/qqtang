@@ -92,12 +92,16 @@ func (engine *Engine) applyFlameHazardsMatching(accept func(*Actor) bool) []Even
 			// is not the explosion hurt box; an actor whose visual body overlaps
 			// the flame but whose centre remains in the adjacent cell is the
 			// original game's 半身 safe position.
-			if flame.ImpactAtMS != engine.elapsedMS || actor.Position.Cell() != flame.Cell {
+			if (flame.ImpactAtMS != engine.elapsedMS && flame.NativeStyle != 13 && flame.NativeStyle != 14) || actor.Position.Cell() != flame.Cell {
 				continue
 			}
 			engine.resetActorOnHit(actor)
 			if actor.TransformationSceneID != 0 {
 				events = append(events, engine.endTransformation(actor, TransformationEndHit, flame.OwnerID))
+				break
+			}
+			if engine.rules.NativeDurabilityLayers != 0 {
+				events = append(events, engine.applyDurabilityHit(actorIndex, flame.OwnerID, engine.elapsedMS)...)
 				break
 			}
 			actor.State = ActorTrapped
@@ -436,6 +440,8 @@ func (engine *Engine) eliminateActorWithDrops(actorIndex int, killerID uint16, v
 	}
 	drops := verifiedDrops
 	switch {
+	case engine.rules.NativeDurabilityLayers != 0:
+		drops = nil // 0x00601FEC reports native durability deaths with no items
 	case engine.rules.DeathDropRecycle:
 		engine.recycleDeathDrops(actor)
 		drops = nil
@@ -451,6 +457,7 @@ func (engine *Engine) eliminateActorWithDrops(actorIndex int, killerID uint16, v
 	actor.CarriedObjectives = [MaxObjectiveKinds]uint16{}
 	events := engine.installDeathDrops(actor.PlayerID, drops)
 	actor.State = ActorEliminated
+	actor.DurabilityLeft = 0
 	actor.TrappedBy = 0
 	actor.TrappedByBombID = 0
 	actor.TrapExpiresAt = 0

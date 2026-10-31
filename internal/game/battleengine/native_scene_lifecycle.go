@@ -156,6 +156,14 @@ func (engine *Engine) syncNativeBombLinks() {
 }
 
 func (engine *Engine) nativeBombCanChain(from, to Bomb) bool {
+	if area := engine.machineBlastCells(from.NativeStyle, from.Cell); area != nil {
+		for _, cell := range area {
+			if cell == to.Cell {
+				return true
+			}
+		}
+		return false
+	}
 	if from.Cell == to.Cell {
 		return true
 	}

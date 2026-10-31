@@ -136,13 +136,13 @@ func (engine *Engine) explodeDueBombsMatching(acceptRoot func(Bomb) bool) []Even
 			}
 		}
 		events = append(events, Event{
-			Kind: EventBombExploded, TimeMS: engine.elapsedMS, PlayerID: bomb.OwnerID,
+			Kind: EventBombExploded, TimeMS: engine.elapsedMS, PlayerID: bomb.OwnerID, NativeStyle: bomb.NativeStyle,
 			BombID: bomb.ID, TriggeredByBombID: bomb.TriggeredByBombID, Cell: bomb.Cell,
 			BlastRowMin: rowMin, BlastRowMax: rowMax, BlastColMin: colMin, BlastColMax: colMax,
 		})
 		for _, cell := range blastCells {
 			clearedCells[cell] = true
-			engine.addBombFlame(cell, bomb.OwnerID, bomb.ID)
+			engine.addMachineFlame(cell, bomb.OwnerID, bomb.ID, bomb.NativeStyle)
 		}
 	}
 	// Native FA4 computes the entire due/chain batch against the old static
@@ -214,6 +214,12 @@ func (engine *Engine) commitBlastBatch(batch blastBatch) []Event {
 }
 
 func (engine *Engine) blastCells(bomb Bomb, _ map[uint32]bool, _ *[]uint32, batch *blastBatch) []Cell {
+	if area := engine.machineBlastCells(bomb.NativeStyle, bomb.Cell); area != nil {
+		for _, cell := range area {
+			batch.hit(cell, bomb, false) // area fire affects objects, not static walls
+		}
+		return area
+	}
 	result := []Cell{bomb.Cell}
 	if tile, inside := engine.grid.Cell(bomb.Cell); inside && tile.Kind == CellOpen && !tile.MapElementOccupied {
 		batch.hit(bomb.Cell, bomb, false)
