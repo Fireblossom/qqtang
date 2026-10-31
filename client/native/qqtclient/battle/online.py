@@ -88,8 +88,18 @@ class OnlineBattle:
         self.net_logged: tuple[Any, ...] | None = None
         self.saved_handlers = {command: session.handlers.get(command) for command in
                                (match.REQUEST_PLAY_COMMAND, match.GAME_EVENT_NOTIFY_COMMAND, match.NOTIFY_UDP_OK_COMMAND,
-                                match.HELLO_COMMAND)}
+                                match.HELLO_COMMAND, room.LEAVE_ROOM_NOTIFY_COMMAND)}
+        room_left = self.saved_handlers[room.LEAVE_ROOM_NOTIFY_COMMAND]
+
+        def member_left(packet: game.Packet) -> None:
+            # The room still updates its seats; the sidecar takes the player
+            # out of the match (Client.exe's rule slot 8).
+            self.scene.pending_tcp.append((packet.command, packet.payload))
+            if room_left is not None:
+                room_left(packet)
+
         session.handlers.update({
+            room.LEAVE_ROOM_NOTIFY_COMMAND: member_left,
             match.REQUEST_PLAY_COMMAND: lambda _packet: None,  # echo of each accepted copy
             match.GAME_EVENT_NOTIFY_COMMAND: self.on_game_event,
             match.NOTIFY_UDP_OK_COMMAND: lambda packet: self.scene.pending_tcp.append((packet.command, packet.payload)),

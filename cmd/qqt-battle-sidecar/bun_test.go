@@ -139,3 +139,17 @@ func TestArbitratorAnnouncesOnlyValidBunActions(t *testing.T) {
 		t.Fatalf("not applied: %+v %v", match.bun.houses, match.bun.carried)
 	}
 }
+
+func TestBunLeaverReturnsTheBunHome(t *testing.T) {
+	rule := bunTestRule()
+	rule.houses[0].own = 1
+	rule.carried[8] = 1 // took team 1's bun
+	rule.onDeparture(8)
+	if rule.houses[0].own != 2 || rule.houses[1].own != 2 || rule.carrying(8) != bunNone {
+		t.Fatalf("after leaving: houses %+v carried %v", rule.houses, rule.carried)
+	}
+	rule.onDeparture(9) // carries nothing
+	if rule.houses[0].own != 2 || rule.houses[1].own != 2 {
+		t.Fatalf("an empty-handed leaver changed the houses: %+v", rule.houses)
+	}
+}

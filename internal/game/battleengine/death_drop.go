@@ -62,6 +62,23 @@ func (engine *Engine) objectiveDeathDropSceneIDs(actor *Actor) []uint32 {
 	return sceneIDs
 }
 
+// recycleDepartingObjectives is rule 5's slot 8 (0x0060B139) under
+// Rules.ObjectiveDepartureRecycle: every carried objective joins the bird's
+// recycle queue and the actor's counts are cleared.
+func (engine *Engine) recycleDepartingObjectives(actor *Actor) {
+	if !engine.rules.ObjectiveDepartureRecycle {
+		return
+	}
+	if !engine.rules.NativeOutcomeAuthority {
+		for index, count := range actor.CarriedObjectives {
+			for item := uint16(0); item < count; item++ {
+				engine.recycledPickupSceneIDs = append(engine.recycledPickupSceneIDs, engine.rules.ObjectiveSceneIDs[index])
+			}
+		}
+	}
+	actor.CarriedObjectives = [MaxObjectiveKinds]uint16{}
+}
+
 func ordinaryDeathDropSceneIDs(actor *Actor) []uint32 {
 	sceneIDs := make([]uint32, 0, nativeDeathDropMaximum)
 	for index, delta := range actor.nativeBasicPickupDelta {

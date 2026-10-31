@@ -182,6 +182,8 @@ type onlineMatch struct {
 	// clock of each eliminated player's death.
 	respawn      *respawnRule
 	eliminatedAt map[uint16]uint32
+	// Players who left the room mid-match; they never relive.
+	departed map[uint16]bool
 
 	bot *autoplayBot // --autoplay; nil when the keyboard plays
 	bun *bunRule     // rule 3; nil otherwise
@@ -322,7 +324,7 @@ func newOnlineMatch(init command) (*onlineMatch, beginView, error) {
 		fieldContacts: map[fieldContactKey]bool{}, itemUses: map[[3]uint32]bool{}, useRequested: map[uint8]uint32{},
 		preparedRequested: map[uint32]uint32{},
 		pickupRequests:    map[pickupKey]pickupRequest{}, sceneRequests: map[sceneRequestKey]uint32{},
-		respawn: respawn, eliminatedAt: map[uint16]uint32{},
+		respawn: respawn, eliminatedAt: map[uint16]uint32{}, departed: map[uint16]bool{},
 	}
 	if entry.Rule == mapdata.CompetitiveRuleBun {
 		match.bun = newBunRule(entry, begin)
@@ -372,6 +374,7 @@ func ruleOptions(entry mapdata.CompetitiveMap, local, arbitrator uint16) (battle
 			uint32(sceneelement.TreasureGemOne), uint32(sceneelement.TreasureGemTwo), uint32(sceneelement.TreasureGemThree),
 		}
 		rules.ObjectiveDeathDrops = true
+		rules.ObjectiveDepartureRecycle = true
 		rules.ExternalConclusion = true
 		return rules, &respawnRule{delayMS: 5000, waitFree: true}, nil
 	default:
@@ -897,7 +900,7 @@ func (match *onlineMatch) noteEliminations(events []battleengine.Event) {
 		return
 	}
 	for _, event := range events {
-		if event.Kind == battleengine.EventActorEliminated {
+		if event.Kind == battleengine.EventActorEliminated && !match.departed[event.TargetID] {
 			match.eliminatedAt[event.TargetID] = event.TimeMS
 		}
 	}
@@ -1135,6 +1138,7 @@ func (match *onlineMatch) arbitrateBombMove(sender uint16, event game.GameEvent)
 const (
 	notifyUDPOKCommand     = 0x0087
 	gameEventNotifyCommand = 0x0084
+	leaveRoomNotifyCommand = 0x008E // a member left the room: PlayerID, new owner, arbitrator, map (big endian)
 )
 
 func (match *onlineMatch) handleTCP(packet tcpPacket) {
@@ -1143,6 +1147,10 @@ func (match *onlineMatch) handleTCP(packet tcpPacket) {
 		return
 	}
 	switch packet.Command {
+	case leaveRoomNotifyCommand:
+		if len(payload) >= 2 {
+			match.depart(uint16(payload[0])<<8 | uint16(payload[1]))
+		}
 	case gameEventNotifyCommand:
 		notify, err := game.ParseNotifyGameEventPayload(payload)
 		if err != nil {
@@ -1150,7 +1158,8 @@ func (match *onlineMatch) handleTCP(packet tcpPacket) {
 		}
 		switch notify.Schema {
 		case game.NotifyChangeArbitrator:
-			if len(notify.Body) >= 2 {
+			// The server repeats the current arbitrator after any departure.
+			if len(notify.Body) >= 2 && uint16(notify.Body[0])<<8|uint16(notify.Body[1]) != match.arbitrator {
 				match.arbitrator = uint16(notify.Body[0])<<8 | uint16(notify.Body[1])
 				match.logf("arbitrator is now %d", match.arbitrator)
 				if match.isArbitrator() {
@@ -1163,6 +1172,26 @@ func (match *onlineMatch) handleTCP(packet tcpPacket) {
 			match.applyPreparedUse(notify.Body)
 		}
 	}
+}
+
+// depart removes a player who left the room mid-match. Client.exe takes the
+// actor out of the scene and runs the rule's slot 8 for it: rule 5 sends its
+// gems to the bird (engine Rules.ObjectiveDepartureRecycle), rule 3 returns
+// its bun to the house of that colour (0x0060BC28). It never relives.
+func (match *onlineMatch) depart(playerID uint16) {
+	if playerID == match.local || match.departed[playerID] {
+		return
+	}
+	if err := match.runtime.AcceptHumanDeparture(playerID); err != nil {
+		match.logf("departure of %d: %v", playerID, err)
+		return
+	}
+	match.departed[playerID] = true
+	delete(match.eliminatedAt, playerID)
+	if match.bun != nil {
+		match.bun.onDeparture(playerID)
+	}
+	match.logf("player %d left the match", playerID)
 }
 
 // applyItemUse applies another player's held-item use (banana, glue, dart,

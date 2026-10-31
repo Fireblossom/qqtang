@@ -226,6 +226,22 @@ func (rule *bunRule) onDeath(victim, killer uint16, killed bool, position battle
 	rule.carried[victim] = bunNone
 }
 
+// onDeparture is slot 8 (0x0060BC28): a leaver's bun goes back to the house
+// of its colour.
+func (rule *bunRule) onDeparture(playerID uint16) {
+	bun := rule.carrying(playerID)
+	if bun == bunNone {
+		return
+	}
+	for index := range rule.houses {
+		if int16(rule.houses[index].team) == bun {
+			rule.houses[index].own++
+			break
+		}
+	}
+	rule.carried[playerID] = bunNone
+}
+
 // bunView is the rule state the client draws.
 type bunView struct {
 	Houses  []bunHouseView   `json:"houses"`

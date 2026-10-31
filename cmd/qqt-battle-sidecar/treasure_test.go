@@ -55,7 +55,7 @@ func treasureMatchOn(t *testing.T, arbitrator uint16, edit func(*battleengine.Gr
 		collected: map[pickupKey]uint16{}, fieldContacts: map[fieldContactKey]bool{}, itemUses: map[[3]uint32]bool{},
 		useRequested: map[uint8]uint32{}, preparedRequested: map[uint32]uint32{},
 		pickupRequests: map[pickupKey]pickupRequest{}, sceneRequests: map[sceneRequestKey]uint32{},
-		respawn: respawn, eliminatedAt: map[uint16]uint32{},
+		respawn: respawn, eliminatedAt: map[uint16]uint32{}, departed: map[uint16]bool{},
 	}
 }
 
@@ -212,4 +212,42 @@ func TestDeathWithGemsPublishesOnlyGems(t *testing.T) {
 
 func treasureMapForTest() mapdata.CompetitiveMap {
 	return mapdata.CompetitiveMap{ID: 1101, Rule: mapdata.CompetitiveRuleTreasure}
+}
+
+func TestLeaverIsRemovedAndNeverRelives(t *testing.T) {
+	match := treasureMatch(t, 1)
+	events, err := match.runtime.AcceptNativeElimination(2, 0, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	match.noteEliminations(events)
+	// LEAVE_ROOM notify: player 2 left, owner 1, arbitrator 1, map 1101.
+	match.handleTCP(tcpPacket{Command: leaveRoomNotifyCommand, Payload: "000200010001044d"})
+	if !match.departed[2] {
+		t.Fatal("departure not recorded")
+	}
+	advanceTo(t, match, match.engine.ElapsedMS()+6000)
+	if relived := match.respawnDue(); len(relived) != 0 {
+		t.Fatalf("a leaver relived: %+v", relived)
+	}
+	if actor, _ := actorByID(match.engine.Actors(), 2); actor.State != battleengine.ActorEliminated {
+		t.Fatalf("leaver = %+v", actor)
+	}
+	// The local player's own leave notice changes nothing.
+	match.handleTCP(tcpPacket{Command: leaveRoomNotifyCommand, Payload: "000100020002044d"})
+	if match.departed[1] {
+		t.Fatal("the local player was removed")
+	}
+}
+
+func TestActiveLeaverIsRemovedAtOnce(t *testing.T) {
+	match := treasureMatch(t, 1)
+	match.depart(2)
+	if actor, _ := actorByID(match.engine.Actors(), 2); actor.State != battleengine.ActorEliminated {
+		t.Fatalf("leaver = %+v", actor)
+	}
+	advanceTo(t, match, match.engine.ElapsedMS()+6000)
+	if relived := match.respawnDue(); len(relived) != 0 {
+		t.Fatalf("a leaver relived: %+v", relived)
+	}
 }

@@ -11,8 +11,8 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
 
 from qqtclient.battle import mapfile  # noqa: E402
 from qqtclient.battle.practice import practice_players  # noqa: E402
-from qqtclient.battle.scene import (ACTOR_TRAPPED, BUN_HOUSES, BUN_ICONS, NEEDLE_ACTION, TREASURE_BADGE,  # noqa: E402
-                                   TREASURE_DIGITS, BattleScene, Explosion, flame_image, player_title)
+from qqtclient.battle.scene import (ACTOR_TRAPPED, BUN_HOUSES, BUN_ICONS, FLASH_IMAGE, NEEDLE_ACTION, TREASURE_BADGE,  # noqa: E402
+                                   TREASURE_DIGITS, BattleScene, Explosion, effect_frame, flame_image, player_title)
 from qqtclient.battle.sidecar import ACTOR_ELIMINATED, EVENT_ACTOR_RESPAWNED  # noqa: E402
 
 
@@ -160,6 +160,37 @@ class BunHouseTest(unittest.TestCase):
         # (1, 20); own buns in the roof window 8 apart, captured ones 10 lower.
         self.assertEqual(drawn, [(BUN_HOUSES[0], 2, 170, 47), (BUN_ICONS[0], 0, 213, 50), (BUN_ICONS[0], 0, 221, 50),
                                  (BUN_ICONS[1], 0, 213, 60), (BUN_HOUSES[1], 2, 330, 47)])
+
+
+class EffectTest(unittest.TestCase):
+    def test_effect_frames_wrap_at_the_last_key(self) -> None:
+        # default_MapElement.eff: 4 frames of 100 ms, keys 0..1000.
+        self.assertEqual([effect_frame(t, 1000, 100, 4) for t in range(0, 1200, 100)], [0, 1, 2, 3, 0, 1, 2, 3, 0, 1, 0, 1])
+        # flash2.eff: 15 frames of 100 ms, keys 0..1500.
+        self.assertEqual([effect_frame(t, 1500, 100, 15) for t in (0, 1499, 1500, 2950)], [0, 14, 0, 14])
+
+    def test_protection_flash_is_drawn_only_while_protected(self) -> None:
+        scene = BattleScene.__new__(BattleScene)
+        scene.state = {"clock": 1000}
+        scene.flash_ms = {2: 1650}
+        scene.sprites = type("Sprites", (), {"get": staticmethod(lambda path: [(None, 0, 0)] * 15 if path == FLASH_IMAGE else None)})()
+        drawn: list[tuple[str, int, int, int]] = []
+        scene._draw_frames = lambda _screen, path, frame, x, y, additive=False: drawn.append((path, frame, x, y))  # type: ignore[method-assign]
+        actor = {"id": 2, "x": 100, "y": 60, "protected_until": 1500}
+        scene._draw_flash(None, actor, 110, 87)  # type: ignore[arg-type]
+        # Effect point = sprite point = position + (10, 30) -> field + (2, 9).
+        self.assertEqual(drawn, [(FLASH_IMAGE, 1, 112, 96)])
+        drawn.clear()
+        actor["protected_until"] = 1000
+        scene._draw_flash(None, actor, 110, 87)  # type: ignore[arg-type]
+        self.assertEqual(drawn, [])
+
+    def test_item_anchors(self) -> None:
+        # Cell (1, 2): field origin (10, 27); anchor (0, 15) by default.
+        self.assertEqual(BattleScene._item_at(6, 1, 2), (90, 52))
+        self.assertEqual(BattleScene._item_at(42, 1, 2), (90, 52))  # placed banana
+        self.assertEqual(BattleScene._item_at(201, 1, 2), (85, 47))
+        self.assertEqual(BattleScene._item_at(203, 1, 2), (90, 67))
 
 
 class PlayerTitleTest(unittest.TestCase):

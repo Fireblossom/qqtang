@@ -369,6 +369,12 @@ type Rules struct {
 	// rule-5 death-drop slot 0x0060B08C does. Without carried objectives the
 	// ordinary drop applies.
 	ObjectiveDeathDrops bool
+	// ObjectiveDepartureRecycle queues a departing human's carried objectives
+	// for the pickup bird, one entry per item, as Client.exe's rule-5 slot 8
+	// (0x0060B139) puts the leaver's gems into the scene's recycle queue
+	// (+0x3108, 0x005E2B40). Like burned pickups, only an engine without
+	// NativeOutcomeAuthority queues them. Off by default.
+	ObjectiveDepartureRecycle bool
 	// ExternalConclusion leaves the result to the server: a team whose actors
 	// are all eliminated does not end the round, and RespawnActor may bring an
 	// eliminated actor back. The round deadline still ends the engine. Timed
@@ -413,6 +419,9 @@ func (rules Rules) validate() error {
 	}
 	if rules.ObjectiveDeathDrops && objectives == 0 {
 		return fmt.Errorf("objective death drops need at least one objective scene ID")
+	}
+	if rules.ObjectiveDepartureRecycle && objectives == 0 {
+		return fmt.Errorf("objective departure recycling needs at least one objective scene ID")
 	}
 	return nil
 }

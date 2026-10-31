@@ -322,6 +322,7 @@ func (runtime *Runtime) AcceptHumanDeparture(playerID uint16) error {
 	if index < 0 || runtime.engine.actors[index].Source != ParticipantHuman {
 		return fmt.Errorf("battle runtime departure player %d is not human", playerID)
 	}
+	runtime.engine.recycleDepartingObjectives(&runtime.engine.actors[index])
 	if runtime.engine.actors[index].State == ActorEliminated {
 		return nil
 	}

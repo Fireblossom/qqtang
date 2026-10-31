@@ -33,11 +33,14 @@ AVATAR_ANCHOR = (50, 64)
 WALK_FRAME_MS = 100
 FLAME_FRAME_MS = 70
 ITEM_FRAME_MS = 120
-# A scene item's image (with its own offset) is drawn 15 pixels above its
-# cell's top-left: sprite point = cell centre, anchor (0, 15) (0x005F760A,
-# 0x005F750E). Measured on a 2021 recording (Bilibili BV1Fh411m7Cx) for
-# items 6, 9 and 11.
-ITEM_RAISE = 15
+# Scene items, loose buns and placed banana/glue (0x006046C7): sprite point =
+# cell centre (0x005CCE0A, 0x005F760A), anchor (0, 15) except items 201
+# (5, 20) and 203, 204 (0, 0) (0x005CCE83; loose buns 0x005F750E). With
+# 0x005C477E's (-12, 1) and the field's (-8, 21) the image (with its own
+# offset) goes to the cell's top-left minus the anchor. Measured on a 2021
+# recording (Bilibili BV1Fh411m7Cx) for items 6, 9 and 11.
+ITEM_ANCHOR = (0, 15)
+ITEM_ANCHORS = {201: (5, 20), 203: (0, 0), 204: (0, 0)}
 DIE_MS = 1000
 # Being trapped: the full-body trigger pose under a syrup blob, which first
 # forms (misc111_stand, 5 frames) and then wobbles (misc111_trigger). The
@@ -46,6 +49,16 @@ SYRUP_FORM = "object/misc/misc111_stand.img"
 SYRUP_LOOP = "object/misc/misc111_trigger.img"
 SYRUP_FRAME_MS = 80
 SYRUP_ALPHA = 190
+# Harm protection (relive, end of a transformation): Client.exe 0x005B5202
+# plays effect/flash2.eff, magic0139's 15 frames 100 ms apart, looping every
+# 1500 ms; 0x005B5244 advances it only while protected and 0x005B528F draws
+# it over the actor. Its effect point is the actor's sprite point, position
+# + (10, 30) (0x005B514E), which is our field point + (2, 9). The track's
+# blend byte is 1, which 0x005832E0 turns into GFX.dll flag 0x10: source
+# alpha onto destination one, i.e. added light.
+FLASH_IMAGE = "object/magic/magic0139.img"
+FLASH_AT = (10 - 8, 30 - 21)
+FLASH_FRAME_MS, FLASH_MS = 100, 1500
 TRAPPED_FRAME_MS = 100
 DESTROY_MS = 300
 # Engine direction -> avatar sprite direction (0 right, 1 up, 2 left, 3 down).
@@ -144,7 +157,7 @@ TREASURE_GEM_VALUES = (1, 2, 3)  # scene items 150, 151, 152
 BUN_HOUSES = ("object/misc/misc151_stand.img", "object/misc/misc152_stand.img")  # first house, second
 BUN_HOUSE_ELEMENTS = (8009, 8010)
 BUN_HOUSE_OFFSET = (-1 + 1, -20)  # element 8009's offset from mapElem.py, 1 pixel right
-BUN_HOUSE_FRAME_MS = 100
+BUN_HOUSE_FRAME_MS, BUN_HOUSE_MS = 100, 1000  # default_MapElement.eff: 100 ms frames, keys 0..1000
 BUN_ICONS = ("object/misc/misc161_stand.img", "object/misc/misc162_stand.img")  # first house's colour, other
 BUN_ICON_AT = ((43, -17), (43, -7))  # own row, captured row; from the house's top-left cell
 BUN_ICON_STEP = 8
@@ -152,6 +165,12 @@ BUN_ICON_STEP = 8
 # wears it as cap 22 (first house's colour) or 23 (0x005AA4EC).
 BUN_LOOSE = "object/item/item11_stand.img"
 BUN_CAPS = (22, 23)
+
+
+def effect_frame(elapsed: float, length_ms: int, frame_ms: int, frames: int) -> int:
+    """A looping .eff track's frame (0x00582D20, 0x0057CD10): the effect's
+    time wraps at its last key, the track's frame at frames * frame_ms."""
+    return int(elapsed % length_ms % (frames * frame_ms) // frame_ms)
 
 
 @dataclasses.dataclass
@@ -239,6 +258,8 @@ class BattleScene:
         self.now_ms = 0.0
         self.eliminated_at: dict[int, float] = {}  # by now_ms
         self.trapped_at: dict[int, float] = {}  # by now_ms
+        self.flash_ms: dict[int, int] = {}  # protection effect time per actor, advanced only while protected
+        self.premultiplied: dict[tuple[str, int], pygame.Surface] = {}  # additive frames, colour * alpha
         self.explosions: dict[int, Explosion] = {}
         self.dying: dict[tuple[int, int, int], tuple[int, int]] = {}  # (layer, row, col) -> (element, clock)
         self.held: list[int] = []
@@ -387,6 +408,9 @@ class BattleScene:
                 self.walk_started[actor["id"]] = self.clock
             elif not moved:
                 self.walk_started.pop(actor["id"], None)
+        for actor in self.state["actors"]:
+            if actor.get("protected_until", 0) > previous_clock:
+                self.flash_ms[actor["id"]] = self.flash_ms.get(actor["id"], 0) + min(self.clock, actor["protected_until"]) - previous_clock
         for event in self.state["events"] or ():
             self._apply(event)
         self._update_timer()
@@ -430,13 +454,13 @@ class BattleScene:
                 self._draw_element(field, self.map.element(mapfile.LAYER_FLOOR, row, col), row, col)
         for pickup in self.state["pickups"] or ():
             self._draw_frames(field, f"object/item/item{pickup['scene']}_stand.img", self.clock // ITEM_FRAME_MS,
-                              ox + pickup["col"] * CELL, oy + pickup["row"] * CELL - ITEM_RAISE)
+                              *self._item_at(pickup["scene"], pickup["row"], pickup["col"]))
         for bun in (self.state.get("bun") or {}).get("loose") or ():
-            self._draw_frames(field, BUN_LOOSE, self.clock // ITEM_FRAME_MS, ox + bun["col"] * CELL, oy + bun["row"] * CELL - ITEM_RAISE)
+            self._draw_frames(field, BUN_LOOSE, self.clock // ITEM_FRAME_MS, *self._item_at(0, bun["row"], bun["col"]))
         for field_object in self.state.get("fields") or ():
             # Banana and glue placed with items 41/42 (scene IDs 42/43).
             self._draw_frames(field, f"object/item/item{field_object['action']}_stand.img", self.clock // ITEM_FRAME_MS,
-                              ox + field_object["col"] * CELL, oy + field_object["row"] * CELL)
+                              *self._item_at(field_object["action"], field_object["row"], field_object["col"]))
         for bomb in self.state["bombs"] or ():
             self._draw_frames(field, BOMB_IMAGE, self.clock // 150, ox + bomb["col"] * CELL - 2, oy + bomb["row"] * CELL - 1)
         for flame in self.state["flames"] or ():
@@ -456,6 +480,13 @@ class BattleScene:
                 self._draw_actor(field, actor)
         for path, position in ((FRAME_TOP, (0, 0)), (FRAME_LEFT, (0, oy))):
             self._draw_frames(screen, path, 0, *position)
+
+    @staticmethod
+    def _item_at(scene: int, row: int, col: int) -> tuple[int, int]:
+        """Where a scene item's image (before its own offset) goes."""
+        ax, ay = ITEM_ANCHORS.get(scene, ITEM_ANCHOR)
+        ox, oy = FIELD_ORIGIN
+        return ox + col * CELL - ax, oy + row * CELL - ay
 
     def _place_bun_houses(self) -> None:
         """Put the houses in the grid as 0x005D839C does, replacing the map
@@ -478,7 +509,7 @@ class BattleScene:
                 continue
             first = house["team"] == bun["first"]
             x, y = ox + house["col"] * CELL, oy + house["row"] * CELL
-            self._draw_frames(field, BUN_HOUSES[0 if first else 1], int(self.now_ms // BUN_HOUSE_FRAME_MS),
+            self._draw_frames(field, BUN_HOUSES[0 if first else 1], effect_frame(self.now_ms, BUN_HOUSE_MS, BUN_HOUSE_FRAME_MS, 4),
                               x + BUN_HOUSE_OFFSET[0], y + BUN_HOUSE_OFFSET[1])
             own, other = (BUN_ICONS[0], BUN_ICONS[1]) if first else (BUN_ICONS[1], BUN_ICONS[0])
             for path, count, (dx, dy) in ((own, house["own"], BUN_ICON_AT[0]), (other, house["captured"], BUN_ICON_AT[1])):
@@ -516,12 +547,20 @@ class BattleScene:
                 screen.blit(self.text(line, 12, (0, 0, 0)), (x + 1, y + top + 1))
                 screen.blit(self.text(line, 12, PLAYER_LIST_TEXT), (x, y + top))
 
-    def _draw_frames(self, surface: pygame.Surface, path: str, frame: int, x: int, y: int) -> None:
+    def _draw_frames(self, surface: pygame.Surface, path: str, frame: int, x: int, y: int, additive: bool = False) -> None:
+        """additive: GFX.dll blend flag 0x10, colour * alpha added to the screen."""
         frames = self.sprites.get(path)
         if not frames:
             return
         image, offset_x, offset_y = frames[frame % len(frames)]
-        if image is not None:
+        if image is None:
+            return
+        if additive:
+            key = (path, frame % len(frames))
+            if key not in self.premultiplied:
+                self.premultiplied[key] = image.convert_alpha().premul_alpha()
+            surface.blit(self.premultiplied[key], (x + offset_x, y + offset_y), special_flags=pygame.BLEND_RGB_ADD)
+        else:
             surface.blit(image, (x + offset_x, y + offset_y))
 
     def _draw_element(self, surface: pygame.Surface, element: int, row: int, col: int, action: str = "stand", frame: int = 0) -> None:
@@ -581,6 +620,15 @@ class BattleScene:
             surface.blit(image, (x - AVATAR_ANCHOR[0], y - AVATAR_ANCHOR[1]))
         if actor["state"] == ACTOR_TRAPPED:
             self._draw_syrup(surface, trapped_for, x - AVATAR_ANCHOR[0], y - AVATAR_ANCHOR[1])
+        self._draw_flash(surface, actor, x, y)
+
+    def _draw_flash(self, surface: pygame.Surface, actor: dict[str, Any], x: int, y: int) -> None:
+        """The harm-protection bubble over an actor at field point (x, y)."""
+        if actor.get("protected_until", 0) <= self.clock:
+            return
+        frames = self.sprites.get(FLASH_IMAGE) or ()
+        self._draw_frames(surface, FLASH_IMAGE, effect_frame(self.flash_ms.get(actor["id"], 0), FLASH_MS, FLASH_FRAME_MS, len(frames) or 1),
+                          x + FLASH_AT[0], y + FLASH_AT[1], additive=True)
 
     def _draw_syrup(self, surface: pygame.Surface, trapped_for: float, x: int, y: int) -> None:
         """The syrup blob on the actor's 100x100 avatar canvas at (x, y)."""

@@ -276,3 +276,37 @@ func TestRespawnProtectsFromFlames(t *testing.T) {
 		t.Fatalf("a protected actor was hit: state %d", state)
 	}
 }
+
+func TestDepartureRecyclesCarriedObjectivesOnlyWhenEnabled(t *testing.T) {
+	for _, enabled := range []bool{false, true} {
+		config := treasureTestConfig()
+		config.Rules.ObjectiveDepartureRecycle = enabled
+		engine := mustEngine(t, config)
+		engine.actors[0].CarriedObjectives = [MaxObjectiveKinds]uint16{2, 0, 1}
+		runtime, err := NewRuntime(engine, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err = runtime.AcceptHumanDeparture(1); err != nil {
+			t.Fatal(err)
+		}
+		want := []uint32(nil)
+		if enabled {
+			want = []uint32{150, 150, 152}
+		}
+		if got := engine.recycledPickupSceneIDs; len(got) != len(want) || (len(want) > 0 && (got[0] != want[0] || got[1] != want[1] || got[2] != want[2])) {
+			t.Fatalf("enabled %v: recycled %v, want %v", enabled, got, want)
+		}
+		if engine.actors[0].CarriedObjectives != [MaxObjectiveKinds]uint16{} || len(engine.pickups) != 0 {
+			t.Fatalf("enabled %v: carried %v, pickups %+v", enabled, engine.actors[0].CarriedObjectives, engine.pickups)
+		}
+	}
+}
+
+func TestDepartureRecycleNeedsObjectives(t *testing.T) {
+	config := testConfig()
+	config.Rules.ObjectiveDepartureRecycle = true
+	if _, err := New(config); err == nil {
+		t.Fatal("departure recycling without objectives was accepted")
+	}
+}
