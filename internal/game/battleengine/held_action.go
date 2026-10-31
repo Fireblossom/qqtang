@@ -92,3 +92,23 @@ func removeHeldAction(actor *Actor, actionID uint8) {
 		}
 	}
 }
+
+// GrantHeldAction adds count of a rule-granted action (such as rule 6's
+// put-down item 66, 0x0087EC6D) to an actor's seven slots, as a pickup would.
+// It reports whether the inventory had room.
+func (engine *Engine) GrantHeldAction(playerID uint16, actionID, count uint8) bool {
+	index := engine.actorIndex(playerID)
+	if index < 0 {
+		return false
+	}
+	return grantHeldAction(&engine.actors[index], actionID, count)
+}
+
+// ConsumeHeldAction removes one of an actor's held actions (0x0088DE67).
+func (engine *Engine) ConsumeHeldAction(playerID uint16, actionID uint8) bool {
+	index := engine.actorIndex(playerID)
+	if index < 0 {
+		return false
+	}
+	return consumeHeldAction(&engine.actors[index], actionID)
+}

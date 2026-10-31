@@ -105,6 +105,7 @@ type bombView struct {
 	Col       int16  `json:"col"`
 	Power     byte   `json:"power"`
 	ExplodeAt uint32 `json:"explode_at"`
+	Style     byte   `json:"style,omitempty"` // bubble type: 9 for rule 6's held item 48
 }
 
 type flameView struct {
@@ -163,9 +164,10 @@ type stateView struct {
 	Begin *beginView `json:"begin,omitempty"`
 	Net   *netView   `json:"net,omitempty"`
 	// The local player's room props left, in GAME_BEGIN order.
-	Prepared []preparedView `json:"prepared,omitempty"`
-	Bun      *bunView       `json:"bun,omitempty"` // rule 3
-	TCPOut   []tcpPacket    `json:"tcp_out,omitempty"`
+	Prepared  []preparedView `json:"prepared,omitempty"`
+	Bun       *bunView       `json:"bun,omitempty"`       // rule 3
+	Sculpture *sculptureView `json:"sculpture,omitempty"` // rule 6
+	TCPOut    []tcpPacket    `json:"tcp_out,omitempty"`
 }
 
 func main() {
@@ -229,6 +231,10 @@ func runOnline(init command, lines *bufio.Scanner, out *json.Encoder) error {
 	if match.bun != nil {
 		state.Bun = match.bun.view()
 	}
+	if match.sculpture != nil {
+		state.Sculpture = match.sculpture.view()
+		match.markStyleNine(state.Bombs)
+	}
 	if err := out.Encode(state); err != nil {
 		return err
 	}
@@ -248,6 +254,10 @@ func runOnline(init command, lines *bufio.Scanner, out *json.Encoder) error {
 		state.Net, state.TCPOut, state.Prepared = match.netView(), match.takeTCP(), match.preparedView()
 		if match.bun != nil {
 			state.Bun = match.bun.view()
+		}
+		if match.sculpture != nil {
+			state.Sculpture = match.sculpture.view()
+			match.markStyleNine(state.Bombs)
 		}
 		if err := out.Encode(state); err != nil {
 			return err

@@ -13,6 +13,7 @@ import (
 const (
 	MaxParticipants                 = 8
 	MaxObjectiveKinds               = 4
+	MaxLooseObjectKinds             = 5 // rule-6 fragments 161..165
 	ObservationSchemaVersion uint16 = 7
 	ActionSpaceVersion       uint16 = 2
 	MaxNativeSpeedRate              = 10
@@ -375,6 +376,13 @@ type Rules struct {
 	// (+0x3108, 0x005E2B40). Like burned pickups, only an engine without
 	// NativeOutcomeAuthority queues them. Off by default.
 	ObjectiveDepartureRecycle bool
+	// LooseObjectSceneIDs lists rule-owned GAME_BEGIN wall items that are not
+	// pickups, such as the rule-6 sculpture fragments 161..165. They still take
+	// their places in the wall-item placement, so ordinary items land where
+	// Client.exe puts them (0x005B6441, 0x005C2CE7), but Client.exe turns them
+	// into objects of its own loose list (0x005D9815); ConfigFromCompetitiveMap
+	// returns them in Config.LooseObjects for the caller. Off when empty.
+	LooseObjectSceneIDs [MaxLooseObjectKinds]uint32
 	// ExternalConclusion leaves the result to the server: a team whose actors
 	// are all eliminated does not end the round, and RespawnActor may bring an
 	// eliminated actor back. The round deadline still ends the engine. Timed
@@ -423,6 +431,19 @@ func (rules Rules) validate() error {
 	if rules.ObjectiveDepartureRecycle && objectives == 0 {
 		return fmt.Errorf("objective departure recycling needs at least one objective scene ID")
 	}
+	for index, sceneID := range rules.LooseObjectSceneIDs {
+		if sceneID == 0 {
+			continue
+		}
+		if _, _, ordinary := supportedPickupEffect(sceneID); ordinary || nativeFieldSceneID(sceneID) || rules.objectiveIndex(sceneID) >= 0 {
+			return fmt.Errorf("loose object scene ID %d is already a pickup", sceneID)
+		}
+		for _, earlier := range rules.LooseObjectSceneIDs[:index] {
+			if earlier == sceneID {
+				return fmt.Errorf("loose object scene ID %d is listed twice", sceneID)
+			}
+		}
+	}
 	return nil
 }
 
@@ -448,6 +469,15 @@ func (rules Rules) pickupSupported(sceneID uint32) bool {
 	return rules.objectiveIndex(sceneID) >= 0
 }
 
+func (rules Rules) looseObject(sceneID uint32) bool {
+	for _, loose := range rules.LooseObjectSceneIDs {
+		if loose != 0 && loose == sceneID {
+			return true
+		}
+	}
+	return false
+}
+
 type Config struct {
 	Seed                  uint64
 	Grid                  Grid
@@ -456,6 +486,9 @@ type Config struct {
 	Pickups               []Pickup
 	ScheduledPickups      []NativeScheduledPickup
 	PublicWallItemProfile PublicWallItemProfile
+	// LooseObjects are the Rules.LooseObjectSceneIDs wall items at their
+	// placed cells, for the caller; New ignores them.
+	LooseObjects []Pickup
 }
 
 // PublicWallItemCategory is a stable effect-level grouping of the map's

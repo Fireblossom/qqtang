@@ -163,6 +163,28 @@ BUN_ICON_AT = ((43, -17), (43, -7))  # own row, captured row; from the house's t
 BUN_ICON_STEP = 8
 # A loose bun is object/item/item11, drawn like a scene item; a carrier
 # wears it as cap 22 (first house's colour) or 23 (0x005AA4EC).
+#
+# Sculpture (rule 6). A statue (0x005F5D4B, element 12008, built over the
+# map file's own statue elements) draws up to three layers from sprite point
+# = its cell's centre (0x005F639E): the base misc221 (first statue) or
+# misc222 with anchor (11, 47); a stage for progress 1..3 (misc223..225 or
+# misc226..228) or misc229 for a complete one, anchor (11, 104); and when
+# complete a hero, anchor (12, 150): misc239..242 for the first slot of
+# material 13..16, otherwise misc(230 + p) (p < 18) or misc(225 + p), p
+# being the completing player's role (inferred). A deposit or a lost piece
+# plays the stage's _trigger frames for 2000 ms (0x005F634C; the 100 ms
+# frame time is inferred). Loose fragments draw as item{material}
+# (0x005F750E) and are hidden under a map element (0x005F75A5); a carrier
+# wears cap 101..105 for material 12..16 (0x005AA4EC).
+STATUE_ELEMENTS = (12008, 12009)
+STATUE_BASES = ("object/misc/misc221", "object/misc/misc222")  # first statue, second
+STATUE_STAGES = (("object/misc/misc223", "object/misc/misc224", "object/misc/misc225"),
+                 ("object/misc/misc226", "object/misc/misc227", "object/misc/misc228"))
+STATUE_DONE = "object/misc/misc229"
+STATUE_BASE_ANCHOR, STATUE_STAGE_ANCHOR, STATUE_HERO_ANCHOR = (11, 47), (11, 104), (12, 150)
+STATUE_TRIGGER_MS, STATUE_TRIGGER_FRAME_MS = 2000, 100
+STATUE_PIECES = 4
+FRAGMENT_CAP_BASE = 101 - 12  # cap = material + this
 BUN_LOOSE = "object/item/item11_stand.img"
 BUN_CAPS = (22, 23)
 
@@ -231,6 +253,8 @@ class BattleScene:
         self.map_name = description.name
         self.state = state
         self._place_bun_houses()
+        self._place_statues()
+        self.statue_changed: dict[tuple[int, int], tuple[int, float]] = {}  # by cell: (progress, now_ms of the change)
         self.realtime = realtime
         begin = state.get("begin") or {}
         self.rule = begin.get("rule") or "ordinary"
@@ -408,6 +432,7 @@ class BattleScene:
                 self.walk_started[actor["id"]] = self.clock
             elif not moved:
                 self.walk_started.pop(actor["id"], None)
+        self._note_statue_changes()
         for actor in self.state["actors"]:
             if actor.get("protected_until", 0) > previous_clock:
                 self.flash_ms[actor["id"]] = self.flash_ms.get(actor["id"], 0) + min(self.clock, actor["protected_until"]) - previous_clock
@@ -455,6 +480,10 @@ class BattleScene:
         for pickup in self.state["pickups"] or ():
             self._draw_frames(field, f"object/item/item{pickup['scene']}_stand.img", self.clock // ITEM_FRAME_MS,
                               *self._item_at(pickup["scene"], pickup["row"], pickup["col"]))
+        for fragment in (self.state.get("sculpture") or {}).get("loose") or ():
+            if not fragment["hidden"]:
+                self._draw_frames(field, f"object/item/item{fragment['material']}_stand.img", self.clock // ITEM_FRAME_MS,
+                                  *self._item_at(fragment["material"], fragment["row"], fragment["col"]))
         for bun in (self.state.get("bun") or {}).get("loose") or ():
             self._draw_frames(field, BUN_LOOSE, self.clock // ITEM_FRAME_MS, *self._item_at(0, bun["row"], bun["col"]))
         for field_object in self.state.get("fields") or ():
@@ -462,7 +491,10 @@ class BattleScene:
             self._draw_frames(field, f"object/item/item{field_object['action']}_stand.img", self.clock // ITEM_FRAME_MS,
                               *self._item_at(field_object["action"], field_object["row"], field_object["col"]))
         for bomb in self.state["bombs"] or ():
-            self._draw_frames(field, BOMB_IMAGE, self.clock // 150, ox + bomb["col"] * CELL - 2, oy + bomb["row"] * CELL - 1)
+            # Rule 6's style-9 bubble uses that bubble type's image, placed like
+            # the others (its size was not checked against a recording).
+            image = f"object/bomb/bomb{bomb['style']}_stand.img" if bomb.get("style") else BOMB_IMAGE
+            self._draw_frames(field, image, self.clock // 150, ox + bomb["col"] * CELL - 2, oy + bomb["row"] * CELL - 1)
         for flame in self.state["flames"] or ():
             self._draw_flame(field, flame)
         actors_by_row: dict[int, list[dict[str, Any]]] = {}
@@ -476,6 +508,7 @@ class BattleScene:
                     if dying is not None:
                         self._draw_dying(field, dying, row, col)
             self._draw_bun_houses(field, row)
+            self._draw_statues(field, row)
             for actor in sorted(actors_by_row.get(row, ()), key=lambda item: item["y"]):
                 self._draw_actor(field, actor)
         for path, position in ((FRAME_TOP, (0, 0)), (FRAME_LEFT, (0, oy))):
@@ -498,6 +531,51 @@ class BattleScene:
                     if abs(self.map.element(mapfile.LAYER_TOP, row, col)) in BUN_HOUSE_ELEMENTS:
                         self._set(mapfile.LAYER_TOP, row, col, 0)
 
+    def _place_statues(self) -> None:
+        """Statues replace the map file's own statue elements (0x005D839C)."""
+        for statue in (self.state.get("sculpture") or {}).get("statues") or ():
+            for layer in range(mapfile.LAYERS):
+                if abs(self.map.element(layer, statue["row"], statue["col"])) in STATUE_ELEMENTS:
+                    self._set(layer, statue["row"], statue["col"], 0)
+
+    def _note_statue_changes(self) -> None:
+        for statue in (self.state.get("sculpture") or {}).get("statues") or ():
+            cell = (statue["row"], statue["col"])
+            before = self.statue_changed.get(cell)
+            if before is None:
+                self.statue_changed[cell] = (statue["progress"], -STATUE_TRIGGER_MS)
+            elif before[0] != statue["progress"]:
+                self.statue_changed[cell] = (statue["progress"], self.now_ms)
+
+    def _statue_hero(self, statue: dict[str, Any]) -> str:
+        for material in statue["slots"]:
+            if 13 <= material <= 16:
+                return f"object/misc/misc{239 + material - 13}"
+        actor = next((actor for actor in self.state["actors"] if actor["id"] == statue["completed_by"]), None)
+        role = (actor or {}).get("role", 0)
+        return f"object/misc/misc{230 + role if role < 18 else 225 + role}"
+
+    def _draw_statues(self, field: pygame.Surface, row: int) -> None:
+        """The statues standing on this row (0x005F639E)."""
+        ox, oy = FIELD_ORIGIN
+        for statue in (self.state.get("sculpture") or {}).get("statues") or ():
+            if statue["row"] != row:
+                continue
+            x, y = ox + statue["col"] * CELL + CELL // 2 - 12 - 8, oy + statue["row"] * CELL + CELL // 2 + 1 - 21  # sprite point -> field
+            colour = 0 if statue["first"] else 1
+            layers = [(STATUE_BASES[colour], STATUE_BASE_ANCHOR)]
+            progress = statue["progress"]
+            if progress >= STATUE_PIECES:
+                layers += [(STATUE_DONE, STATUE_STAGE_ANCHOR), (self._statue_hero(statue), STATUE_HERO_ANCHOR)]
+            elif progress > 0:
+                layers.append((STATUE_STAGES[colour][progress - 1], STATUE_STAGE_ANCHOR))
+            changed_at = self.statue_changed.get((statue["row"], statue["col"]), (0, -STATUE_TRIGGER_MS))[1]
+            for index, (path, (ax, ay)) in enumerate(layers):
+                if index == 1 and self.now_ms - changed_at < STATUE_TRIGGER_MS and self.sprites.get(path + "_trigger.img"):
+                    self._draw_frames(field, path + "_trigger.img", int((self.now_ms - changed_at) // STATUE_TRIGGER_FRAME_MS), x - ax, y - ay)
+                else:
+                    self._draw_frames(field, path + "_stand.img", 0, x - ax, y - ay)
+
     def _draw_bun_houses(self, field: pygame.Surface, row: int) -> None:
         """The houses anchored on this row, each with its row of small buns."""
         bun = self.state.get("bun")
@@ -517,13 +595,19 @@ class BattleScene:
                     self._draw_frames(field, path, 0, x + dx + index * BUN_ICON_STEP, y + dy)
 
     def _wear(self, actor: dict[str, Any]) -> tuple[tuple[str, int], ...]:
-        """Worn costume parts; a bun carrier's cap is the bun."""
+        """Worn costume parts; a bun or fragment carrier's cap is what it carries."""
         wear = self.wear.get(actor["id"], ())
-        bun = self.state.get("bun")
-        carried = (bun or {}).get("carried", {}).get(str(actor["id"]), -1)
-        if carried < 0:
+        bun, sculpture = self.state.get("bun"), self.state.get("sculpture")
+        if bun:
+            carried = bun.get("carried", {}).get(str(actor["id"]), -1)
+            cap = BUN_CAPS[0 if carried == bun["first"] else 1] if carried >= 0 else 0
+        elif sculpture:
+            carried = sculpture.get("carried", {}).get(str(actor["id"]), -1)
+            cap = carried + FRAGMENT_CAP_BASE if carried >= 0 else 0
+        else:
+            cap = 0
+        if not cap:
             return wear
-        cap = BUN_CAPS[0 if carried == bun["first"] else 1]
         return tuple(part for part in wear if part[0] != "cap") + (("cap", cap),)
 
     def _seat(self, index: int, actor: dict[str, Any]) -> int:

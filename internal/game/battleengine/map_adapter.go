@@ -162,9 +162,17 @@ func ConfigFromCompetitiveMap(entry mapdata.CompetitiveMap, options CompetitiveM
 		supply := entry.PlanCompetitiveSupply(options.ItemSeed, roles, false)
 		items, delayed = supply.WallItems, supply.DelayedItems
 	}
-	pickups, err := hiddenPickupsFromWallItems(entry, options.ItemSeed, items, rules, options.AllowSpecialRules)
+	placed, err := hiddenPickupsFromWallItems(entry, options.ItemSeed, items, rules, options.AllowSpecialRules)
 	if err != nil {
 		return Config{}, err
+	}
+	var pickups, loose []Pickup
+	for _, pickup := range placed {
+		if rules.looseObject(pickup.SceneID) {
+			loose = append(loose, pickup)
+		} else {
+			pickups = append(pickups, pickup)
+		}
 	}
 	scheduled, err := ScheduledPickupsFromItems(options.ItemSeed, delayed)
 	if err != nil {
@@ -178,6 +186,7 @@ func ConfigFromCompetitiveMap(entry mapdata.CompetitiveMap, options CompetitiveM
 		Seed: seed, Grid: grid, Rules: rules, Participants: participants, Pickups: pickups,
 		ScheduledPickups:      scheduled,
 		PublicWallItemProfile: publicWallItemProfileFromWire(entry, items),
+		LooseObjects:          loose,
 	}, nil
 }
 
@@ -304,7 +313,7 @@ func hiddenPickupsFromWallItems(entry mapdata.CompetitiveMap, itemSeed uint32, i
 		if item.SceneID == 0 || item.Quantity <= 0 {
 			return nil, fmt.Errorf("competitive map %d recorded wall item %d has invalid scene/quantity %d/%d", entry.ID, index, item.SceneID, item.Quantity)
 		}
-		if !rules.pickupSupported(item.SceneID) {
+		if !rules.pickupSupported(item.SceneID) && !rules.looseObject(item.SceneID) {
 			return nil, fmt.Errorf("competitive map %d recorded wall item %d uses unsupported scene ID %d", entry.ID, index, item.SceneID)
 		}
 	}

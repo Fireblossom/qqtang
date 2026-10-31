@@ -310,3 +310,89 @@ func TestDepartureRecycleNeedsObjectives(t *testing.T) {
 		t.Fatal("departure recycling without objectives was accepted")
 	}
 }
+
+// Every shipped sculpture map builds with its GAME_BEGIN fragments, which
+// keep their wall-placement slots but leave the engine's pickups.
+func TestShippedSculptureMapsSeparateLooseFragments(t *testing.T) {
+	root := filepath.Join("..", "..", "..", "runtime", "client-patched")
+	if _, err := os.Stat(filepath.Join(root, "map", "mapDesc.py")); os.IsNotExist(err) {
+		t.Skip("verified runtime client is not present")
+	}
+	catalog, err := mapdata.LoadCatalog(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	built := 0
+	for _, mapID := range catalog.AllCompetitiveIDs() {
+		entry, ok := catalog.CompetitiveMap(mapID)
+		if !ok || entry.Rule != mapdata.CompetitiveRuleSculpture {
+			continue
+		}
+		participants := []Participant{}
+		for playerID := uint16(1); playerID <= 2; playerID++ {
+			participant, err := ParticipantFromNativeRole(playerID, 1, byte(playerID), ParticipantHuman)
+			if err != nil {
+				t.Fatal(err)
+			}
+			participants = append(participants, participant)
+		}
+		supply := entry.PlanCompetitiveSupply(7, []uint16{1, 1}, false)
+		items := append(supply.WallItems, entry.CompetitiveObjectiveSceneItems(1, 7)...)
+		options := CompetitiveMapConfigOptions{
+			SpawnSeed: 3, ItemSeed: 7, SpawnMode: NativeSpawnModeForMap(entry, false), Participants: participants,
+			Rules:             Rules{TickMS: 20, ExternalConclusion: true, LooseObjectSceneIDs: [MaxLooseObjectKinds]uint32{161, 162, 163, 164, 165}},
+			RecordedWallItems: items, RecordedDelayedItems: supply.DelayedItems, UseRecordedWallItems: true, AllowSpecialRules: true,
+		}
+		config, err := ConfigFromCompetitiveMap(entry, options)
+		if err != nil {
+			t.Fatalf("map %d: %v", mapID, err)
+		}
+		if _, err := New(config); err != nil {
+			t.Fatalf("map %d engine: %v", mapID, err)
+		}
+		if len(config.LooseObjects) != 7 {
+			t.Fatalf("map %d: %d loose fragments, want 7", mapID, len(config.LooseObjects))
+		}
+		placed, err := PlaceHiddenPickups(7, competitiveCells(entry.HiddenItemCells), items)
+		if err != nil {
+			t.Fatal(err)
+		}
+		pickups, loose := 0, 0
+		for _, pickup := range placed {
+			if pickup.SceneID >= 161 && pickup.SceneID <= 165 {
+				if config.LooseObjects[loose] != pickup {
+					t.Fatalf("map %d fragment %d = %+v, want %+v", mapID, loose, config.LooseObjects[loose], pickup)
+				}
+				loose++
+				continue
+			}
+			if config.Pickups[pickups] != pickup {
+				t.Fatalf("map %d pickup %d = %+v, want %+v", mapID, pickups, config.Pickups[pickups], pickup)
+			}
+			pickups++
+		}
+		built++
+	}
+	if built == 0 {
+		t.Fatal("no sculpture maps in the shipped catalog")
+	}
+	if _, err := New(Config{Grid: testOpenGrid(3, 3), Rules: Rules{TickMS: 20, LooseObjectSceneIDs: [MaxLooseObjectKinds]uint32{SceneBombPowerSmall}}}); err == nil {
+		t.Fatal("an ordinary pickup was accepted as a loose object")
+	}
+}
+
+func TestRuleGrantedHeldActions(t *testing.T) {
+	engine := mustEngine(t, testConfig())
+	if !engine.GrantHeldAction(1, 66, 1) || !engine.GrantHeldAction(1, 66, 1) {
+		t.Fatal("grant refused")
+	}
+	if got := actorHeldActionCount(&engine.actors[0], 66); got != 2 {
+		t.Fatalf("held 66 = %d, want 2", got)
+	}
+	if !engine.ConsumeHeldAction(1, 66) || !engine.ConsumeHeldAction(1, 66) || engine.ConsumeHeldAction(1, 66) {
+		t.Fatal("consume did not follow the count")
+	}
+	if engine.GrantHeldAction(99, 66, 1) {
+		t.Fatal("granted to an unknown player")
+	}
+}

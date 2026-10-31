@@ -121,6 +121,7 @@ func TestArbitratorAnnouncesOnlyValidBunActions(t *testing.T) {
 	match := treasureMatch(t, 1)
 	match.bun = &bunRule{carried: map[uint16]int16{1: bunNone, 2: bunNone}}
 	match.bun.houses = [2]bunHouse{{team: 1, anchor: battleengine.Cell{Row: 0, Col: 0}, own: 1}, {team: 2, anchor: battleengine.Cell{Row: 0, Col: 2}, own: 1}}
+	match.carry = match.bun
 	// Player 2 asks for a bun from its own house (column 4, outside house
 	// 1's columns 0..2): refused, no answer.
 	match.arbitrateBun(game.RequestGetBun, game.BunActionEvent{PlayerID: 2, PosX: 180, PosY: 60, BunID: bunHomeBun, BunTeamID: 2})

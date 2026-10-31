@@ -26,8 +26,9 @@ type autoplayBot struct {
 	timeline  battleengine.DangerTimeline
 	plannedAt uint32
 	planned   bool
-	// The rule's objectives, when the map has them (rule 3).
-	bun *bunRule
+	// The rule's objectives, when the map has them (rules 3 and 6).
+	bun       *bunRule
+	sculpture *sculptureRule
 }
 
 func newAutoplayBot(player uint16) *autoplayBot {
@@ -86,6 +87,16 @@ func (bot *autoplayBot) act(engine *battleengine.Engine) battleengine.Action {
 	// opposing house.
 	if path := bot.bunPath(world, actor, here, safe); len(path) > 0 {
 		return bot.follow(action, actor, path)
+	}
+	if bot.sculpture != nil {
+		// Knock a piece off the opposing statue with the style-9 bubble.
+		if bot.sculpture.worthBombing(here, actor) && onCentre(actor.Position) && bot.canEscapeOwnBubble(engine, actor, msPerCell) {
+			action.UseActionID = sculptureBombItem
+			return action
+		}
+		if path := bot.sculpturePath(world, actor, here, safe); len(path) > 0 {
+			return bot.follow(action, actor, path)
+		}
 	}
 	// 3. Collect the nearest visible item; gems (rule objectives) first.
 	if path := world.nearest(here, safe, world.objectiveAt); len(path) > 0 {
@@ -313,4 +324,22 @@ func (bot *autoplayBot) bunPath(world autoplayWorld, actor battleengine.Actor, h
 		house := rule.houseAt(cell)
 		return house != nil && house.team != actor.TeamID && house.own > 0
 	})
+}
+
+// sculpturePath is the way to the bot's next rule-6 goal, or nil: its own
+// statue while carrying, otherwise the nearest visible fragment, otherwise
+// a cell beside the opposing statue while it holds a piece and the bot
+// still has its style-9 bubble.
+func (bot *autoplayBot) sculpturePath(world autoplayWorld, actor battleengine.Actor, here battleengine.Cell, safe func(battleengine.Cell) bool) []battleengine.Cell {
+	rule := bot.sculpture
+	if rule.carrying(actor.PlayerID) != bunNone {
+		return world.nearest(here, safe, func(cell battleengine.Cell) bool {
+			statue := rule.statueAt(cell)
+			return statue != nil && statue.team == actor.TeamID
+		})
+	}
+	if path := world.nearest(here, safe, func(cell battleengine.Cell) bool { return rule.looseAt(cell, 0, true) >= 0 }); len(path) > 0 {
+		return path
+	}
+	return world.nearest(here, safe, func(cell battleengine.Cell) bool { return rule.worthBombing(cell, actor) })
 }

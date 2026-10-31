@@ -62,11 +62,21 @@ type bunRule struct {
 	houses  [2]bunHouse
 	carried map[uint16]int16 // by player: carried colour, bunNone if none
 	loose   []looseBun
-	// The local player's last request and when it was sent, so standing in a
-	// house does not flood the arbitrator.
-	lastRequest     game.BunActionEvent
-	lastRequestSent uint32
-	lastRequestKind uint16
+}
+
+// carryRule is what rules 3 and 6 share: one carried object per player,
+// taken and put down through the arbitrator (0x0FB6..0x0FB9), handed over
+// or dropped on death, and dealt with when its carrier leaves.
+type carryRule interface {
+	// wanted is the request the local player's position calls for, if any.
+	wanted(actor battleengine.Actor) (uint16, game.BunActionEvent, bool)
+	allowTake(request game.BunActionEvent, taker battleengine.Actor) bool
+	allowPut(request game.BunActionEvent, putter battleengine.Actor) bool
+	applyTake(event game.BunActionEvent)
+	applyPut(event game.BunActionEvent)
+	// onDeath applies a death message: killed says it is a 0x0FA9 with killer.
+	onDeath(victim, killer uint16, killed bool, position battleengine.Position)
+	onDeparture(playerID uint16)
 }
 
 // newBunRule sets the houses up as 0x005B720C does.

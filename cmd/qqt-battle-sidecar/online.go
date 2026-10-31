@@ -186,7 +186,18 @@ type onlineMatch struct {
 	departed map[uint16]bool
 
 	bot *autoplayBot // --autoplay; nil when the keyboard plays
-	bun *bunRule     // rule 3; nil otherwise
+	// The carry rule (3 or 6), nil otherwise; bun and sculpture are the same
+	// rule with its own type, for drawing.
+	carry     carryRule
+	bun       *bunRule
+	sculpture *sculptureRule
+	// The local player's last take or put request and when it was sent, so
+	// standing on the spot does not flood the arbitrator.
+	carryRequest     game.BunActionEvent
+	carryRequestKind uint16
+	carryRequestSent uint32
+	// Rule 6's style-9 bubbles (held item 48) by engine bomb ID.
+	styleNine map[uint32]bool
 }
 
 // respawnRule is a special rule's relive timing, from Client.exe's rule
@@ -326,12 +337,22 @@ func newOnlineMatch(init command) (*onlineMatch, beginView, error) {
 		pickupRequests:    map[pickupKey]pickupRequest{}, sceneRequests: map[sceneRequestKey]uint32{},
 		respawn: respawn, eliminatedAt: map[uint16]uint32{}, departed: map[uint16]bool{},
 	}
-	if entry.Rule == mapdata.CompetitiveRuleBun {
+	switch entry.Rule {
+	case mapdata.CompetitiveRuleBun:
 		match.bun = newBunRule(entry, begin)
+		match.carry = match.bun
+	case mapdata.CompetitiveRuleSculpture:
+		match.sculpture = newSculptureRule(engine, entry, begin, config.LooseObjects)
+		match.carry, match.styleNine = match.sculpture, map[uint32]bool{}
+		// 0x0060A772: every player starts with one style-9 bubble.
+		for _, info := range begin.Players {
+			engine.GrantHeldAction(info.PlayerID, sculptureBombItem, 1)
+			match.sculpture.bombLeft[info.PlayerID] = true
+		}
 	}
 	if options.Autoplay {
 		match.bot = newAutoplayBot(match.local)
-		match.bot.bun = match.bun
+		match.bot.bun, match.bot.sculpture = match.bun, match.sculpture
 		match.logf("autoplay: the test bot plays player %d", match.local)
 	}
 	for _, entry := range view.Players {
@@ -369,6 +390,14 @@ func ruleOptions(entry mapdata.CompetitiveMap, local, arbitrator uint16) (battle
 		// without waiting for the spawn cell (that is rules 4 and 5 only).
 		rules.ExternalConclusion = true
 		return rules, &respawnRule{delayMS: 10_000}, nil
+	case mapdata.CompetitiveRuleSculpture:
+		// Rule 6's slots 4 and 5 (vtable 0x7A43CC): relive after 5 s, not
+		// waiting for the spawn cell. Fragments 161..165 are loose objects.
+		rules.ExternalConclusion = true
+		for index := range rules.LooseObjectSceneIDs {
+			rules.LooseObjectSceneIDs[index] = uint32(sculptureFirstScene + index)
+		}
+		return rules, &respawnRule{delayMS: 5000}, nil
 	case mapdata.CompetitiveRuleTreasure:
 		rules.ObjectiveSceneIDs = [battleengine.MaxObjectiveKinds]uint32{
 			uint32(sceneelement.TreasureGemOne), uint32(sceneelement.TreasureGemTwo), uint32(sceneelement.TreasureGemThree),
@@ -467,6 +496,9 @@ func (match *onlineMatch) step(step command) ([]battleengine.Event, error) {
 		if match.bot != nil && match.localActive() {
 			chosen := match.bot.act(match.engine)
 			action.Move, action.PlaceBomb = chosen.Move, chosen.PlaceBomb
+			if chosen.UseActionID != 0 {
+				match.requestItemUse(chosen.UseActionID)
+			}
 		}
 		var actions []battleengine.Action
 		if action.PlayerID != 0 && match.localActive() {
@@ -482,7 +514,7 @@ func (match *onlineMatch) step(step command) ([]battleengine.Event, error) {
 		match.publishEvents(after, tickEvents)
 		match.noteEliminations(tickEvents)
 		tickEvents = append(tickEvents, match.respawnDue()...)
-		match.bunTick()
+		match.carryTick()
 		events = append(events, tickEvents...)
 	}
 	match.retryPickupRequests()
@@ -715,8 +747,8 @@ func (match *onlineMatch) applyRemote(sender uint16, message game.BattleMessageD
 		if err != nil {
 			match.logf("death of %d rejected: %v", death.PlayerID, err)
 		}
-		if match.bun != nil {
-			match.bun.onDeath(death.PlayerID, 0, false, battleengine.Position{X: int32(death.PosX), Y: int32(death.PosY)})
+		if match.carry != nil {
+			match.carry.onDeath(death.PlayerID, 0, false, battleengine.Position{X: int32(death.PosX), Y: int32(death.PosY)})
 		}
 		return events
 	case game.RequestGetItem:
@@ -733,8 +765,8 @@ func (match *onlineMatch) applyRemote(sender uint16, message game.BattleMessageD
 			return nil
 		}
 		events, _ := match.runtime.AcceptNativeElimination(killed.DestinationPlayerID, killed.PlayerID, pickupsFromItems(killed.Items))
-		if match.bun != nil {
-			match.bun.onDeath(killed.DestinationPlayerID, killed.PlayerID, true, battleengine.Position{X: int32(killed.PosX), Y: int32(killed.PosY)})
+		if match.carry != nil {
+			match.carry.onDeath(killed.DestinationPlayerID, killed.PlayerID, true, battleengine.Position{X: int32(killed.PosX), Y: int32(killed.PosY)})
 		}
 		return events
 	case game.NotifyPlayerSaved:
@@ -869,12 +901,12 @@ func (match *onlineMatch) applyRemote(sender uint16, message game.BattleMessageD
 		return match.applyExplosion(event)
 	case game.RequestGetBun, game.RequestPutBun:
 		request, err := game.ParseBunActionEvent(event)
-		if err == nil && match.bun != nil && match.isArbitrator() && request.PlayerID == sender {
+		if err == nil && match.carry != nil && match.isArbitrator() && request.PlayerID == sender {
 			match.arbitrateBun(schema, request)
 		}
 	case game.NotifyPlayerGetBun, game.NotifyPlayerPutBun:
 		notice, err := game.ParseBunActionEvent(event)
-		if err == nil && match.bun != nil && sender == match.arbitrator && !match.isArbitrator() {
+		if err == nil && match.carry != nil && sender == match.arbitrator && !match.isArbitrator() {
 			match.applyBun(schema, notice)
 		}
 	case game.NotifyPlayerRelive:
@@ -979,6 +1011,10 @@ func (match *onlineMatch) applyExplosion(event game.GameEvent) []battleengine.Ev
 		cell := battleengine.Cell{Row: int16(bomb.Row), Col: int16(bomb.Column)}
 		bombID, _ := match.wireBombID(bomb.PlayerID, bomb.ClientTime, cell)
 		delete(match.bombs, bombID)
+		if match.sculpture != nil && bomb.BombID == 9 {
+			match.sculpture.damage(cell, bomb.ClientTime)
+			delete(match.styleNine, bombID)
+		}
 		bombs = append(bombs, battleengine.VerifiedExplodedBomb{
 			BombID: bombID, OwnerID: bomb.PlayerID, Cell: cell,
 			BlastRowMin: int16(bomb.RowMin), BlastRowMax: int16(bomb.RowMax), BlastColMin: int16(bomb.ColumnMin), BlastColMax: int16(bomb.ColumnMax),
@@ -1188,10 +1224,33 @@ func (match *onlineMatch) depart(playerID uint16) {
 	}
 	match.departed[playerID] = true
 	delete(match.eliminatedAt, playerID)
-	if match.bun != nil {
-		match.bun.onDeparture(playerID)
+	if match.carry != nil {
+		match.carry.onDeparture(playerID)
 	}
 	match.logf("player %d left the match", playerID)
+}
+
+// applySculptureItem is a confirmed use of rule 6's held items. Item 48
+// places a style-9 bubble at the user's cell on every client without a
+// PLAYER_USE_BOMB (0x0060471C, 0x005CDD0A); item 66 puts the carried
+// fragment down there (0x005F6AB8). Both are used up (0x0088DE67).
+func (match *onlineMatch) applySculptureItem(use game.WorldUseItemEvent) {
+	position := battleengine.Position{X: int32(use.PosX), Y: int32(use.PosY)}
+	if use.ItemID == sculpturePutDownItem {
+		match.sculpture.putDown(use.PlayerID, position)
+		return
+	}
+	match.engine.ConsumeHeldAction(use.PlayerID, sculptureBombItem)
+	delete(match.sculpture.bombLeft, use.PlayerID)
+	cell := position.Cell()
+	placedAt := max(use.ClientTime, battleengine.NativeRoundStartClockMS)
+	accepted, err := match.runtime.AcceptHumanBombPlacement(use.PlayerID, cell, sculptureBombPower, 0, placedAt)
+	if err != nil {
+		match.logf("style-9 bubble of %d rejected: %v", use.PlayerID, err)
+		return
+	}
+	match.bombs[accepted.BombID] = wireBomb{owner: use.PlayerID, placedAt: use.ClientTime, cell: cell}
+	match.styleNine[accepted.BombID] = true
 }
 
 // applyItemUse applies another player's held-item use (banana, glue, dart,
@@ -1209,6 +1268,10 @@ func (match *onlineMatch) applyItemUse(body []byte) {
 		return
 	}
 	match.itemUses[key] = true
+	if match.sculpture != nil && (use.ItemID == sculptureBombItem || use.ItemID == sculpturePutDownItem) {
+		match.applySculptureItem(use)
+		return
+	}
 	var targetBombID uint32
 	if (use.ItemID == 44 || use.ItemID == 46) && use.Flag4 != 0 && use.Flag2 <= 0xffff {
 		// Flag1 packs direction, power, row and column of the targeted bubble;
@@ -1642,8 +1705,15 @@ func (match *onlineMatch) publishEvents(after *battleengine.Engine, events []bat
 			if known.owner == 0 {
 				placedAt = event.TimeMS
 			}
+			style := byte(0xff)
+			if match.styleNine[event.BombID] {
+				// 0x0060EDC6 writes the bubble type; 0x00607C5A acts on 9.
+				style = 9
+				match.sculpture.damage(event.Cell, placedAt)
+				delete(match.styleNine, event.BombID)
+			}
 			explosion.Bombs = append(explosion.Bombs, game.ExplodedBomb{
-				PlayerID: event.PlayerID, ClientTime: placedAt, BombID: 0xff,
+				PlayerID: event.PlayerID, ClientTime: placedAt, BombID: style,
 				Row: byte(event.Cell.Row), Column: byte(event.Cell.Col),
 				RowMin: byte(event.BlastRowMin), RowMax: byte(event.BlastRowMax), ColumnMin: byte(event.BlastColMin), ColumnMax: byte(event.BlastColMax),
 			})
@@ -1805,8 +1875,8 @@ func (match *onlineMatch) publishElimination(event battleengine.Event, drops []g
 			match.queue(game.NotifyPlayerDieEvent, now, now, body)
 			match.mirror(game.NotifyPlayerDieEvent, body)
 		}
-		if match.bun != nil {
-			match.bun.onDeath(match.local, 0, false, event.Position)
+		if match.carry != nil {
+			match.carry.onDeath(match.local, 0, false, event.Position)
 		}
 		return
 	}
@@ -1822,8 +1892,8 @@ func (match *onlineMatch) publishElimination(event battleengine.Event, drops []g
 		match.queue(game.NotifyPlayerKilled, now, now, body)
 		match.mirror(game.NotifyPlayerKilled, body)
 	}
-	if match.bun != nil {
-		match.bun.onDeath(event.TargetID, event.PlayerID, true, event.Position)
+	if match.carry != nil {
+		match.carry.onDeath(event.TargetID, event.PlayerID, true, event.Position)
 	}
 }
 
@@ -1980,30 +2050,30 @@ func pickupsFromItems(items []game.GameItem) []battleengine.Pickup {
 	return pickups
 }
 
-// Bun (rule 3) -----------------------------------------------------------------
+// Carry rules (3 and 6) ------------------------------------------------------
 
-// bunTick sends the local player's take or put request, at most once per
+// carryTick sends the local player's take or put request, at most once per
 // bunRequestPeriod while the same request stands. The arbitrator answers its
 // own player at once.
-func (match *onlineMatch) bunTick() {
-	if match.bun == nil || !match.localActive() {
+func (match *onlineMatch) carryTick() {
+	if match.carry == nil || !match.localActive() {
 		return
 	}
 	actor, ok := actorByID(match.engine.Actors(), match.local)
 	if !ok {
 		return
 	}
-	schema, request, wanted := match.bun.wanted(actor)
+	schema, request, wanted := match.carry.wanted(actor)
 	if !wanted {
 		return
 	}
 	now := match.engine.ElapsedMS()
 	request.ClientTime = now
-	same := schema == match.bun.lastRequestKind && request.BunID == match.bun.lastRequest.BunID && request.BunTeamID == match.bun.lastRequest.BunTeamID
-	if same && now-match.bun.lastRequestSent < bunRequestPeriod {
+	same := schema == match.carryRequestKind && request.BunID == match.carryRequest.BunID && request.BunTeamID == match.carryRequest.BunTeamID
+	if same && now-match.carryRequestSent < bunRequestPeriod {
 		return
 	}
-	match.bun.lastRequest, match.bun.lastRequestKind, match.bun.lastRequestSent = request, schema, now
+	match.carryRequest, match.carryRequestKind, match.carryRequestSent = request, schema, now
 	if match.isArbitrator() {
 		match.arbitrateBun(schema, request)
 		return
@@ -2023,11 +2093,11 @@ func (match *onlineMatch) arbitrateBun(schema uint16, request game.BunActionEven
 	}
 	notice := uint16(game.NotifyPlayerGetBun)
 	if schema == game.RequestPutBun {
-		if !match.bun.allowPut(request, actor) {
+		if !match.carry.allowPut(request, actor) {
 			return
 		}
 		notice = game.NotifyPlayerPutBun
-	} else if !match.bun.allowTake(request, actor) {
+	} else if !match.carry.allowTake(request, actor) {
 		return
 	}
 	body, err := request.MarshalNetworkBinary()
@@ -2042,10 +2112,13 @@ func (match *onlineMatch) arbitrateBun(schema uint16, request game.BunActionEven
 
 func (match *onlineMatch) applyBun(schema uint16, notice game.BunActionEvent) {
 	if schema == game.NotifyPlayerPutBun {
-		match.bun.applyPut(notice)
-		match.logf("player %d puts a team-%d bun home", notice.PlayerID, notice.BunTeamID)
+		match.carry.applyPut(notice)
+		match.logf("player %d puts %d home (%d) at %d,%d", notice.PlayerID, notice.BunTeamID, notice.BunID, notice.PosX, notice.PosY)
+		if match.sculpture != nil {
+			match.logf("statues: %d/%d", match.sculpture.statues[0].progress, match.sculpture.statues[1].progress)
+		}
 	} else {
-		match.bun.applyTake(notice)
-		match.logf("player %d takes a team-%d bun (%d)", notice.PlayerID, notice.BunTeamID, notice.BunID)
+		match.carry.applyTake(notice)
+		match.logf("player %d takes %d (%d)", notice.PlayerID, notice.BunTeamID, notice.BunID)
 	}
 }
