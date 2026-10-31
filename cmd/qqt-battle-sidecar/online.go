@@ -389,9 +389,9 @@ func newOnlineMatch(init command) (*onlineMatch, beginView, error) {
 // only follows the arbitrator and asks on behalf of its own player.
 func onlineRules(local, arbitrator uint16) battleengine.Rules {
 	if local == arbitrator {
-		return battleengine.Rules{TickMS: tickMS, LocalHitPlayerID: local}
+		return battleengine.Rules{TickMS: tickMS, LocalHitPlayerID: local, AllowAuthorityTransfer: true}
 	}
-	return battleengine.Rules{TickMS: tickMS, NativeOutcomeAuthority: true, NativeRequestPlayerID: local}
+	return battleengine.Rules{TickMS: tickMS, NativeOutcomeAuthority: true, NativeRequestPlayerID: local, AllowAuthorityTransfer: true}
 }
 
 // ruleOptions adds the selected rule's default-off engine extensions to the
@@ -559,6 +559,7 @@ func (match *onlineMatch) step(step command) ([]battleengine.Event, error) {
 		tickEvents = append(tickEvents, match.kickTick()...)
 		events = append(events, tickEvents...)
 	}
+	match.collectLooseDispatches()
 	match.retryPickupRequests()
 	match.flush()
 	return events, nil
@@ -792,6 +793,11 @@ func (match *onlineMatch) applyRemote(sender uint16, message game.BattleMessageD
 		if match.carry != nil {
 			match.carry.onDeath(death.PlayerID, 0, false, battleengine.Position{X: int32(death.PosX), Y: int32(death.PosY)})
 		}
+		for i := range events {
+			if events[i].Kind == battleengine.EventActorEliminated {
+				events[i].TimeMS = death.ClientTime
+			}
+		}
 		return events
 	case game.RequestGetItem:
 		if match.isArbitrator() {
@@ -809,6 +815,11 @@ func (match *onlineMatch) applyRemote(sender uint16, message game.BattleMessageD
 		events, _ := match.runtime.AcceptNativeElimination(killed.DestinationPlayerID, killed.PlayerID, pickupsFromItems(killed.Items))
 		if match.carry != nil {
 			match.carry.onDeath(killed.DestinationPlayerID, killed.PlayerID, true, battleengine.Position{X: int32(killed.PosX), Y: int32(killed.PosY)})
+		}
+		for i := range events {
+			if events[i].Kind == battleengine.EventActorEliminated {
+				events[i].TimeMS = killed.ClientTime
+			}
 		}
 		return events
 	case game.NotifyPlayerSaved:
@@ -846,6 +857,7 @@ func (match *onlineMatch) applyRemote(sender uint16, message game.BattleMessageD
 			match.logf("pickup %d by %d rejected: %v", item.ItemID, item.PlayerID, err)
 			return nil
 		}
+		match.collected[pickupKey{scene: item.ItemID, cell: accepted.Cell}] = item.PlayerID
 		ruleEvent := accepted
 		ruleEvent.TimeMS = item.ClientTime
 		match.tankPickup(ruleEvent)
@@ -867,6 +879,11 @@ func (match *onlineMatch) applyRemote(sender uint16, message game.BattleMessageD
 			match.logf("item dispatch rejected: %v", err)
 			return nil
 		}
+		delayed := make([]battleengine.NativeScheduledPickup, 0, len(dispatch.DelayedItems))
+		for _, item := range dispatch.DelayedItems {
+			delayed = append(delayed, battleengine.NativeScheduledPickup{SceneID: item.ItemID, DueMS: item.DispatchTime})
+		}
+		match.engine.ObserveNativePickupDispatch(dispatch.Time, delayed)
 		forgotten := make([]battleengine.Event, 0, len(pickups))
 		for _, pickup := range pickups {
 			forgotten = append(forgotten, battleengine.Event{Kind: battleengine.EventPickupDispatched, SceneID: pickup.SceneID, Cell: pickup.Cell})
@@ -911,6 +928,7 @@ func (match *onlineMatch) applyRemote(sender uint16, message game.BattleMessageD
 			match.logf("map element %d move rejected: %v", moved.ElementID, err)
 			return nil
 		}
+		match.mapElemSeq = moved.Sequence
 		delete(match.sceneRequests, sceneRequestKey{schema: game.RequestMoveMapElement, object: moved.ElementID, from: source, to: accepted.Cell})
 		return []battleengine.Event{accepted}
 	case game.NotifyPlayerMoveBomb:
@@ -1015,7 +1033,7 @@ func (match *onlineMatch) respawnDue() []battleengine.Event {
 	var events []battleengine.Event
 	for _, actor := range match.engine.Actors() {
 		diedAt, dead := match.eliminatedAt[actor.PlayerID]
-		if !dead || actor.State != battleengine.ActorEliminated || now-diedAt < match.respawn.delayMS {
+		if !dead || now < diedAt || actor.State != battleengine.ActorEliminated || now-diedAt < match.respawn.delayMS {
 			continue
 		}
 		if match.tank != nil {
@@ -1270,13 +1288,8 @@ func (match *onlineMatch) handleTCP(packet tcpPacket) {
 		}
 		switch notify.Schema {
 		case game.NotifyChangeArbitrator:
-			// The server repeats the current arbitrator after any departure.
-			if len(notify.Body) >= 2 && uint16(notify.Body[0])<<8|uint16(notify.Body[1]) != match.arbitrator {
-				match.arbitrator = uint16(notify.Body[0])<<8 | uint16(notify.Body[1])
-				match.logf("arbitrator is now %d", match.arbitrator)
-				if match.isArbitrator() {
-					match.logf("the engine was started as a non-arbitrator; it cannot arbitrate explosions from here on")
-				}
+			if len(notify.Body) >= 2 {
+				match.changeArbitrator(uint16(notify.Body[0])<<8 | uint16(notify.Body[1]))
 			}
 		case game.NotifyPlayerUseItem:
 			match.applyItemUse(notify.Body)
@@ -1299,8 +1312,14 @@ func (match *onlineMatch) depart(playerID uint16) {
 		return
 	}
 	match.departed[playerID] = true
+	delete(match.uins, playerID)
+	delete(match.peerReady, playerID)
+	delete(match.peerAnswered, playerID)
 	delete(match.eliminatedAt, playerID)
 	if match.carry != nil {
+		if match.sculpture != nil && match.sculpture.carrying(playerID) != bunNone {
+			match.logf("departing player %d recycles sculpture material %d", playerID, match.sculpture.carrying(playerID))
+		}
 		match.carry.onDeparture(playerID)
 	}
 	match.logf("player %d left the match", playerID)
@@ -1761,6 +1780,7 @@ func (match *onlineMatch) publishEvents(after *battleengine.Engine, events []bat
 	arbitrator := match.isArbitrator()
 	var explosion game.BombExplodeEvent
 	var dispatched []game.GameItem
+	var delayedDispatch []game.DelayedGameItem
 	drops := map[uint16][]game.GameItem{}
 	for _, event := range events {
 		if event.Kind == battleengine.EventPickupDropped {
@@ -1826,7 +1846,11 @@ func (match *onlineMatch) publishEvents(after *battleengine.Engine, events []bat
 		case battleengine.EventPickupDispatched:
 			match.forgetPickups([]battleengine.Event{event})
 			if arbitrator {
-				dispatched = append(dispatched, game.GameItem{ItemID: event.SceneID, Row: byte(event.Cell.Row), Col: byte(event.Cell.Col)})
+				if event.ScheduledDueMS != 0 {
+					delayedDispatch = append(delayedDispatch, game.DelayedGameItem{ItemID: event.SceneID, DispatchTime: event.ScheduledDueMS, Row: byte(event.Cell.Row), Col: byte(event.Cell.Col)})
+				} else {
+					dispatched = append(dispatched, game.GameItem{ItemID: event.SceneID, Row: byte(event.Cell.Row), Col: byte(event.Cell.Col)})
+				}
 			}
 		case battleengine.EventActorTrapped:
 			if event.TargetID == match.local {
@@ -1932,8 +1956,8 @@ func (match *onlineMatch) publishEvents(after *battleengine.Engine, events []bat
 			match.logf("explosion: %v", err)
 		}
 	}
-	if len(dispatched) > 0 {
-		if body, err := (game.DispatchItemData{Time: now, Items: dispatched}).MarshalNetworkBinary(); err == nil {
+	if len(dispatched)+len(delayedDispatch) > 0 {
+		if body, err := (game.DispatchItemData{Time: now, Items: dispatched, DelayedItems: delayedDispatch}).MarshalNetworkBinary(); err == nil {
 			match.queue(game.NotifyDispatchItem, now, now, body)
 			match.mirror(game.NotifyDispatchItem, body)
 		}
@@ -2182,6 +2206,10 @@ func (match *onlineMatch) dropBatch(batch game.DispatchBombData) []battleengine.
 	if err != nil {
 		match.logf("airdrop from %d rejected: %v", batch.PlayerID, err)
 		return nil
+	}
+	match.kick.applied(batch.Time)
+	if !match.isArbitrator() {
+		match.kick.observeItems(batch.Items)
 	}
 	for _, event := range events {
 		if event.Kind == battleengine.EventBombPlaced {

@@ -400,6 +400,9 @@ type Rules struct {
 	// eliminated actor back. The round deadline still ends the engine. Timed
 	// respawn rules (3, 4, 5, 6, 13) need it; rule 1 leaves it false.
 	ExternalConclusion bool
+	// AllowAuthorityTransfer keeps shadow supply queues in native followers
+	// and permits an authenticated in-place arbitrator switch. Off by default.
+	AllowAuthorityTransfer bool
 	// RulePickupSceneIDs are consumed through the normal pickup protocol; the
 	// caller applies their rule-specific effect. Empty for ordinary matches.
 	RulePickupSceneIDs [8]uint32
@@ -926,6 +929,7 @@ type Event struct {
 	// value. Burning already walkable grass is not a new walking entrance.
 	OpenedTraversal bool
 	Kind            EventKind
+	ScheduledDueMS  uint32 // original due time for a delayed 0x0FAE item
 	TimeMS          uint32
 	PlayerID        uint16
 	TargetID        uint16

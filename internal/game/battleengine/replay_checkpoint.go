@@ -228,6 +228,9 @@ func (engine *Engine) ApplyVerifiedBombExplosionAt(sceneMS uint32, bombs []Verif
 	// the root cause of virtual actors chasing objects the arbitrator had just
 	// destroyed and receiving 0x0FAD PlayerID=0xffff.
 	for _, pickup := range destroyedItems {
+		if engine.rules.AllowAuthorityTransfer {
+			engine.recycledPickupSceneIDs = append(engine.recycledPickupSceneIDs, pickup.SceneID)
+		}
 		engine.retirePendingPickupDispatchesAtCell(pickup.Cell)
 		engine.retirePickupsAtCell(pickup.Cell)
 		engine.retireFieldObjectsAtCell(pickup.Cell)
@@ -254,7 +257,7 @@ func (engine *Engine) ApplyVerifiedPickupDispatch(dispatchTime uint32, dispatche
 		if pickup.SceneID == 0 {
 			return fmt.Errorf("verified dispatched pickup %d has zero scene ID", index)
 		}
-		if !engine.rules.pickupSupported(pickup.SceneID) && !nativeFieldSceneID(pickup.SceneID) {
+		if !engine.rules.pickupSupported(pickup.SceneID) && !nativeFieldSceneID(pickup.SceneID) && !engine.rules.looseObject(pickup.SceneID) {
 			return fmt.Errorf("verified dispatched pickup %d uses unsupported scene ID %d", index, pickup.SceneID)
 		}
 		tile, inside := engine.grid.Cell(pickup.Cell)
@@ -312,6 +315,11 @@ func (engine *Engine) ApplyVerifiedItemDestruction(destroyed []Pickup) error {
 		seen[item.Cell] = struct{}{}
 	}
 	for _, item := range destroyed {
+		if engine.rules.AllowAuthorityTransfer {
+			// Reliable/UDP duplicates are filtered by the caller; a scene
+			// object may legitimately return to this cell in a later batch.
+			engine.recycledPickupSceneIDs = append(engine.recycledPickupSceneIDs, item.SceneID)
+		}
 		engine.retirePendingPickupDispatchesAtCell(item.Cell)
 		engine.retirePickupsAtCell(item.Cell)
 		engine.retireFieldObjectsAtCell(item.Cell)

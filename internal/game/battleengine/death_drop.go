@@ -69,7 +69,7 @@ func (engine *Engine) recycleDepartingObjectives(actor *Actor) {
 	if !engine.rules.ObjectiveDepartureRecycle {
 		return
 	}
-	if !engine.rules.NativeOutcomeAuthority {
+	if !engine.rules.NativeOutcomeAuthority || engine.rules.AllowAuthorityTransfer {
 		for index, count := range actor.CarriedObjectives {
 			for item := uint16(0); item < count; item++ {
 				engine.recycledPickupSceneIDs = append(engine.recycledPickupSceneIDs, engine.rules.ObjectiveSceneIDs[index])
@@ -81,7 +81,7 @@ func (engine *Engine) recycleDepartingObjectives(actor *Actor) {
 
 // recycleDeathDrops is rule 4's death drop under Rules.DeathDropRecycle.
 func (engine *Engine) recycleDeathDrops(actor *Actor) {
-	if engine.rules.NativeOutcomeAuthority {
+	if engine.rules.NativeOutcomeAuthority && !engine.rules.AllowAuthorityTransfer {
 		return
 	}
 	var counts [3]int

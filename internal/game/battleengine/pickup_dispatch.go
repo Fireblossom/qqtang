@@ -85,6 +85,10 @@ func (engine *Engine) activatePendingPickupDispatches() {
 			kept = append(kept, pending)
 			continue
 		}
+		if engine.rules.looseObject(pending.Pickup.SceneID) {
+			engine.landedLooseObjects = append(engine.landedLooseObjects, pending.Pickup)
+			continue
+		}
 		if nativeFieldSceneID(pending.Pickup.SceneID) {
 			engine.installAuthoritativeFieldObject(uint8(pending.Pickup.SceneID), pending.Pickup.Cell)
 			continue
@@ -126,7 +130,7 @@ func (engine *Engine) destroyBlastObjectsAtCell(cell Cell, ownerID uint16, bombI
 			continue
 		}
 		pickup.State = PickupCollected
-		if !engine.rules.NativeOutcomeAuthority {
+		if !engine.rules.NativeOutcomeAuthority || engine.rules.AllowAuthorityTransfer {
 			engine.recycledPickupSceneIDs = append(engine.recycledPickupSceneIDs, pickup.SceneID)
 		}
 		events = append(events, Event{
@@ -138,7 +142,7 @@ func (engine *Engine) destroyBlastObjectsAtCell(cell Cell, ownerID uint16, bombI
 		if object.Cell != cell || (object.ActionID != 42 && object.ActionID != 43) {
 			continue
 		}
-		if !engine.rules.NativeOutcomeAuthority {
+		if !engine.rules.NativeOutcomeAuthority || engine.rules.AllowAuthorityTransfer {
 			engine.recycledPickupSceneIDs = append(engine.recycledPickupSceneIDs, uint32(object.ActionID))
 		}
 		events = append(events, Event{
@@ -157,7 +161,7 @@ func (engine *Engine) dispatchRecycledPickups() []Event {
 	if engine == nil || engine.rules.NativeOutcomeAuthority {
 		return nil
 	}
-	if engine.elapsedMS-engine.lastPickupDispatchMS < nativePickupDispatchIntervalMS {
+	if engine.elapsedMS < engine.lastPickupDispatchMS || engine.elapsedMS-engine.lastPickupDispatchMS < nativePickupDispatchIntervalMS {
 		return nil
 	}
 	mature := make([]NativeScheduledPickup, 0, len(engine.scheduledPickups))
@@ -181,16 +185,25 @@ func (engine *Engine) dispatchRecycledPickups() []Event {
 	for _, item := range mature[:delayedCount] {
 		dispatched = append(dispatched, item.SceneID)
 	}
-	if len(dispatched) > NativePickupDispatchMaximum {
-		dispatched = dispatched[:NativePickupDispatchMaximum]
-	}
 	events := make([]Event, 0, len(dispatched))
 	bird := engine.newPickupBirdPath()
 	for index, sceneID := range dispatched {
 		pickup := Pickup{SceneID: sceneID, Cell: cells[index], State: PickupAvailable}
-		engine.schedulePickupDispatch(engine.elapsedMS, pickup, &bird)
+		// Native FAE serializes both arrays, but its receiver's bird keeps
+		// only the first 64 objects. Transfer-capable peers must receive the
+		// excess delayed identities too, so both retire the same schedule.
+		if index < NativePickupDispatchMaximum {
+			engine.schedulePickupDispatch(engine.elapsedMS, pickup, &bird)
+		} else if !engine.rules.AllowAuthorityTransfer {
+			continue
+		}
+		due := uint32(0)
+		if index >= ordinaryCount {
+			due = mature[index-ordinaryCount].DueMS
+		}
 		events = append(events, Event{
-			Kind: EventPickupDispatched, TimeMS: engine.elapsedMS,
+			ScheduledDueMS: due,
+			Kind:           EventPickupDispatched, TimeMS: engine.elapsedMS,
 			Cell: pickup.Cell, Position: PositionAtCellCenter(pickup.Cell), SceneID: pickup.SceneID,
 		})
 	}

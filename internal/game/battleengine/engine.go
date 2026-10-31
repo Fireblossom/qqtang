@@ -20,6 +20,7 @@ type Engine struct {
 	projectiles             []ActionProjectile
 	pickups                 []Pickup
 	pendingPickupDispatches []pendingPickupDispatch
+	landedLooseObjects      []Pickup
 	recycledPickupSceneIDs  []uint32
 	scheduledPickups        []NativeScheduledPickup
 	lastPickupDispatchMS    uint32
@@ -163,6 +164,7 @@ func (engine *Engine) Reset(config Config) error {
 	engine.projectiles = nil
 	engine.pickups = pickups
 	engine.pendingPickupDispatches = nil
+	engine.landedLooseObjects = nil
 	engine.recycledPickupSceneIDs = nil
 	engine.scheduledPickups = append([]NativeScheduledPickup(nil), config.ScheduledPickups...)
 	engine.lastPickupDispatchMS = 0
@@ -200,6 +202,7 @@ func (engine *Engine) Clone() *Engine {
 		clone.fieldObjects[index].PassableBy = append([]uint16(nil), engine.fieldObjects[index].PassableBy...)
 	}
 	clone.pickups = append([]Pickup(nil), engine.pickups...)
+	clone.landedLooseObjects = append([]Pickup(nil), engine.landedLooseObjects...)
 	clone.pendingPickupDispatches = append([]pendingPickupDispatch(nil), engine.pendingPickupDispatches...)
 	clone.recycledPickupSceneIDs = append([]uint32(nil), engine.recycledPickupSceneIDs...)
 	clone.scheduledPickups = append([]NativeScheduledPickup(nil), engine.scheduledPickups...)

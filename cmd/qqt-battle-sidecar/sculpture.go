@@ -235,11 +235,17 @@ func (rule *sculptureRule) onDeath(victim, killer uint16, killed bool, position 
 	rule.loose = append(rule.loose, looseFragment{cell: position.Cell(), material: byte(material)})
 }
 
-// onDeparture is slot 8 (0x0060ABBE): Client.exe hands the carried fragment
-// to the pickup bird as a scene item, which the engine cannot carry yet; the
-// fragment leaves the match here.
+// onDeparture is slot 8 (0060ABBE): recycle the carried material into the
+// next pickup-bird batch on every peer, including a prospective arbitrator.
+// Native 0060ABBE uses 161 for material 12 but mistakenly 13..16 for the
+// others. Those are not valid fragment scene IDs. This departure-only
+// compatibility correction preserves the special pieces as scenes 162..165.
 func (rule *sculptureRule) onDeparture(playerID uint16) {
+	if material := rule.carrying(playerID); material != bunNone {
+		_ = rule.engine.RecycleLooseObject(uint32(material - sculptureFirstMaterial + sculptureFirstScene))
+	}
 	rule.carried[playerID] = bunNone
+	delete(rule.bombLeft, playerID)
 }
 
 // worthBombing says whether a style-9 bubble at cell would cost the
