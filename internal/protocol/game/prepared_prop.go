@@ -83,6 +83,26 @@ type PropTriggerEvent struct {
 	TypeID          uint32
 }
 
+// MarshalNetworkBinary encodes NOTIFY_PROP_TRIGGER (0x10F7) as the parser reads it.
+func (event PropTriggerEvent) MarshalNetworkBinary() ([]byte, error) {
+	if event.PropGUID == 0 || event.UserID == 0 || event.TypeID == 0 || len(event.AffectedPlayers) > propTriggerMaxAffected {
+		return nil, fmt.Errorf("prop-trigger GUID/user/type/affected %d/%d/%d/%d is invalid", event.PropGUID, event.UserID, event.TypeID, len(event.AffectedPlayers))
+	}
+	body := binary.BigEndian.AppendUint32(make([]byte, 0, propTriggerFixedWireSize+len(event.AffectedPlayers)*propTriggerAffectedWireSize), event.PropGUID)
+	body = binary.BigEndian.AppendUint32(body, event.GameTime)
+	body = binary.BigEndian.AppendUint16(body, event.UserID)
+	body = binary.BigEndian.AppendUint32(body, event.PosX)
+	body = binary.BigEndian.AppendUint32(body, event.PosY)
+	body = append(body, event.Dir, byte(len(event.AffectedPlayers)))
+	for _, a := range event.AffectedPlayers {
+		body = binary.BigEndian.AppendUint16(body, a.PlayerID)
+		body = binary.BigEndian.AppendUint32(body, a.PosX)
+		body = binary.BigEndian.AppendUint32(body, a.PosY)
+		body = append(body, a.Dir)
+	}
+	return binary.BigEndian.AppendUint32(body, event.TypeID), nil
+}
+
 func ParsePropTriggerEvent(event GameEvent) (PropTriggerEvent, error) {
 	if event.Schema != NotifyPropTrigger || len(event.Body) < propTriggerFixedWireSize {
 		return PropTriggerEvent{}, fmt.Errorf("prop-trigger schema/body 0x%04X/%d is invalid", event.Schema, len(event.Body))

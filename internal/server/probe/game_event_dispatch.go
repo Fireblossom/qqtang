@@ -444,12 +444,15 @@ func (server *Server) handleGameEventMessage(config ListenerConfig, session *con
 						} else if category == roomstate.CategoryAdventure {
 							var battle *match.AdventureBattle
 							battle, relayErr = server.adventureBattle(session.CurrentGameID)
-							if relayErr == nil && !battle.HasParticipant(trigger.UserID) {
+							// Adventure NPCs (30000 and up) cast props as skills; the
+							// arbitrator reports them and their targets, which can
+							// be NPCs (adventure-npc-ai-re.md §6.6).
+							if relayErr == nil && !battle.HasParticipant(trigger.UserID) && trigger.UserID < 30000 {
 								relayErr = fmt.Errorf("prop-trigger user %d is not an adventure participant", trigger.UserID)
 							}
 							if relayErr == nil {
 								for _, affected := range trigger.AffectedPlayers {
-									if !battle.HasParticipant(affected.PlayerID) {
+									if !battle.HasParticipant(affected.PlayerID) && affected.PlayerID < 30000 {
 										relayErr = fmt.Errorf("prop-trigger affected player %d is not an adventure participant", affected.PlayerID)
 										break
 									}

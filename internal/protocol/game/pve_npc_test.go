@@ -31,3 +31,16 @@ func TestGameNextMapRequestRoundTrip(t *testing.T) {
 		t.Fatalf("%+v %v", got, err)
 	}
 }
+
+func TestPropTriggerRoundTrip(t *testing.T) {
+	want := PropTriggerEvent{PropGUID: 9000, GameTime: 9600, UserID: 30300, PosX: 300, PosY: 140, Dir: 3, TypeID: 21025,
+		AffectedPlayers: []PropTriggerAffectedPlayer{{PlayerID: 1, PosX: 340, PosY: 140, Dir: 2}}}
+	body, err := want.MarshalNetworkBinary()
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := ParsePropTriggerEvent(GameEvent{Schema: NotifyPropTrigger, Body: body})
+	if err != nil || !reflect.DeepEqual(got, want) {
+		t.Fatalf("%+v %v", got, err)
+	}
+}
