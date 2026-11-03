@@ -177,6 +177,7 @@ func (server *Server) handleLoginRequest(session *connectionSession, connectionI
 	result.keepConnection = true
 	result.postResponse = func() {
 		server.notifyFriendOwnersStatus(loginRequest.UIN, true, session)
+		server.deliverGiftNotices(loginRequest.UIN)
 	}
 	return result
 }

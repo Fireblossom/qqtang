@@ -20,6 +20,8 @@ from .player import ItemInfo
 
 SHOP_LIST_COMMAND = 0x035E
 BUY_COMMAND = 0x0259
+PRESENT_COMMAND = 0x025A
+MONEY_NOTIFY_COMMAND = 0x0094
 ITEM_STATUS_COMMAND = 0x0085
 ITEM_ADD_NOTIFY_COMMAND = 0x00D9
 
@@ -69,6 +71,21 @@ def build_buy(uin: int, commodity_id: int, pay_type: int, client_version: int, c
               mixed: bool = False, now: int | None = None) -> bytes:
     return _stamp(uin, now) + struct.pack(">IHHIIH", commodity_id, DEAL_PURCHASE, pay_type, client_version,
                                           commodity_version, int(mixed))
+
+
+def build_present(uin: int, target: int, commodity: int, text: str, pay_type: int, version: int,
+                  mixed: bool = False, now: int | None = None) -> bytes:
+    encoded = str(text).encode("gbk", "replace")[:255].decode("gbk", "ignore").encode("gbk")
+    return (_stamp(uin, now) + struct.pack(">IHHIB", commodity, DEAL_PURCHASE, pay_type, target, len(encoded))
+            + encoded + struct.pack(">IH", version, int(mixed)))
+
+
+def parse_present(payload: bytes) -> tuple[int, str, int]:
+    if len(payload) != 138:
+        raise ValueError("invalid present response length")
+    result = struct.unpack_from(">H", payload)[0]
+    text = payload[2:130].split(b"\0", 1)[0].decode("gbk", "replace")
+    return result, text, struct.unpack_from(">I", payload, 134)[0]
 
 
 def parse_buy(payload: bytes) -> BuyResult:

@@ -35,6 +35,7 @@ type InventoryRepository interface {
 	SetInventoryItem(context.Context, uint32, game.ItemInfo) error
 	InventoryItem(context.Context, uint32, uint16) (game.ItemInfo, bool, error)
 	PurchaseInventoryItem(context.Context, uint32, game.ItemInfo, uint32, bool) (game.PlayerProfile, error)
+	GiftInventoryItem(context.Context, persistence.GiftPlan) (persistence.GiftPurchase, error)
 	ConsumeInventoryItems(context.Context, []persistence.InventoryConsumption) (map[uint32][]game.ItemInfo, error)
 	ExchangeInventoryItems(context.Context, uint32, []persistence.InventoryConsumption, []game.ItemInfo) ([]game.ItemInfo, error)
 }

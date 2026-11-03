@@ -51,6 +51,17 @@ func (store *PlayerStore) normalize(ctx context.Context) error {
 			item_id INTEGER NOT NULL CHECK (item_id > 0 AND item_id <= 65535),
 			PRIMARY KEY (uin, role_id, slot)
 		)`,
+		`CREATE TABLE IF NOT EXISTS player_gift_notices (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			source_uin INTEGER NOT NULL,
+			target_uin INTEGER NOT NULL REFERENCES local_players(uin) ON DELETE CASCADE,
+			commodity_id INTEGER NOT NULL,
+			item_id INTEGER NOT NULL,
+			source_name TEXT NOT NULL,
+			product_name TEXT NOT NULL,
+			note TEXT NOT NULL CHECK (length(note) <= 255),
+			delivered INTEGER NOT NULL DEFAULT 0 CHECK (delivered IN (0,1))
+		)`,
 		`CREATE UNIQUE INDEX IF NOT EXISTS player_loadouts_unique_item ON player_loadouts(uin, item_id)`,
 		`CREATE TABLE IF NOT EXISTS player_seed_history (
 			uin INTEGER NOT NULL REFERENCES local_players(uin) ON DELETE CASCADE,

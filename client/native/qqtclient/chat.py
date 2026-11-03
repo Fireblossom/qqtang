@@ -21,6 +21,7 @@ LOBBY_CHAT = "UI.selRoom.chatArea.chatPanel.chatList"
 LOBBY_WHISPERS = "UI.selRoom.chatArea.wisperPanel.chatList"
 ROOM_CHAT = "UI.room.chatArea.chatPanel.chatList"
 ROOM_WHISPERS = "UI.room.chatArea.wisperPanel.chatList"
+GAME_CHAT = "UI.game.chatList"
 CHANNEL_ITEMTEXT = 207  # uiConst value_channel_itemtext
 CHAT_COLOR = (255, 255, 255)
 WHISPER_COLOR = (255, 150, 255)
@@ -46,6 +47,13 @@ def build_chat_natives(runtime: UIRuntime, session: Session) -> dict[str, Callab
             show((LOBBY_CHAT, LOBBY_WHISPERS), text, WHISPER_COLOR)
         elif screen == "room":
             show((ROOM_CHAT, ROOM_WHISPERS), text, WHISPER_COLOR)
+        elif screen == "game":
+            show((GAME_CHAT,), text, WHISPER_COLOR)
+        elif screen == "shop":
+            # The shop has no chat list. Do not discard a gift note/private
+            # message merely because its recipient is browsing the shop.
+            runtime.show_msgbox(text, "", 3, "UI.SysMsgbox", 0)
+            script("ui_msgBox", 3)
 
     def bugle_count() -> int:
         items = session.profile.items if session.profile else []

@@ -6,7 +6,7 @@ The catalog is the client's own config/Commodity.ini (the server checks it
 is identical to its catalog and never sends one): COMMODITYTYPE packs the
 shop tab and sub-tab as major << 8 | minor, and [comment.N] lists the
 recommended tab's sub-tabs. Item names and pictures come from the scripts'
-commodityList/itemList. Only 糖币 purchases are settled by the server; gifts,
+commodityList/itemList. 糖币 purchases and gifts are settled by the server;
 repairs, the fruit machine and tasks are not supported by it and
 are stubbed here.
 """
@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import configparser
 import dataclasses
+import struct
 import threading
 import types
 from typing import Any, Callable
@@ -123,7 +124,8 @@ def build_shop_natives(runtime: UIRuntime, session: Session, resources: Resource
         return call_script(function, *args) if callable(function) else None
 
     def notify(message: str) -> None:
-        runtime.show_msgbox(message, "", 0, "UI.SysMsgbox", 0)  # 0: no ui_OnMsgBoxResult action
+        runtime.show_msgbox(message, "", 3, "UI.SysMsgbox", 0)  # handle 0: no ui_OnMsgBoxResult action
+        script("ui_msgBox", 3)
 
     def get_catalog() -> Catalog:
         if not catalog:
@@ -291,8 +293,26 @@ def build_shop_natives(runtime: UIRuntime, session: Session, resources: Resource
             notify(result.message or "购买成功")
         # The new item itself arrives as NOTIFY_PLAYER_ITEMADD (on_item_add).
 
-    def PresentCommodity(*_args):
-        script("buyFail", "暂不支持赠送")
+    def PresentCommodity(target, commodity, _length, text, _deal, pay_type, mixed=0):
+        address = shop_address()
+        if address is None or session.profile is None or int(target) <= 0:
+            notify("请输入有效的收件号码")
+            return
+        version = session.hall.version if session.hall else 0
+        payload = shop.build_present(session.uin, int(target), int(commodity), str(text), int(pay_type), version, bool(mixed))
+
+        def work():
+            try:
+                reply = shop.request(address, session.uin, section_id(), shop.PRESENT_COMMAND, payload)
+                result, reason, paid = shop.parse_present(reply.payload)
+            except (OSError, ValueError, ConnectionError) as error:
+                log(f"[shop] gift failed: {error}")
+                runtime.post(lambda: notify("无法完成赠送，请检查连接"))
+                return
+            log(f"[shop] present {commodity} to {target}: {result}, paid {paid}: {reason}")
+            runtime.post(lambda: notify(reason or ("赠送成功" if result == 0 else "赠送失败")))
+
+        threading.Thread(target=work, name="shop-present", daemon=True).start()
 
     def SC_ClickBuyBtn():
         pass
@@ -498,9 +518,20 @@ def build_shop_natives(runtime: UIRuntime, session: Session, resources: Resource
             script("ui_updateMyItems")
             script("ui_updateRecycler")
 
+    def on_money(packet) -> None:
+        if len(packet.payload) != 11:
+            return
+        result, _kind, balance, uin = struct.unpack(">HBII", packet.payload)
+        if result == 0 and uin == session.uin and session.profile is not None:
+            session.profile.game_info.money = balance
+            log(f"[shop] absolute balance {balance}")
+            if in_shop():
+                script("ui_NotifyMoney", 0, 0, balance)
+
     session.handlers.update({
         shop.ITEM_ADD_NOTIFY_COMMAND: on_item_add,
         shop.ITEM_STATUS_COMMAND: on_item_status,
+        shop.MONEY_NOTIFY_COMMAND: on_money,
     })
 
     excluded = ("script", "notify", "act")

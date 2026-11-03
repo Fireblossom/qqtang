@@ -145,6 +145,7 @@ const (
 	PlayerItemAddNotifyCommand        = 0x00D9
 	CombineForgeCommand               = 0x00CF
 	ShopBuyCommand                    = 0x0259
+	ShopPresentCommand                = 0x025A
 	GetConfigFileCommand              = 0x0266
 	ShopListCommand                   = 0x035E
 	ForgeCommand                      = 0x0353
@@ -277,6 +278,7 @@ var commandDefinitions = [...]CommandDefinition{
 	{PlayerItemAddNotifyCommand, "player_item_add_notify", CommandFamilyInventory, CommandServerToClient},
 	{CombineForgeCommand, "combine_forge", CommandFamilyCraft, CommandBidirectional},
 	{ShopBuyCommand, "shop_buy", CommandFamilyShop, CommandBidirectional},
+	{ShopPresentCommand, "shop_present", CommandFamilyShop, CommandBidirectional},
 	{GetConfigFileCommand, "get_config_file", CommandFamilyConfig, CommandBidirectional},
 	{ShopListCommand, "shop_list", CommandFamilyShop, CommandBidirectional},
 	{ForgeCommand, "forge", CommandFamilyCraft, CommandBidirectional},

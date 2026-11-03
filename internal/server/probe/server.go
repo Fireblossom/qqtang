@@ -48,7 +48,8 @@ const (
 )
 
 type Server struct {
-	config Config
+	giftDeliveryMu sync.Mutex
+	config         Config
 
 	serverLifecycle
 	authenticationState
