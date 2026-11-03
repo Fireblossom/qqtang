@@ -27,6 +27,7 @@ import types
 from typing import Any, Callable
 
 from . import lobby as lobby_module
+from . import pve
 from .net import friend
 from .net import lobby as lobby_net
 from .net.player import GameInfo
@@ -268,8 +269,13 @@ def build_friend_natives(runtime: UIRuntime, session: Session) -> dict[str, Call
     def GetMarriageDetail():
         return types.SimpleNamespace(m_dwMarriageUin=0, m_szSpouseNickname="")
 
-    def GetPVEData(_points=0):
-        return types.SimpleNamespace(m_unLevel=0, m_unHp=0, m_unBombNum=0, m_fBombReSpeed=0.0, m_unBombPow=0, m_unSpeed=0)
+    def GetPVEData(points=0):
+        # tagPVEDATA from config/pvedata.dat (uiSelRoom.py's info panel).
+        level = pve.level_for(int(points))
+        if level is None:
+            return types.SimpleNamespace(m_unLevel=0, m_unHp=0, m_unBombNum=0, m_fBombReSpeed=0.0, m_unBombPow=0, m_unSpeed=0)
+        return types.SimpleNamespace(m_unLevel=level.level, m_unHp=level.hp, m_unBombNum=level.bomb_num,
+                                     m_fBombReSpeed=level.re_speed, m_unBombPow=level.bomb_pow, m_unSpeed=level.speed)
 
     def GetLeaveWordCount():
         return len(state.leave_words)

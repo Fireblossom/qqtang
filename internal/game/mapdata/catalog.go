@@ -474,6 +474,12 @@ type competitiveMapMetadata struct {
 }
 
 func loadCompetitiveMapMetadata(mapDirectory string, elements map[uint32]competitiveMapElement, mapID uint32, fileName string) (competitiveMapMetadata, error) {
+	return loadMapMetadata(mapDirectory, elements, mapID, fileName, true)
+}
+
+// loadMapMetadata reads a .map file; only competitive fields have the 15x13
+// airdrop candidate table (adventure stages are larger).
+func loadMapMetadata(mapDirectory string, elements map[uint32]competitiveMapElement, mapID uint32, fileName string, airborne bool) (competitiveMapMetadata, error) {
 	var metadata competitiveMapMetadata
 	if filepath.Base(fileName) != fileName {
 		return metadata, fmt.Errorf("competitive map %d has unsafe filename %q", mapID, fileName)
@@ -524,6 +530,9 @@ func loadCompetitiveMapMetadata(mapDirectory string, elements map[uint32]competi
 	metadata.battlefield, err = parseCompetitiveBattlefield(elements, mapBytes)
 	if err != nil {
 		return metadata, fmt.Errorf("competitive map %d %s: %w", mapID, fileName, err)
+	}
+	if !airborne {
+		return metadata, nil
 	}
 	metadata.airborneCells, err = parseCompetitiveAirborneCells(metadata.battlefield)
 	if err != nil {
