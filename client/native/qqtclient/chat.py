@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from typing import Any, Callable
 
+from . import slash
 from .net import chat
 from .runtime import UIRuntime
 from .script import call_script, log
@@ -60,30 +61,28 @@ def build_chat_natives(runtime: UIRuntime, session: Session) -> dict[str, Callab
 
     def SectionChat(mode, text):
         """mode 0: lobby chat (or a whisper when a target is set), 1: bugle.
-        Slash commands other than "/w off", "/m <uin>" and "/u <uin>" (kin
-        chat, invitations, ...) are not supported yet."""
+        Slash commands go to slash.py."""
         text = str(text).strip()
         if not text:
             return
-        if text.startswith("/"):
-            words = text.split()
-            if text.lower() == "/w off":
-                whisper_target.update(uin=0, name="")
-            elif len(words) == 2 and words[0].lower() in ("/m", "/u") and words[1].isdigit():
-                # Slash commands 0x11 / 0x12: shield or unshield whispers.
-                script("DoFriendTask", "", 0, int(words[1]), 5 if words[0].lower() == "/m" else 7)
-            else:
-                log(f"[chat] unsupported chat command {text!r}")
+        if commands.handle(text):
             return
         if int(mode) == 1:
             if bugle_count() > 0 and session.send(chat.SECTION_CHAT_COMMAND, chat.build_section_chat(session.uin, text, bugle=True)):
                 use_bugle()
             return
         if whisper_target["uin"] and whisper_target["uin"] != session.uin:
-            pending_whispers.append((whisper_target["name"], text))
-            session.send(chat.WHISPER_COMMAND, chat.build_whisper(session.uin, whisper_target["uin"], text))
+            send_whisper(whisper_target["uin"], text, whisper_target["name"])
             return
         session.send(chat.SECTION_CHAT_COMMAND, chat.build_section_chat(session.uin, text))
+
+    def send_whisper(uin: int, text: str, name: str = "") -> None:
+        # 0x6C carries wisper_uin(..)_content[..](..), as FUN_10028D58 sends it.
+        pending_whispers.append((name or str(uin), text))
+        session.send(chat.WHISPER_COMMAND, chat.build_whisper(session.uin, uin, slash.whisper_content(session.uin, text)))
+
+    commands = slash.build_slash(runtime, session, whisper_target, send_whisper)
+    session.slash = commands
 
     def SetWisperPlayer(uin, name):
         whisper_target.update(uin=int(uin), name=str(name))
@@ -124,12 +123,13 @@ def build_chat_natives(runtime: UIRuntime, session: Session) -> dict[str, Callab
 
     def on_whisper(packet) -> None:
         whisper = chat.parse_whisper(packet.payload)
-        if whisper.source_uin in getattr(session, "shielded", ()):
-            # The shield list is client-side, so the receiver drops them
-            # (where exactly the original filters was not traced).
-            log(f"[chat] whisper from shielded {whisper.source_uin} dropped")
+        text = commands.receive(whisper.source_uin, whisper.nickname, whisper.text)
+        if text is None:
+            # Handled (an invitation or its answer) or dropped: /mute, or the
+            # /M shield list, which is client-side, so the receiver drops it.
+            log(f"[chat] across-section message from {whisper.source_uin} handled: {whisper.text!r}")
             return
-        show_whisper(f"{whisper.nickname}悄悄对你说:{whisper.text}")
+        show_whisper(f"{whisper.nickname}悄悄对你说:{text}")
 
     session.handlers.update({
         chat.SECTION_CHAT_COMMAND: on_section_result,
@@ -139,6 +139,6 @@ def build_chat_natives(runtime: UIRuntime, session: Session) -> dict[str, Callab
     })
     session.on_disconnected.append(lambda: (whisper_target.update(uin=0, name=""), pending_whispers.clear()))
 
-    excluded = ("script", "show", "show_whisper", "bugle_count", "use_bugle")
+    excluded = ("script", "show", "show_whisper", "bugle_count", "use_bugle", "send_whisper", "commands")
     return {name: value for name, value in locals().items()
             if callable(value) and name[0].isupper() and name not in excluded}

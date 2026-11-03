@@ -38,6 +38,8 @@ class Session:
         # Players whose whispers are shielded (/M, QQTSection +0xC7B4): a
         # client-side list kept for the session, never sent to the server.
         self.shielded: set[int] = set()
+        # The current room for slash commands (room.py sets it).
+        self.room_view: Callable[[], Any] = lambda: None
         self.uin = 0
         self.nickname = ""
         self.gender = 0

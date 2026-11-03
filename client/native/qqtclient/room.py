@@ -90,6 +90,17 @@ def build_room_natives(runtime: UIRuntime, session: Session, avatars: AvatarCach
     the match when the server starts it."""
     state = RoomState()
 
+    def room_view() -> types.SimpleNamespace | None:
+        """The room the slash commands need (/IN, /GO, /AR), or None."""
+        if not in_room_screen():
+            return None
+        mine = me()
+        return types.SimpleNamespace(room_id=state.room_id, flag=state.snapshot.room_flag, password=state.password,
+                                     uins={member.uin for member in state.members.values()}, owner=am_owner(),
+                                     ready=bool(mine and mine.status))
+
+    session.room_view = room_view
+
     def script(name: str, *args: Any) -> Any:
         function = runtime.namespace.get(name)
         if not callable(function):
@@ -442,7 +453,10 @@ def build_room_natives(runtime: UIRuntime, session: Session, avatars: AvatarCach
             session.uin, seat, room.SET_SEAT_OPEN if locked else room.SET_SEAT_LOCKED))
 
     def RoomChat(_mode, text):
-        text = str(text)
+        text = str(text).strip()
+        commands = getattr(session, "slash", None)
+        if text and commands is not None and commands.handle(text):
+            return  # FUN_100291EA -> FUN_10023BD1: a command is not chat
         if text:
             session.send(room.ROOM_CHAT_COMMAND, room.build_room_chat_request(session.uin, text))
 

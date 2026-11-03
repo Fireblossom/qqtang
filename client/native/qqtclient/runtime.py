@@ -464,6 +464,9 @@ class UIRuntime:
             box.visible = False
         target_path, handle = self.msgbox_target or ("UI.SysMsgbox", -1)
         self.msgbox_target = None
+        if callable(handle):
+            handle(ok)  # a host-side question (e.g. a room invitation)
+            return
         target = self.find(target_path)
         if target is not None:
             self.call(target, "OnMsgBoxOk" if ok else "OnMsgBoxCancel", handle)

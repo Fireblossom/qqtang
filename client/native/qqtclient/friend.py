@@ -28,7 +28,8 @@ from typing import Any, Callable
 
 from . import lobby as lobby_module
 from . import pve
-from .chat import CHANNEL_ITEMTEXT, LOBBY_CHAT, ROOM_CHAT, SYSTEM_COLOR
+from .chat import CHANNEL_ITEMTEXT, LOBBY_CHAT, ROOM_CHAT
+from .slash import SYSTEM_COLOR
 from .net import friend
 from .net import lobby as lobby_net
 from .net.player import GameInfo
@@ -346,6 +347,8 @@ def build_friend_natives(runtime: UIRuntime, session: Session) -> dict[str, Call
     def on_application(packet) -> None:
         application = friend.parse_application(packet.payload)
         log(f"[friend] application from {application.requester} ({application.nickname}): {application.text!r}")
+        if getattr(session, "dont_add_me", False):
+            return  # /DONTADDME: FUN_1000FAA9 drops it silently
         push(LeaveWord("", application))
 
     def on_remove(packet) -> None:
