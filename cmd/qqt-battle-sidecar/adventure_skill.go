@@ -11,10 +11,10 @@ package main
 //
 // Played effects (with RestorePlayerAttr): HP, SetTotalPercentHP,
 // SetCurPercentHP, Defence/Defense, TouchHarmValue, Enmity; SpeedDel,
-// BombPowerDel, BombCountDel, CanUseMoveKey, CanUseBombKey and
-// IsReversalControl; SpecialAvatarType changes only the look. Not played
-// yet: the avatars' own movement/bubble slots, CanUseItemKey, IsSlip, IsIgniteBomb, map damage and the props' .eff
-// animations.
+// BombPowerDel, BombCountDel, CanUseMoveKey, CanUseBombKey, CanUseItemKey,
+// IsReversalControl and the projectiles' IsIgniteBomb; SpecialAvatarType
+// changes only the look. Not played yet: the avatars' own movement/bubble
+// slots, IsSlip (21050, stage 1610 only) and the props' .eff animations.
 
 import (
 	"strconv"
@@ -257,6 +257,12 @@ func (match *onlineMatch) moveAdventureCast(c *advCast, now uint32) bool {
 		return true
 	}
 	pos := battleengine.Position{X: start.X + dx*travel/length, Y: start.Y + dy*travel/length}
+	if cell := pos.Cell(); cell != c.pos.Cell() && c.prop.IgniteBomb && match.engine.IgniteBombAt(cell) {
+		// IsIgniteBomb: a bubble in the new cell goes off at once (its fuse
+		// -10,000,000) and the prop fires there.
+		c.pos, c.stage, c.since = pos, castTrigger, now
+		return true
+	}
 	if cell := pos.Cell(); cell != c.pos.Cell() && match.isArbitrator() {
 		for _, a := range match.livingAdventurePlayers() {
 			if a.Position.Cell() == cell {
@@ -465,6 +471,11 @@ func (match *onlineMatch) applyAdventureEffects(c *advCast, now uint32) {
 					p.bombLocks++
 					c.remember(id, name, 1)
 				}
+			case "CanUseItemKey":
+				if p != nil && v == 0 {
+					p.itemLocks++
+					c.remember(id, name, 1)
+				}
 			case "IsReversalControl":
 				if p != nil && v != 0 {
 					p.reversed++
@@ -522,6 +533,8 @@ func (match *onlineMatch) restoreAdventureEffects(c *advCast) {
 					p.moveLocks -= int(v)
 				case "CanUseBombKey":
 					p.bombLocks -= int(v)
+				case "CanUseItemKey":
+					p.itemLocks -= int(v)
 				case "IsReversalControl":
 					p.reversed -= int(v)
 				case "SpeedDel":
@@ -595,6 +608,15 @@ func (match *onlineMatch) adventureCastView() []advCastView {
 	return out
 }
 
+// adventureItemsLocked is CanUseItemKey=0 on the local player.
+func (match *onlineMatch) adventureItemsLocked() bool {
+	if match.adventure == nil {
+		return false
+	}
+	p := match.adventure.players[match.local]
+	return p != nil && p.itemLocks > 0
+}
+
 // adventureInput holds the local player's keys under skill control effects.
 func (match *onlineMatch) adventureInput(action *battleengine.Action) {
 	if match.adventure == nil {
@@ -606,6 +628,9 @@ func (match *onlineMatch) adventureInput(action *battleengine.Action) {
 	}
 	if p.bombLocks > 0 {
 		action.PlaceBomb = false
+	}
+	if p.itemLocks > 0 {
+		action.UseActionID = 0
 	}
 	if p.moveLocks > 0 {
 		action.Move = battleengine.DirectionNone

@@ -149,3 +149,20 @@ func (engine *Engine) adventureBombPower(actor *Actor) byte {
 	}
 	return adventureAdjusted(actor.BombPower, actor.adventureAttr[1], 1, 255)
 }
+
+// IgniteBombAt is a rule-12 projectile prop's IsIgniteBomb: every resting
+// bubble in cell takes 10,000,000 ms off its fuse and so explodes at the
+// next step. It reports whether there was one.
+func (engine *Engine) IgniteBombAt(cell Cell) bool {
+	if engine == nil || !engine.rules.NativeAdventure {
+		return false
+	}
+	lit := false
+	for index := range engine.bombs {
+		bomb := &engine.bombs[index]
+		if bomb.Cell == cell && bomb.FlightUntilMS <= engine.elapsedMS {
+			bomb.ExplodeAtMS, lit = engine.elapsedMS, true
+		}
+	}
+	return lit
+}

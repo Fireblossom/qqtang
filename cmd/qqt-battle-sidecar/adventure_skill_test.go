@@ -47,6 +47,20 @@ func adventureSkillMatch(t *testing.T, prop mapdata.AdventureProp, trigger strin
 	t.Helper()
 	m := bossMatch(t, 1)
 	m.boss = nil
+	rules := onlineRules(1, 1)
+	rules.NativeAdventure, rules.ExternalConclusion = true, true
+	rules.RoundDurationMS, rules.BombFuseMS, rules.FlameDurationMS, rules.ActorHalfSizePixels = 600_000, 3000, 500, 19
+	var participants []battleengine.Participant
+	for _, a := range m.engine.Actors() {
+		participants = append(participants, a.Participant)
+	}
+	engine, err := battleengine.New(battleengine.Config{Seed: 1, Grid: m.engine.Grid(), Rules: rules, Participants: participants})
+	if err != nil {
+		t.Fatal(err)
+	}
+	m.engine = engine
+	m.runtime, _ = battleengine.NewRuntime(engine, nil)
+	advanceTo(t, m, 3000)
 	skill := mapdata.AdventureNPCSkill{"TimeTrigger": "2", "TimeLower": "0", "TimeUpper": "600000", "SkiLLID": "21001", "SkillTrigger": trigger}
 	m.adventure = &adventureRule{players: map[uint16]*advPlayer{1: {hp: 100, maxHP: 100}, 2: {hp: 100, maxHP: 100}}, npcs: map[uint16]*advNPC{},
 		bubbles: map[uint32]bool{}, seen: map[string]bool{}, rng: rand.New(rand.NewSource(1)),
@@ -173,5 +187,26 @@ func TestAdventureNPCSkillTurnsPlayersIntoPigsForTheAffectTime(t *testing.T) {
 	p := m.adventure.players[1]
 	if p.avatar != 57 || p.avatarUntil != now+2+6000 {
 		t.Fatalf("avatar %d until %d", p.avatar, p.avatarUntil)
+	}
+}
+
+func TestAdventureProjectileIgnitesTheFirstBubbleOnItsWay(t *testing.T) {
+	prop := mapdata.AdventureProp{ID: 21001, Tier: 1, HasMove: true, MoveDistance: 6, MoveSpeed: 400, HitPlayerPower: 1, IgniteBomb: true, AffectObject: 4,
+		AffectShape: 4, AffectCount: 1, Effects: map[string]float64{"HP": -20}}
+	m, n := adventureSkillMatch(t, prop, "0")
+	n.facing = 1 // up, away from the players
+	cell := n.pos.Cell()
+	cell.Row--
+	if _, err := m.engine.ApplyVerifiedBombPlacement(2, cell, 1, 0); err != nil {
+		t.Fatal(err)
+	}
+	now := m.engine.ElapsedMS()
+	m.adventureNPCDecide(n, now)
+	for at := uint32(1); at < 400 && len(m.adventure.casts) > 0 && m.adventure.casts[0].stage != castTrigger; at += 20 {
+		m.adventureCastTick(now + at)
+	}
+	bomb := m.engine.Bombs()[0]
+	if len(m.adventure.casts) == 0 || m.adventure.casts[0].stage != castTrigger || bomb.ExplodeAtMS > m.engine.ElapsedMS() {
+		t.Fatalf("cast %v bomb fuse %d at %d", m.adventure.casts, bomb.ExplodeAtMS, m.engine.ElapsedMS())
 	}
 }

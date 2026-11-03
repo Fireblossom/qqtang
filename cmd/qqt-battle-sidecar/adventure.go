@@ -53,6 +53,7 @@ type advPlayer struct {
 	dead           bool
 	// NPC skill control effects on the player (adventure_skill.go).
 	moveLocks, bombLocks, reversed int
+	itemLocks                      int
 	avatar                         uint16 // SpecialAvatarType until avatarUntil
 	avatarUntil                    uint32
 }

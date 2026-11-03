@@ -1564,6 +1564,9 @@ func (match *onlineMatch) applyItemUse(body []byte) {
 // items. Throws (44/46) carry their target: direction, bubble power, row and
 // column in Flag1, and the targeted bubble's owner and placement time.
 func (match *onlineMatch) requestItemUse(action uint8) {
+	if match.adventureItemsLocked() {
+		return
+	}
 	actor, ok := actorByID(match.engine.Actors(), match.local)
 	// The needle (63) only frees a trapped player; nothing else works
 	// from inside a bubble.
@@ -1606,6 +1609,9 @@ func (match *onlineMatch) requestItemUse(action uint8) {
 // requestPreparedUse asks the server to use one of the local player's room
 // props; the server consumes it and answers with 0x1175 to every client.
 func (match *onlineMatch) requestPreparedUse(item uint32) {
+	if match.adventureItemsLocked() {
+		return
+	}
 	actor, ok := actorByID(match.engine.Actors(), match.local)
 	if !ok || actor.State != battleengine.ActorActive || match.preparedCount(item) <= 0 {
 		return
