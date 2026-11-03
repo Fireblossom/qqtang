@@ -12,8 +12,8 @@ package main
 // Played effects (with RestorePlayerAttr): HP, SetTotalPercentHP,
 // SetCurPercentHP, Defence/Defense, TouchHarmValue, Enmity; SpeedDel,
 // BombPowerDel, BombCountDel, CanUseMoveKey, CanUseBombKey and
-// IsReversalControl. Not played yet: SpecialAvatarType (the pig),
-// CanUseItemKey, IsSlip, IsIgniteBomb, map damage and the props' .eff
+// IsReversalControl; SpecialAvatarType changes only the look. Not played
+// yet: the avatars' own movement/bubble slots, CanUseItemKey, IsSlip, IsIgniteBomb, map damage and the props' .eff
 // animations.
 
 import (
@@ -477,6 +477,15 @@ func (match *onlineMatch) applyAdventureEffects(c *advCast, now uint32) {
 					if err := match.engine.AdjustAdventureAttributes(id, d[0], d[1], d[2]); err == nil {
 						c.remember(id, name, v)
 					}
+				}
+			case "SpecialAvatarType":
+				// The common avatar path with the prop's AffectTime as its
+				// lifetime; RestorePlayerAttr does not undo it (v < 1 returns).
+				// Only the look is played [the avatars' own slots are not].
+				if v >= 1 && p != nil {
+					p.avatar, p.avatarUntil = uint16(v), now+c.prop.AffectTime
+				} else if v >= 1 && n != nil {
+					n.avatar, n.avatarUntil = uint16(v), now+c.prop.AffectTime
 				}
 			case "Enmity":
 				if p != nil && match.isArbitrator() {

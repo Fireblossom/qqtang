@@ -1105,6 +1105,9 @@ class BattleScene:
         if actor["state"] == ACTOR_ELIMINATED and dead_for >= DIE_MS:
             return
         role = actor["avatar_role"] or actor["role"]
+        if self.rule == "adventure":  # NPC skill SpecialAvatarType
+            skin = ((self.state.get("adventure") or {}).get("players") or {}).get(str(actor["id"]), {}).get("avatar")
+            role = skin or role
         direction = SPRITE_DIRECTION.get(actor["facing"], 3)
         if actor["state"] == ACTOR_TRAPPED:
             trapped_for = self.now_ms - self.trapped_at.setdefault(actor["id"], self.now_ms)

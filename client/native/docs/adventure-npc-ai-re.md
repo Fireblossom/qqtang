@@ -493,7 +493,8 @@ func (n *NPC) trySkill(now) {
 - 状态机（§6.4）：准备 → 陷阱（TrapTime 内有玩家踩到施法格即生效）/ 飞行（MoveSpeed 按 px/s，进入新格时命中玩家，命中数 ≥ HitPlayerPower 或撞到非空地格或到终点即生效）/ 直接生效。准备中 NPC 死亡则道具随之消失 [推断，原版此时道具仍挂在 NPC 名下]。
 - 生效（§6.5～§6.7）：Shape 0～4、Object 0～5 按表实现（State 只排除了死亡玩家，没有困泡状态）；Object 0 各端自己以施法者为目标、不发 0x10F7，其余由仲裁方发 0x10F7，其他端收到后才计时。效果按 `Delay + k·AffectTime/Count` 分次落地。
 - 已实现的效果：`HP`（v<0 只由受害者本机发 0x10F4，受 3 s 免伤限制；v>0 直接加血）、`SetTotalPercentHP`、`SetCurPercentHP`、`Defence/Defense`、`TouchHarmValue`、`Enmity`、`SpeedDel/BombPowerDel/BombCountDel`（引擎 `AdjustAdventureAttributes`，只在 `Rules.NativeAdventure` 下生效；速度和泡数下限 0，速度 0 档原地不动；泡威力下限取 1 [推断，原版下限 0，0 威力泡的爆炸形状没查]）、玩家和 NPC 的 `CanUseMoveKey=0`、玩家的 `CanUseBombKey=0`、`IsReversalControl`；`RestorePlayerAttr` 时到期反向恢复（HP 不恢复）。
-- 未实现：`SpecialAvatarType`（全体变猪等变身）、`CanUseItemKey`、`IsSlip`、`IsIgniteBomb`、`DestroyMapItem`、困泡状态筛选（PropAffectState 2/3）、道具 `.eff` 动画（画面上只用半透明圆点标出陷阱和飞行道具，不是原版外观）。
+- `SpecialAvatarType`（全体变猪 57、燃影 79、奥冰 77、电法 81、NPC 狂暴 76）：`0x005FA37A` 走通用变身路径 `0x005F767D(…,0x38)`→`0x005ADF5A`，再把 Trigger 状态 +8（AffectTime）传给新外形的 `vtbl+0x44` 作寿命、`vtbl+0x60(v)` 设外形 [证实]；反向值 < 1 直接返回，所以 RestorePlayerAttr 不撤销，外形按自己的寿命结束。sidecar 只换外观（玩家视图 `avatar`、NPC 视图 role），外形自身的移动/放泡槽位没查、没做 [未知]。
+- 未实现：`CanUseItemKey`、`IsSlip`、`IsIgniteBomb`、`DestroyMapItem`、困泡状态筛选（PropAffectState 2/3）、道具 `.eff` 动画（画面上只用半透明圆点标出陷阱和飞行道具，不是原版外观）。
 
 ---
 

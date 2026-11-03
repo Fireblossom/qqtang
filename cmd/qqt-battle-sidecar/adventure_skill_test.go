@@ -160,3 +160,18 @@ func TestAdventureNPCSkillDiesWithItsPreparingCaster(t *testing.T) {
 		t.Fatalf("casts %d HP %d", len(m.adventure.casts), m.adventure.players[1].hp)
 	}
 }
+
+func TestAdventureNPCSkillTurnsPlayersIntoPigsForTheAffectTime(t *testing.T) {
+	prop := mapdata.AdventureProp{ID: 21001, Tier: 103, AffectObject: 4, AffectShape: 0, AffectFactor: 20, AffectCount: 1, AffectTime: 6000, RestoreAttr: true,
+		Effects: map[string]float64{"SpecialAvatarType": 57}}
+	m, n := adventureSkillMatch(t, prop, "0")
+	now := m.engine.ElapsedMS()
+	m.adventureNPCDecide(n, now)
+	m.adventureCastTick(now + 1)
+	m.adventureCastTick(now + 2)
+	m.adventureCastTick(now + 6100) // the prop ends; the avatar stays to its own end
+	p := m.adventure.players[1]
+	if p.avatar != 57 || p.avatarUntil != now+2+6000 {
+		t.Fatalf("avatar %d until %d", p.avatar, p.avatarUntil)
+	}
+}

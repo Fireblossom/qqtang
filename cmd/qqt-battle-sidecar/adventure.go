@@ -53,6 +53,8 @@ type advPlayer struct {
 	dead           bool
 	// NPC skill control effects on the player (adventure_skill.go).
 	moveLocks, bombLocks, reversed int
+	avatar                         uint16 // SpecialAvatarType until avatarUntil
+	avatarUntil                    uint32
 }
 
 type advNPC struct {
@@ -80,6 +82,8 @@ type advNPC struct {
 	preparingUntil uint32
 	lastFire       map[int]uint32
 	moveLocks      int
+	avatar         uint16 // SpecialAvatarType until avatarUntil
+	avatarUntil    uint32
 }
 
 type adventureRule struct {
@@ -126,6 +130,7 @@ type advPlayerView struct {
 	MaxHP          int    `json:"max_hp"`
 	ProtectedUntil uint32 `json:"protected_until"`
 	DyingSince     uint32 `json:"dying_since,omitempty"`
+	Avatar         uint16 `json:"avatar,omitempty"`
 }
 
 type adventureView struct {
@@ -950,12 +955,21 @@ func (match *onlineMatch) adventureView() *adventureView {
 		Locked: rule.locked, FlashAt: rule.lockFlashAt, Casts: match.adventureCastView()}
 	for id, p := range rule.players {
 		view.Players[id] = advPlayerView{HP: p.hp, MaxHP: p.maxHP, ProtectedUntil: p.protectedUntil, DyingSince: p.dyingSince}
+		if now := match.engine.ElapsedMS(); now < p.avatarUntil {
+			v := view.Players[id]
+			v.Avatar = p.avatar
+			view.Players[id] = v
+		}
 	}
 	for _, n := range rule.orderedNPCs() {
 		if n.dead {
 			continue
 		}
-		view.NPCs = append(view.NPCs, advActorView{ID: n.id, Role: n.info.ImageID, Boss: n.info.IsBoss, X: n.pos.X, Y: n.pos.Y, Facing: byte(battleDirection(n.facing)),
+		role := n.info.ImageID
+		if match.engine.ElapsedMS() < n.avatarUntil {
+			role = uint32(n.avatar)
+		}
+		view.NPCs = append(view.NPCs, advActorView{ID: n.id, Role: role, Boss: n.info.IsBoss, X: n.pos.X, Y: n.pos.Y, Facing: byte(battleDirection(n.facing)),
 			Moving: n.moving, HP: n.hp, MaxHP: n.maxHP, ProtectedUntil: n.protectedUntil, Name: decodeGBK(n.info.NickName)})
 	}
 	return view
