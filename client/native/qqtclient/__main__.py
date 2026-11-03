@@ -151,7 +151,9 @@ def main() -> int:
     namespace.update(room_natives)
     shop_natives, draw_shop_preview = build_shop_natives(runtime, session, resources, AvatarCache(resources))
     namespace.update(shop_natives)
-    namespace.update(build_craft_natives(runtime, session, resources, renderer.sprites))
+    craft_natives = build_craft_natives(runtime, session, resources, renderer.sprites)
+    namespace.update(craft_natives)
+    renderer.draw_callbacks["SC_AvatarForge_draw"] = craft_natives["SC_AvatarForge_draw"]
     namespace.update(build_pet_natives(runtime, session, resources))  # replaces the shop's pet list and the room's ignored 0x00D4
     renderer.draw_callbacks["SC_shopDemo_draw"] = draw_shop_preview
     renderer.draw_callbacks["SC_room_drawPlayer"] = draw_room_players

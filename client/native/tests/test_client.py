@@ -22,7 +22,7 @@ from qqtclient.friend import build_friend_natives  # noqa: E402
 from qqtclient.net import friend  # noqa: E402
 from qqtclient.natives import build_natives  # noqa: E402
 from qqtclient.render import Renderer, cell_width  # noqa: E402
-from qqtclient.props import place_saved  # noqa: E402
+from qqtclient.props import place_saved, settle_storage  # noqa: E402
 from qqtclient.runtime import UIRuntime  # noqa: E402
 from qqtclient.script import MissingNative, MissingReport, call_script, new_namespace, py2_div, py2_len, script_key  # noqa: E402
 from qqtclient.widgets import STATE_DISABLED, STATE_HOVER, STATE_NORMAL, STATE_PRESSED, Widget, build  # noqa: E402
@@ -220,6 +220,14 @@ class TextLayoutTest(unittest.TestCase):
 
 
 class PropBarTest(unittest.TestCase):
+    def test_storage_partitions_by_swapping_last_matching_item(self):
+        rows = [types.SimpleNamespace(m_stItem=types.SimpleNamespace(m_nItemID=i))
+                for i in (24050, 30001, 20020, 20001, 30002)]
+        arranged = settle_storage(rows)
+        self.assertEqual([row.m_stItem.m_nItemID for row in arranged], [20001, 20020, 30001, 30002, 24050])
+        self.assertEqual([row.m_stItem.m_nItemID for row in rows], [24050, 30001, 20020, 20001, 30002])
+        self.assertEqual(settle_storage([]), [])
+
     """QQTSection.dll 0x1002B8A3: rebuilding the room prop bar at login."""
 
     @staticmethod

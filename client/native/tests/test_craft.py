@@ -3,7 +3,10 @@ import types
 import unittest
 import zlib
 
+import pygame
+
 from qqtclient.craft import CraftCatalog, build_craft_natives
+from qqtclient.forge_preview import ForgePreview
 from qqtclient.net import craft, shop
 from qqtclient.net.player import ItemInfo
 
@@ -140,6 +143,59 @@ class CraftHostTest(unittest.TestCase):
         self.assertEqual([r.quantity for r in self.session.profile.items], [1, 1])
         self.deliver(craft.BREAK_EGG_COMMAND, bytes.fromhex("0001 00000000 00"))
         self.assertEqual(self.calls[-1], ("NotifyBreakEggResult", 0, 0, ""))
+
+
+class ForgePreviewTest(unittest.TestCase):
+    def setUp(self):
+        self.red = pygame.Surface((1, 1), pygame.SRCALPHA)
+        self.red.fill((255, 0, 0, 255))
+        self.blue = pygame.Surface((1, 1), pygame.SRCALPHA)
+        self.blue.fill((0, 0, 255, 255))
+
+    def test_part_direction_interval_anchor_and_same_wear_keeps_time(self):
+        path = "object/cap/cap1_stand.img"
+        frames = [(None, 0, 0)] * 6 + [(self.red, 22, 11), (self.blue, 23, 12)]
+        sprites = types.SimpleNamespace(get=lambda p: frames, directions={path: 4})
+        preview = ForgePreview(types.SimpleNamespace(read=lambda p: None), sprites)
+        preview.wear(19, ("cap", 1), "", 100)
+        surface = pygame.Surface((200, 500), pygame.SRCALPHA)
+        preview.draw(surface, 100)
+        self.assertEqual(surface.get_at((72, 321)), (255, 0, 0, 255))
+        surface.fill((0, 0, 0, 0))
+        preview.wear(19, ("cap", 1), "", 300)
+        preview.draw(surface, 300)
+        self.assertEqual(surface.get_at((73, 322)), (0, 0, 255, 255))
+        preview.wear(0, None, "", 400)
+        surface.fill((0, 0, 0, 0))
+        preview.draw(surface, 400)
+        self.assertEqual(surface.get_bounding_rect().size, (0, 0))
+
+    def test_bubble_interval_and_offset_are_independent_of_part_rules(self):
+        sprites = types.SimpleNamespace(get=lambda p: [(self.red, 3, 17), (self.blue, 3, 17)], directions={})
+        preview = ForgePreview(types.SimpleNamespace(read=lambda p: None), sprites)
+        preview.wear(119, ("bomb", 3), "", 0)
+        surface = pygame.Surface((200, 500), pygame.SRCALPHA)
+        preview.draw(surface, 299)
+        self.assertEqual(surface.get_at((83, 361)), (255, 0, 0, 255))
+        preview.draw(surface, 300)
+        self.assertEqual(surface.get_at((83, 361)), (0, 0, 255, 255))
+
+    def test_positive_effect_layers_go_behind_the_part(self):
+        # Both tracks and the base occupy the same pixel: the foreground
+        # track must win, regardless of their order in the effect file.
+        key = [[0, ((0, 0, 0), (1, 1), 0, (255, 255, 255), 1)],
+               [1000, ((0, 0, 0), (1, 1), 0, (255, 255, 255), 1)]]
+        track = lambda number, layer: ((number, ("", 0, 100, 0), (0,), (0,), layer, (0, 0)), key)
+        raw = repr((9, [track(1, 0), track(2, 1)], [1, 0])).encode()
+        frames = {"object/cap/cap1_stand.img": [(self.red, 50, 84)],
+                  "object/magic/magic0001.img": [(self.blue, 0, 0)],
+                  "object/magic/magic0002.img": [(self.red, 0, 0)]}
+        preview = ForgePreview(types.SimpleNamespace(read=lambda p: raw),
+                               types.SimpleNamespace(get=frames.get, directions={}))
+        preview.wear(19, ("cap", 1), "test.eff", 0)
+        surface = pygame.Surface((200, 500), pygame.SRCALPHA)
+        preview.draw(surface, 100)
+        self.assertEqual(surface.get_at((100, 394)), (0, 0, 255, 255))
 
 
 if __name__ == "__main__":

@@ -117,7 +117,8 @@ class EffectPlayer:
         effect = self.load(name)
         return effect.length if effect else 0
 
-    def draw(self, surface: pygame.Surface, name: str, elapsed: int, x: int, y: int, image: str = "") -> bool:
+    def draw(self, surface: pygame.Surface, name: str, elapsed: int, x: int, y: int, image: str = "",
+             *, foreground: bool | None = None) -> bool:
         """Draws the effect `elapsed` ms after it started at effect point
         (x, y); False once a non-looping effect is over."""
         effect = self.load(name)
@@ -132,6 +133,10 @@ class EffectPlayer:
             else:
                 return False
         for track in sorted(effect.tracks, key=lambda track: track.layer):
+            # Avatar parts facing down draw positive layers before the part,
+            # zero/negative layers after it (0x00583B20 / 0x00583BC0).
+            if foreground is not None and (track.layer <= 0) != foreground:
+                continue
             key = _key_at(track, t)
             if key is None or key.alpha <= 0:
                 continue

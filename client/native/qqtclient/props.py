@@ -31,6 +31,29 @@ def in_storage(item_id: int, status: int) -> bool:
     return is_bar_prop(item_id) or 30000 < item_id < 32000 or (24000 < item_id < 24500 and status != 4)
 
 
+def settle_storage(rows: list[Any]) -> list[Any]:
+    """0x1002BD13: partition props, then materials, swapping from the tail.
+
+    This is intentionally not a stable sort: the original 500-entry array
+    pulls the last matching item forward at each gap. Books follow both.
+    """
+    slots = list(rows[:STORAGE_LIMIT])
+    slots.extend([None] * (STORAGE_LIMIT - len(slots)))
+    head = 0
+    for matches in (is_bar_prop, lambda item: 30000 < item < 32000):
+        while head < STORAGE_LIMIT:
+            if slots[head] is not None and matches(slots[head].m_stItem.m_nItemID):
+                head += 1
+                continue
+            tail = next((i for i in range(STORAGE_LIMIT - 1, head, -1)
+                         if slots[i] is not None and matches(slots[i].m_stItem.m_nItemID)), None)
+            if tail is None:
+                break
+            slots[head], slots[tail] = slots[tail], slots[head]
+            head += 1
+    return [row for row in slots if row is not None]
+
+
 def item_view(item: Any) -> types.SimpleNamespace:
     return types.SimpleNamespace(
         m_nItemID=item.item_id, m_iNumOfItem=item.quantity, m_bItemStatus=item.status, m_bItemRoleID=item.role_id,
@@ -75,6 +98,7 @@ def place_saved(items: list[Any], saved: list[int] | None) -> list[int]:
 
 def build_props_natives(runtime: UIRuntime, session: Session) -> dict[str, Callable[..., Any]]:
     slots = [0] * SLOTS
+    storage_sorted = False
 
     def inventory() -> list[Any]:
         return session.profile.items if session.profile else []
@@ -119,8 +143,13 @@ def build_props_natives(runtime: UIRuntime, session: Session) -> dict[str, Calla
                                      m_szDescrip=description[3] if len(description) > 3 else "")
 
     def GetStorage():
-        storage = [prop_entry(item) for item in inventory() if in_storage(item.item_id, item.status)]
-        return storage[:STORAGE_LIMIT]
+        storage = [prop_entry(item) for item in inventory() if item.quantity > 0 and item.status != shop.STATUS_RECYCLED
+                   and in_storage(item.item_id, item.status)]
+        return settle_storage(storage) if storage_sorted else storage[:STORAGE_LIMIT]
+
+    def RequestSettleStorage():
+        nonlocal storage_sorted
+        storage_sorted = True
 
     def GetEquipedProp():
         return [prop_entry((find_item(item_id) if item_id else None) or EMPTY_ITEM) for item_id in slots]
@@ -165,4 +194,5 @@ def build_props_natives(runtime: UIRuntime, session: Session) -> dict[str, Calla
         save()
 
     session.on_entered.append(load)
-    return {"GetStorage": GetStorage, "GetEquipedProp": GetEquipedProp, "EquipOneProp": EquipOneProp}
+    return {"GetStorage": GetStorage, "GetEquipedProp": GetEquipedProp, "EquipOneProp": EquipOneProp,
+            "RequestSettleStorage": RequestSettleStorage}

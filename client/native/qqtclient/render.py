@@ -38,6 +38,7 @@ class SpriteCache:
         self.resources = resources
         self.sprites: dict[str, list[tuple[pygame.Surface | None, int, int]] | None] = {}
         self.canvases: dict[str, tuple[int, int]] = {}
+        self.directions: dict[str, int] = {}
         self.aliases: dict[str, str] = {}
 
     def get(self, path: str) -> list[tuple[pygame.Surface | None, int, int]] | None:
@@ -64,6 +65,7 @@ class SpriteCache:
             log(f"[bad image] {path}: {error}")
             return None
         self.canvases[key] = (sprite.width, sprite.height)
+        self.directions[key] = sprite.directions
         frames = []
         for frame in sprite.frames:
             if frame.pixels is None:

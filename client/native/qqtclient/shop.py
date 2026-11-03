@@ -7,7 +7,7 @@ is identical to its catalog and never sends one): COMMODITYTYPE packs the
 shop tab and sub-tab as major << 8 | minor, and [comment.N] lists the
 recommended tab's sub-tabs. Item names and pictures come from the scripts'
 commodityList/itemList. Only 糖币 purchases are settled by the server; gifts,
-repairs, storage, the fruit machine and tasks are not supported by it and
+repairs, the fruit machine and tasks are not supported by it and
 are stubbed here.
 """
 
@@ -390,9 +390,6 @@ def build_shop_natives(runtime: UIRuntime, session: Session, resources: Resource
     def IsBook(_item_id):
         return 0
 
-    def RequestSettleStorage():
-        pass
-
     def InitTaskSys():
         pass
 
@@ -496,6 +493,10 @@ def build_shop_natives(runtime: UIRuntime, session: Session, resources: Resource
         result = shop.parse_result(packet.payload)
         if result != 0:
             log(f"[shop] item status change rejected: {result}")
+        elif in_shop():
+            # Client.exe ChangeItemStatusResponse refreshes both lists.
+            script("ui_updateMyItems")
+            script("ui_updateRecycler")
 
     session.handlers.update({
         shop.ITEM_ADD_NOTIFY_COMMAND: on_item_add,

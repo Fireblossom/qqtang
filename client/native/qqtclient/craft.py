@@ -14,6 +14,9 @@ import xml.etree.ElementTree as ET
 import zlib
 from typing import Any, Callable
 
+import pygame
+
+from .forge_preview import ForgePreview
 from .net import craft, shop
 from .props import EMPTY_ITEM, item_view
 from .script import call_script, log
@@ -53,6 +56,8 @@ class CraftCatalog:
         self.materials: set[int] = set()
         self.costs: dict[str, list] = {}
         self.recipes: dict[int, Recipe] = {}
+        self.effects: dict[int, str] = {}
+        self.colors: dict[int, str] = {}
         if forge:
             ini = configparser.ConfigParser(interpolation=None, strict=False)
             ini.read_string(forge.decode("gbk"))
@@ -66,6 +71,10 @@ class CraftCatalog:
                 self.types.append(ini.get(section, "typename"))
                 self.items.append(ids(section))
             self.materials = ids("material")
+            self.effects = {i: ini.get("effectform", f"form.{i}")
+                            for i in range(1, ini.getint("effectform", "formcount", fallback=0) + 1)}
+            self.colors = {i: ini.get("colorlist.1", f"color.{i}")
+                           for i in range(ini.getint("colorlist.1", "colorcount", fallback=0))}
             for name in ("split", "revert"):
                 self.costs[name] = [ini.getint(name, "itemid"), ini.getint(name, "itemnum"), ini.get(name, "itemname")]
         if combine:
@@ -78,10 +87,16 @@ class CraftCatalog:
                                     [Material(int(m.attrib["matid"]), m.attrib["matname"], int(m.attrib["matnum"])) for m in entry])
                     self.recipes[recipe.product] = recipe
 
+    def effect_path(self, effect: int, color: int) -> str:
+        if effect not in self.effects or color not in self.colors:
+            return ""
+        return f"object/avatareffect/effect/{self.effects[effect]}_{self.colors[color]}.eff"
+
 
 def build_craft_natives(runtime, session, resources, sprites=None) -> dict[str, Callable[..., Any]]:
     catalog: list[CraftCatalog] = []
     last_combine = -2.0
+    preview = ForgePreview(resources, sprites) if sprites is not None else None
 
     def table() -> CraftCatalog:
         if not catalog:
@@ -196,6 +211,19 @@ def build_craft_natives(runtime, session, resources, sprites=None) -> dict[str, 
 
     def RequestBreakEgg(egg, hammer):
         session.send(craft.BREAK_EGG_COMMAND, craft.build_break_egg(session.uin, int(egg), int(hammer)))
+
+    def AvatarForge_wear(item, effect, color):
+        if preview is not None:
+            descriptor = runtime.namespace.get("itemList", {}).get(int(item))
+            preview.wear(int(item), descriptor, table().effect_path(int(effect), int(color)), pygame.time.get_ticks())
+
+    def AvatarForge_Pos(x, y):
+        if preview is not None:
+            preview.position = (int(x), int(y))
+
+    def SC_AvatarForge_draw(surface):
+        if preview is not None:
+            preview.draw(surface, pygame.time.get_ticks())
 
     def on_combine(packet):
         result = craft.parse_combine(packet.payload)
