@@ -32,7 +32,7 @@ type autoplayBot struct {
 	tank      *tankRule
 	machine   *machineRule
 	box       *boxRule
-	boss      *bossRule // a Boss overlay: its living Bosses are targets too
+	boss      *bossRule      // a Boss overlay: its living Bosses are targets too
 	adventure *adventureRule // rule 12: its NPCs are the targets
 	// Rule 2: no own bubbles; kick the dropped ones instead.
 	kick bool
