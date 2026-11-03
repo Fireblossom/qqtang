@@ -17,6 +17,7 @@ from typing import Any, Callable
 
 import pygame
 
+from .battle.effect import EffectPlayer
 from .net import roompeer
 from .runtime import TEXT_INPUT_TYPES, UIRuntime
 from .script import call_script, log
@@ -119,6 +120,39 @@ class RoomPet:
             screen.blit(image, (int(self.x) - PET_ANCHOR[0] + ox, int(self.y) - PET_ANCHOR[1] + oy))
 
 
+# Wedding scene effects (docs/wedding-re.md §6): SetWeddingEffect's effect at
+# a fixed point over everything; love.eff over a couple standing within 50 px
+# on both axes, placed 70 px above their midpoint and re-placed every 2000 ms.
+WEDDING_EFFECT_AT = (250, 330)
+LOVE_EFFECT = "effect/love.eff"
+COUPLE_NEAR = 50
+COUPLE_RAISE = 70
+COUPLE_RECHECK_MS = 2000
+
+
+class Couple:
+    """0x00440CD0: seats a (the newcomer) and b."""
+
+    def __init__(self, a: int, b: int) -> None:
+        self.a, self.b = a, b
+        self.active = False
+        self.timer = 0
+        self.elapsed = 0
+        self.at = (0, 0)
+
+    def update(self, first: Any, second: Any, dt: int) -> None:
+        """0x00440D70."""
+        if self.timer == 0 or self.timer >= COUPLE_RECHECK_MS:
+            if first is not None and second is not None and abs(first.x - second.x) < COUPLE_NEAR and abs(first.y - second.y) < COUPLE_NEAR:
+                self.active, self.timer, self.elapsed = True, 0, 0
+                self.at = (int((first.x + second.x) / 2), int((first.y + second.y) / 2) - COUPLE_RAISE)
+            else:
+                self.active = False
+        if self.active:
+            self.timer += dt
+            self.elapsed += dt
+
+
 def cell_of(x: int, y: int) -> tuple[int, int]:
     """0x0045B130/0x0045B160: (row, col)."""
     return (y + 20 - 106) // 40, (x + 20 - 41) // 40
@@ -140,6 +174,10 @@ class RoomWalk:
         self.presence_at = -PRESENCE_RETRY_MS
         self.packet_number = 0
         self.last_numbers: dict[int, int] = {}
+        self.couples: list[Couple] = []
+        self.wedding_effect: str | None = None
+        self.wedding_elapsed = 0
+        self.effects = EffectPlayer(sprites.resources.read, sprites.get) if sprites is not None else None
         runtime.event_hooks.append(self.handle)
         runtime.tick_hooks.append(self.tick)
         session.on_disconnected.append(self.close)
@@ -163,6 +201,26 @@ class RoomWalk:
     def typing(self) -> bool:
         focus = self.runtime.focus
         return focus is not None and focus.type in TEXT_INPUT_TYPES and focus.editable
+
+    # Wedding effects --------------------------------------------------------
+
+    def reset_scene(self) -> None:
+        self.couples.clear()
+        self.wedding_effect, self.wedding_elapsed = None, 0
+
+    def add_couple(self, a: int, b: int) -> None:
+        self.couples.append(Couple(a, b))
+
+    def remove_couple(self, seat: int) -> None:
+        """The first pair holding the seat goes (0x00440F90)."""
+        for couple in self.couples:
+            if seat in (couple.a, couple.b):
+                self.couples.remove(couple)
+                return
+
+    def set_wedding_effect(self, name: str) -> None:
+        """0x00459110: a new effect replaces the old one."""
+        self.wedding_effect, self.wedding_elapsed = name, 0
 
     # Input ------------------------------------------------------------------
 
@@ -277,6 +335,10 @@ class RoomWalk:
                 self.step(avatar, dt)
                 if getattr(avatar, "pet", None) is not None:
                     avatar.pet.update(avatar, dt)
+        for couple in self.couples:
+            couple.update(self.avatar(couple.a), self.avatar(couple.b), dt)
+        if self.wedding_effect is not None:
+            self.wedding_elapsed += dt
         if mine is not None:
             # 0x00457CF0: a moved avatar is sent at most every 300 ms, or at
             # once on a turn.
@@ -389,7 +451,8 @@ class RoomWalk:
     # Drawing ----------------------------------------------------------------
 
     def draw(self, screen: pygame.Surface, avatar_anchor: tuple[int, int]) -> None:
-        """0x004575D0: bubbles, flames, then the avatars (each with its pet) by seat."""
+        """0x004575D0: bubbles, flames, the avatars (each with its pet) by seat,
+        then the couple effects and the wedding effect on top."""
         for (row, col), (_placed, style) in self.bombs.items():
             frames = self.sprites.get(f"object/bomb/bomb{style}_stand.img") if self.sprites else None
             if frames:
@@ -420,6 +483,12 @@ class RoomWalk:
                 avatar.pet.draw(screen, self.sprites, self.clock)
             if names and self.font is not None:
                 self.draw_name(screen, seat, avatar)
+        if self.effects is not None:
+            for couple in self.couples:
+                if couple.active:
+                    self.effects.draw(screen, LOVE_EFFECT, couple.elapsed, *couple.at)
+            if self.wedding_effect is not None:
+                self.effects.draw(screen, self.wedding_effect, self.wedding_elapsed, *WEDDING_EFFECT_AT)
 
     def draw_name(self, screen: pygame.Surface, seat: int, avatar: Any) -> None:
         """0x0044C4A0: misc171 plate at (x-42, y-89), the nickname twice."""

@@ -42,6 +42,8 @@ class Session:
         self.room_view: Callable[[], Any] = lambda: None
         # The pet cache (pet.py sets it); the room shows the carried pet.
         self.pets: Any = None
+        # The marriage records (marriage.py sets it); the room pairs couples.
+        self.marriage: Any = None
         self.uin = 0
         self.nickname = ""
         self.gender = 0

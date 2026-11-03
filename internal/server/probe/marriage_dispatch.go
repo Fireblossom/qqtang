@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"time"
 
+	roomstate "qqtang/internal/game/room"
 	"qqtang/internal/protocol/game"
 	"qqtang/internal/server/persistence"
 )
@@ -91,6 +92,9 @@ func (server *Server) handleMarriageMessage(session *connectionSession, connecti
 				server.broadcastDirectNotification(request.ResponderUIN, request.ProposerUIN, "qqt_marriage_answer_spark_peer", func(template []byte) ([]byte, error) {
 					return game.BuildLocalAnswerSparkNotification(template, resultID, request, reason)
 				})
+				if accepted {
+					server.pushMarriageInfo(request.ResponderUIN, request.ProposerUIN)
+				}
 			},
 		}
 
@@ -99,22 +103,7 @@ func (server *Server) handleMarriageMessage(session *connectionSession, connecti
 		if decodeErr != nil {
 			return server.rejectedMarriage(connectionID, inspection.Command, decodeErr)
 		}
-		marriage, loadErr := server.playerStore.SynchronizeMarriageRing(context.Background(), request.TargetUIN)
-		resultID, _ := marriageResult(loadErr)
-		info := game.MarriageInfo{TargetUIN: request.TargetUIN, MarriageLevel: 1, LevelValue: 1}
-		if loadErr == nil {
-			age := uint32(0)
-			now := uint32(time.Now().Unix())
-			if now > marriage.MarriedUnix {
-				age = (now - marriage.MarriedUnix) / uint32((24*time.Hour)/time.Second)
-			}
-			info = game.MarriageInfo{
-				TargetUIN: marriage.UIN, MarriageUIN: marriage.SpouseUIN,
-				MarriageLoyalty: marriage.Loyalty, MarriageLevel: marriage.Level,
-				LevelValue: marriage.LevelValue, MarriageAge: age, LoveWord: marriage.LoveWord,
-				Nickname: marriage.Nickname, SpouseNickname: marriage.SpouseNickname, RingID: marriage.RingID,
-			}
-		}
+		resultID, info := server.marriageInfo(request.TargetUIN)
 		response, buildErr := game.BuildLocalMarriageInfoResponse(data, resultID, info)
 		if buildErr != nil {
 			return server.rejectedMarriage(connectionID, inspection.Command, buildErr)
@@ -167,32 +156,45 @@ func (server *Server) handleMarriageMessage(session *connectionSession, connecti
 			return server.rejectedMarriage(connectionID, inspection.Command, decodeErr)
 		}
 		marriage, operationErr := server.playerStore.LoadMarriage(context.Background(), request.UIN)
+		if operationErr == nil && request.TargetUIN == 0 {
+			request.TargetUIN = marriage.SpouseUIN
+		}
 		if operationErr == nil && marriage.SpouseUIN != request.TargetUIN {
 			operationErr = persistence.ErrMarriageNotFound
 		}
 		targetPlayerID, targetRoomID, online := server.liveMarriagePlayer(session, request.TargetUIN)
 		if operationErr == nil && (!online || targetRoomID == 0 || targetRoomID != session.RoomID) {
-			operationErr = fmt.Errorf("spouse is not present in the wedding room")
+			operationErr = errWeddingSpouseAbsent
 		}
 		if operationErr == nil {
 			_, operationErr = server.worldState().StartWedding(sessionWorldUIN(session), targetPlayerID, request.WeddingModeID)
 		}
-		resultID, reason := marriageResult(operationErr)
-		if operationErr == nil {
-			reason = "请确认婚礼"
+		if operationErr != nil {
+			// The client runs SetWeddingStart on any 0x10A without reading
+			// ResultID, which locks the wedding panel (docs wedding-re.md §4).
+			_, reason := marriageResult(operationErr)
+			response, buildErr := game.BuildLocalStartWeddingFailure(data, game.MarriageResultFailed, request.UIN, reason)
+			if buildErr != nil {
+				return server.rejectedMarriage(connectionID, inspection.Command, buildErr)
+			}
+			return server.marriageOperationResult(connectionID, inspection.Command, request.UIN, "start_wedding", response, operationErr)
 		}
-		response, buildErr := game.BuildLocalStartWeddingResponse(data, resultID, request, marriage.Nickname, marriage.SpouseNickname, reason)
+		reason := "请确认婚礼"
+		response, buildErr := game.BuildLocalStartWeddingResponse(data, game.MarriageResultSuccess, request, marriage.Nickname, marriage.SpouseNickname, reason)
 		if buildErr != nil {
 			return server.rejectedMarriage(connectionID, inspection.Command, buildErr)
 		}
-		if operationErr != nil {
-			return server.marriageOperationResult(connectionID, inspection.Command, request.UIN, "start_wedding", response, operationErr)
-		}
+		roomID := session.RoomID
 		return protocolMessageResult{
 			handled: true, response: response, result: "qqt_marriage_wedding_started",
 			postResponse: func() {
+				// Everyone in the room runs SetWeddingStart, so the spouse and the
+				// guests know both UINs and names before 0x10B and the ceremony.
+				server.broadcastRoomNotification(roomID, request.UIN, "qqt_marriage_wedding_started_peer", func(template []byte) ([]byte, error) {
+					return game.BuildLocalStartWeddingNotification(template, request, marriage.Nickname, marriage.SpouseNickname, reason)
+				})
 				server.broadcastDirectNotification(request.UIN, request.TargetUIN, "qqt_marriage_wedding_confirm", func(template []byte) ([]byte, error) {
-					return game.BuildLocalWeddingConfirmNotification(template, request, marriage.Nickname, marriage.SpouseNickname, "请确认婚礼")
+					return game.BuildLocalWeddingConfirmNotification(template, request, marriage.Nickname, marriage.SpouseNickname, reason)
 				})
 			},
 		}
@@ -203,12 +205,15 @@ func (server *Server) handleMarriageMessage(session *connectionSession, connecti
 			return server.rejectedMarriage(connectionID, inspection.Command, decodeErr)
 		}
 		marriage, operationErr := server.playerStore.LoadMarriage(context.Background(), request.UIN)
+		if operationErr == nil && request.TargetUIN == 0 {
+			request.TargetUIN = marriage.SpouseUIN
+		}
 		if operationErr == nil && marriage.SpouseUIN != request.TargetUIN {
 			operationErr = persistence.ErrMarriageNotFound
 		}
 		targetPlayerID, targetRoomID, online := server.liveMarriagePlayer(session, request.TargetUIN)
 		if operationErr == nil && (!online || targetRoomID == 0 || targetRoomID != session.RoomID) {
-			operationErr = fmt.Errorf("spouse is not present in the wedding room")
+			operationErr = errWeddingSpouseAbsent
 		}
 		accepted := request.ResultID == game.MarriageResultSuccess
 		if operationErr == nil {
@@ -268,6 +273,38 @@ func (server *Server) handleMarriageMessage(session *connectionSession, connecti
 	}
 }
 
+func (server *Server) marriageInfo(uin uint32) (uint16, game.MarriageInfo) {
+	marriage, loadErr := server.playerStore.SynchronizeMarriageRing(context.Background(), uin)
+	resultID, _ := marriageResult(loadErr)
+	if loadErr != nil {
+		return resultID, game.MarriageInfo{TargetUIN: uin, MarriageLevel: 1, LevelValue: 1}
+	}
+	age := uint32(0)
+	now := uint32(time.Now().Unix())
+	if now > marriage.MarriedUnix {
+		age = (now - marriage.MarriedUnix) / uint32((24*time.Hour)/time.Second)
+	}
+	return resultID, game.MarriageInfo{
+		TargetUIN: marriage.UIN, MarriageUIN: marriage.SpouseUIN,
+		MarriageLoyalty: marriage.Loyalty, MarriageLevel: marriage.Level,
+		LevelValue: marriage.LevelValue, MarriageAge: age, LoveWord: marriage.LoveWord,
+		Nickname: marriage.Nickname, SpouseNickname: marriage.SpouseNickname, RingID: marriage.RingID,
+	}
+}
+
+// pushMarriageInfo sends each player their own RESPONSE_MARRIAGE_INFO. The
+// original client only refreshes it at login, FindFriend, divorce and after
+// the wedding, so without this push both caches keep the unmarried record
+// after a proposal is accepted (docs wedding-re.md §8 #4).
+func (server *Server) pushMarriageInfo(uins ...uint32) {
+	for _, uin := range uins {
+		resultID, info := server.marriageInfo(uin)
+		server.sendUINNotification(uin, "qqt_marriage_info_push", func(template []byte) ([]byte, error) {
+			return game.BuildLocalMarriageInfoNotification(template, resultID, info)
+		})
+	}
+}
+
 func (server *Server) liveMarriagePlayer(locked *connectionSession, uin uint32) (playerID, roomID uint16, found bool) {
 	if uin == 0 {
 		return 0, 0, false
@@ -297,6 +334,8 @@ func (server *Server) liveMarriagePlayer(locked *connectionSession, uin uint32) 
 	return uint16(candidate.livePlayerID.Load()), uint16(candidate.liveRoomID.Load()), true
 }
 
+var errWeddingSpouseAbsent = errors.New("spouse is not present in the wedding room")
+
 func marriageResult(err error) (uint16, string) {
 	if err == nil {
 		return game.MarriageResultSuccess, ""
@@ -312,6 +351,8 @@ func marriageResult(err error) (uint16, string) {
 		return game.MarriageResultFailed, "求婚请求已失效"
 	case errors.Is(err, persistence.ErrMarriageNotFound):
 		return game.MarriageResultFailed, "没有找到对应的婚姻关系"
+	case errors.Is(err, errWeddingSpouseAbsent):
+		return game.MarriageResultFailed, "配偶不在婚礼房间里"
 	default:
 		return game.MarriageResultFailed, "操作失败"
 	}
@@ -325,4 +366,18 @@ func (server *Server) rejectedMarriage(connectionID string, command uint16, err 
 func (server *Server) marriageOperationResult(connectionID string, command uint16, uin uint32, operation string, response []byte, err error) protocolMessageResult {
 	server.log(logEvent{Level: "warn", Event: "marriage_operation_rejected", ConnectionID: connectionID, AccountID: fmt.Sprint(uin), MessageID: fmt.Sprintf("0x%04X", command), Result: operation, ErrorContext: err.Error()})
 	return protocolMessageResult{handled: true, response: response, result: "qqt_marriage_" + operation + "_rejected"}
+}
+
+// sendWeddingModeOnEntry pushes 0x10E to a player entering a wedding room.
+// The client only applies the mode from RESPONSE_ENTER_ROOM_OLD when RoomFlag
+// is exactly 2 (a password makes it 3), and RESPONSE_JOIN_ROOM_OLD carries
+// no WeddingModeID at all (docs wedding-re.md §8 #9).
+func (server *Server) sendWeddingModeOnEntry(session *connectionSession, response game.EnterRoomResponseOld) {
+	if response.GameType != byte(roomstate.GameTypeChat) || response.RoomFlag&weddingRoomFlag == 0 {
+		return
+	}
+	mode := response.WeddingModeID
+	server.sendUINNotification(session.UIN, "qqt_wedding_mode_on_entry", func(template []byte) ([]byte, error) {
+		return game.BuildLocalChangeWeddingModeNotification(template, session.UIN, mode)
+	})
 }

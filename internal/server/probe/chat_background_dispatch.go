@@ -64,6 +64,10 @@ func (server *Server) handleChatBackgroundMessage(session *connectionSession, co
 		}
 		roomID := snapshot.RoomID
 		weddingMode, weddingBackground := game.ChatBackgroundWeddingMode(request.ItemID)
+		if weddingBackground {
+			// Keep the room's mode in step so later entrants get it (0x68/0x10E).
+			_, _ = server.worldState().SetWeddingMode(sessionWorldUIN(session), weddingMode)
+		}
 		var followUp []byte
 		followUpResult := ""
 		if weddingBackground {

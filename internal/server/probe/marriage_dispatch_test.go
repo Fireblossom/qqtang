@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"testing"
 
+	"golang.org/x/text/encoding/simplifiedchinese"
+
 	"qqtang/internal/protocol/game"
 	"qqtang/internal/server/persistence"
 )
@@ -79,4 +81,32 @@ func TestMarriageProposalAndAnswerUseNativeResponderOrder(t *testing.T) {
 	if err != nil || marriage.SpouseUIN != proposerUIN {
 		t.Fatalf("accepted marriage = %+v, err=%v", marriage, err)
 	}
+
+	// StartWedding after a fresh login carries TargetUIN 0 (the script's
+	// beSparkedUin); the server takes the spouse. Outside a shared room the
+	// start fails, and the failure comes back as 0x10D so the client does
+	// not lock its wedding panel.
+	startPayload := binary.BigEndian.AppendUint32(nil, proposerUIN)
+	startPayload = binary.BigEndian.AppendUint32(startPayload, 0)
+	startPayload = binary.BigEndian.AppendUint16(startPayload, 1)
+	startPacket := testLocalRoutedPacketWithPayload(t, game.StartWeddingCommand, 2, 0xffff, 1, proposerUIN, startPayload)
+	startResult := server.handleMarriageMessage(proposer, "marriage-start", startPacket)
+	startInspection, err := game.InspectLocalPacket(startResult.response)
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload := startInspection.Payload
+	if startInspection.Command != game.ChangeWeddingModeCommand || binary.BigEndian.Uint16(payload[4:6]) != game.MarriageResultFailed ||
+		string(payload[7:7+int(payload[6])]) != gbkText(t, "配偶不在婚礼房间里") {
+		t.Fatalf("failed start = command:%04X payload=%x", startInspection.Command, payload)
+	}
+}
+
+func gbkText(t *testing.T, text string) string {
+	t.Helper()
+	encoded, err := simplifiedchinese.GBK.NewEncoder().String(text)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return encoded
 }

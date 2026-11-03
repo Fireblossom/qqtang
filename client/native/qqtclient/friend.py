@@ -164,6 +164,7 @@ def build_friend_natives(runtime: UIRuntime, session: Session) -> dict[str, Call
         script("startGlint")
 
     session.push_script_word = lambda code: push(LeaveWord("", script=code))
+    session.push_leave_word = lambda text: push(LeaveWord(text))
 
     def request_list() -> None:
         session.send(friend.FRIEND_LIST_COMMAND, friend.build_friend_list(session.uin))
@@ -299,12 +300,6 @@ def build_friend_natives(runtime: UIRuntime, session: Session) -> dict[str, Call
 
     def GetPlayerDetail():
         return state.detail
-
-    def GetMyMarriageDetail():
-        return types.SimpleNamespace(m_dwMarriageUin=0, m_szSpouseNickname="")
-
-    def GetMarriageDetail():
-        return types.SimpleNamespace(m_dwMarriageUin=0, m_szSpouseNickname="")
 
     def GetPVEData(points=0):
         # tagPVEDATA from config/pvedata.dat (uiSelRoom.py's info panel).

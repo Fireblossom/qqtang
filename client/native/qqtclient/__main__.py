@@ -100,6 +100,7 @@ def main() -> int:
     from .props import build_props_natives
     from .friend import build_friend_natives
     from .kin import build_kin_natives
+    from .marriage import build_marriage_natives
     from .pet import build_pet_natives
     from .shop import build_shop_natives
     from .lobby import build_lobby_natives
@@ -133,6 +134,7 @@ def main() -> int:
     namespace.update(build_props_natives(runtime, session))
     namespace.update(build_friend_natives(runtime, session))  # wraps the lobby's player-list natives
     namespace.update(build_kin_natives(runtime, session))  # adds the kin modes to the friend/lobby lists
+    namespace.update(build_marriage_natives(runtime, session))  # replaces friend.py's marriage stubs, wraps FindFriend
     renderer = Renderer(screen, resources)
 
     def start_battle(begin: bytes, context) -> None:

@@ -114,6 +114,7 @@ func (server *Server) handleLobbyMessage(config ListenerConfig, session *connect
 							})
 						}
 						server.sendRoomRoleRefresh(session, data, enterRequest.RoomID, roleRefresh)
+						server.sendWeddingModeOnEntry(session, roomResponse)
 						if newlyJoined {
 							server.broadcastRoomLobbyMutation(session.Profile.SectionID, enterRequest.RoomID, false, "qqt_room_lobby_push_enter")
 						}
@@ -160,6 +161,7 @@ func (server *Server) handleLobbyMessage(config ListenerConfig, session *connect
 							return game.BuildLocalEnterRoomNotification(recipient, notification)
 						})
 						server.sendRoomRoleRefresh(session, data, roomID, roleRefresh)
+						server.sendWeddingModeOnEntry(session, roomResponse.EnterRoomResponseOld)
 						server.broadcastRoomLobbyMutation(session.Profile.SectionID, roomID, false, "qqt_room_lobby_push_join")
 					}
 					break

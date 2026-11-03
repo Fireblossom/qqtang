@@ -249,6 +249,18 @@ func (server *Server) quickJoinSessionRoom(session *connectionSession, request g
 	return 0, game.JoinRoomResponseOld{}, fmt.Errorf("no joinable game-type %d room is available", request.GameType)
 }
 
+const weddingRoomFlag = 2
+
+// weddingRoom reports a chat room using a wedding background (5 or 7, the
+// server's convention for entering wedding mode) or holding a ceremony.
+func weddingRoom(snapshot roomstate.Snapshot) bool {
+	if snapshot.Settings.GameType != roomstate.GameTypeChat {
+		return false
+	}
+	_, background := game.ChatBackgroundWeddingMode(snapshot.BackgroundID)
+	return background || snapshot.WeddingPending || snapshot.WeddingActive
+}
+
 func (server *Server) enterRoomResponse(session *connectionSession, snapshot roomstate.Snapshot) (game.EnterRoomResponseOld, error) {
 	if session == nil || session.Profile.SectionID == 0 {
 		return game.EnterRoomResponseOld{}, fmt.Errorf("cannot build enter-room response without a section session")
@@ -269,6 +281,15 @@ func (server *Server) enterRoomResponse(session *connectionSession, snapshot roo
 		RoomFlag: snapshot.Properties.Flag, RoomOwnerID: snapshot.OwnerID,
 		GameType: byte(snapshot.Settings.GameType), BackgroundID: snapshot.BackgroundID,
 		WeddingModeID: snapshot.WeddingModeID,
+	}
+	if snapshot.Settings.GameType == roomstate.GameTypeChat {
+		// In a chat room the client reads RoomFlag 2 as "wedding room" and runs
+		// UpdateWeddingMode (QQTSection 0x1001E4BF, docs wedding-re.md §4); the
+		// free-rule bit means nothing there.
+		response.RoomFlag &^= weddingRoomFlag
+		if weddingRoom(snapshot) {
+			response.RoomFlag |= weddingRoomFlag
+		}
 	}
 	for index := range response.SeatStatus {
 		response.SeatStatus[index] = game.EnterRoomSeatOpen

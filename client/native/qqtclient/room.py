@@ -36,6 +36,8 @@ BUBBLE_OFFSET = (20, 105)
 NATIVE_SEAT_OPEN, NATIVE_SEAT_CLOSED, NATIVE_SEAT_OCCUPIED = 0, 1, 2
 # Where room_setPlayerPos points relative to the 100x100 avatar canvas.
 AVATAR_ANCHOR = (60, 98)
+CHAT_ROOM_TYPE = 4
+WEDDING_ROOM_FLAG = 2  # RoomFlag of a wedding chat room (docs/wedding-re.md §4)
 
 
 @dataclasses.dataclass
@@ -104,12 +106,13 @@ def build_room_natives(runtime: UIRuntime, session: Session, avatars: AvatarCach
     walk = RoomWalk(runtime, session, state, avatars, sprites, font)
 
     def room_view() -> types.SimpleNamespace | None:
-        """The room the slash commands need (/IN, /GO, /AR), or None."""
+        """The room the slash commands (/IN, /GO, /AR) and GetSeatIDByUin need, or None."""
         if not in_room_screen():
             return None
         mine = me()
         return types.SimpleNamespace(room_id=state.room_id, flag=state.snapshot.room_flag, password=state.password,
                                      uins={member.uin for member in state.members.values()}, owner=am_owner(),
+                                     seats={member.uin: member.seat - 1 for member in state.members.values()},
                                      ready=bool(mine and mine.status))
 
     session.room_view = room_view
@@ -157,6 +160,7 @@ def build_room_natives(runtime: UIRuntime, session: Session, avatars: AvatarCach
         state.password = state.pending_password
         state.members = {member.seat: member for member in snapshot.players}
         state.avatars = [SeatAvatar() for _ in range(room.MAX_SEATS)]
+        walk.reset_scene()
         log(f"[room] entered room {snapshot.room_id} ({len(snapshot.players)} players, map {snapshot.map_id}, type {snapshot.game_type})")
         log(f"[room] owner {snapshot.owner_id} local seat {snapshot.local_seat} seats {snapshot.seat_status} members "
             + ", ".join(f"{member.seat}:{member.player_id}:{member.nickname}" for member in snapshot.players))
@@ -173,6 +177,10 @@ def build_room_natives(runtime: UIRuntime, session: Session, avatars: AvatarCach
         script("NotifyRoomPropChange")
         refresh_all_seats()
         script("ui_NotifyMapChange", snapshot.map_id)
+        # QQTSection 0x1001E4BF: a chat room with RoomFlag 2 is a wedding room;
+        # after the room's OnInit (SetRoomChat) so the panel stays up.
+        if snapshot.game_type == CHAT_ROOM_TYPE and snapshot.room_flag == WEDDING_ROOM_FLAG:
+            script("UpdateWeddingMode", snapshot.wedding_mode_id)
 
     def on_create(packet) -> None:
         result, room_id = room.parse_create_room_response(packet.payload)
@@ -519,7 +527,8 @@ def build_room_natives(runtime: UIRuntime, session: Session, avatars: AvatarCach
         avatar = state.avatars[index]
         if (avatar.team, avatar.role) == (team, role):
             return
-        if avatar.role <= 0 or avatar.team < 0:
+        created = avatar.role <= 0 or avatar.team < 0
+        if created:
             # A new avatar starts on the seat point facing down; a rebuilt
             # one keeps its place (0x00458240).
             avatar.x, avatar.y, avatar.direction, avatar.walking = avatar.home_x, avatar.home_y, 3, False
@@ -528,12 +537,41 @@ def build_room_natives(runtime: UIRuntime, session: Session, avatars: AvatarCach
         avatar.wear.clear()
         avatar.pet = None  # DeletePet (0x452F70)
         member = state.members.get(index + 1)
+        if role == -1:
+            walk.remove_couple(index)
         if role == -1 or member is None:
             return
+        if created:
+            pair_couple(index, member)
         for item in member.items:
             if item.role_id == role:
                 script("useCommItem", index + 1, item.item_id, item.effect, item.color)
         avatar.pet = seat_pet(index, member, avatar)
+
+    def pair_couple(index: int, member: room.RoomPlayer) -> None:
+        """0x0045841E: a new avatar whose SpouseUin is another seated
+        player's UIN pairs with it (only the newcomer's record is read; our
+        own spouse comes from the marriage cache, S+0x46)."""
+        spouse = member.spouse_uin
+        cache = getattr(session, "marriage", None)
+        if state.snapshot is not None and index == state.snapshot.local_seat - 1 and cache is not None:
+            spouse = cache.mine.marriage_uin or spouse
+        if not spouse:
+            return
+        for other, avatar in enumerate(state.avatars):
+            partner = state.members.get(other + 1)
+            if other != index and avatar.role > 0 and avatar.team >= 0 and partner is not None and partner.uin == spouse:
+                walk.add_couple(index, other)
+                return
+
+    def SetWeddingEffect(name):
+        """0x00459690: replaces the room's wedding effect; the sound plays in
+        any scene."""
+        log(f"[room] wedding effect {name}")
+        walk.set_wedding_effect(str(name).replace("\\", "/"))
+        play = runtime.namespace.get("PlaySound")
+        if callable(play):
+            play("loveFire.wav", 1)
 
     def seat_pet(index: int, member: room.RoomPlayer, avatar: SeatAvatar) -> RoomPet | None:
         """AddPets (0x452DF0) from the seat's PET_BASE_INFO: the local seat
@@ -584,7 +622,7 @@ def build_room_natives(runtime: UIRuntime, session: Session, avatars: AvatarCach
         walk.draw(screen, AVATAR_ANCHOR)
 
     excluded = {"script", "notify", "in_room_screen", "me", "am_owner", "role_id", "refresh_seat", "refresh_all_seats",
-                "add_chat", "enter", "leave_to_lobby", "member_update", "ignore", "draw_players", "walk", "room_view", "seat_pet"}
+                "add_chat", "enter", "leave_to_lobby", "member_update", "ignore", "draw_players", "walk", "room_view", "seat_pet", "pair_couple"}
     natives = {name: value for name, value in locals().items()
                if callable(value) and name not in excluded and not name.startswith("on_")}
     return natives, draw_players

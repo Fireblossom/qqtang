@@ -182,7 +182,9 @@ func DecodeLocalStartWeddingRequest(packet []byte) (StartWeddingRequest, error) 
 	if err := validateMarriageUIN(request.UIN, decoded.EnvelopeUIN); err != nil {
 		return StartWeddingRequest{}, err
 	}
-	if request.TargetUIN == 0 || request.WeddingModeID > 1 {
+	// TargetUIN comes from the client's script global beSparkedUin, which is 0
+	// after a fresh login; the dispatcher substitutes the spouse.
+	if request.TargetUIN == request.UIN || request.WeddingModeID > 1 {
 		return StartWeddingRequest{}, fmt.Errorf("start-wedding fields are invalid")
 	}
 	return request, nil
@@ -197,7 +199,8 @@ func DecodeLocalAnswerWeddingRequest(packet []byte) (AnswerWeddingRequest, error
 	if err := validateMarriageUIN(request.UIN, decoded.EnvelopeUIN); err != nil {
 		return AnswerWeddingRequest{}, err
 	}
-	if request.TargetUIN == 0 || request.ResultID > MarriageResultRejected {
+	// TargetUIN 0 (a stale script global) is resolved to the spouse by the dispatcher.
+	if request.TargetUIN == request.UIN || request.ResultID > MarriageResultRejected {
 		return AnswerWeddingRequest{}, fmt.Errorf("answer-wedding fields are invalid")
 	}
 	return request, nil
@@ -276,6 +279,24 @@ func marshalAnswerSparkPayload(result uint16, request AnswerSparkRequest, word s
 }
 
 func BuildLocalMarriageInfoResponse(packet []byte, result uint16, info MarriageInfo) ([]byte, error) {
+	payload, err := marshalMarriageInfoPayload(result, info)
+	if err != nil {
+		return nil, err
+	}
+	return buildMarriageResponse(packet, MarriageInfoCommand, payload)
+}
+
+// BuildLocalMarriageInfoNotification pushes RESPONSE_MARRIAGE_INFO unasked;
+// the client's handler (QQTSection 0x10032439) does not look for a request.
+func BuildLocalMarriageInfoNotification(template []byte, result uint16, info MarriageInfo) ([]byte, error) {
+	payload, err := marshalMarriageInfoPayload(result, info)
+	if err != nil {
+		return nil, err
+	}
+	return buildMarriageNotification(template, MarriageInfoCommand, payload)
+}
+
+func marshalMarriageInfoPayload(result uint16, info MarriageInfo) ([]byte, error) {
 	payload := binary.BigEndian.AppendUint16(nil, result)
 	payload = binary.BigEndian.AppendUint32(payload, info.TargetUIN)
 	payload = binary.BigEndian.AppendUint32(payload, info.MarriageUIN)
@@ -298,7 +319,7 @@ func BuildLocalMarriageInfoResponse(packet []byte, result uint16, info MarriageI
 		return nil, err
 	}
 	payload = binary.BigEndian.AppendUint32(payload, info.RingID)
-	return buildMarriageResponse(packet, MarriageInfoCommand, payload)
+	return payload, nil
 }
 
 func BuildLocalModifyLoveWordResponse(packet []byte, result uint16, request ModifyLoveWordRequest) ([]byte, error) {
@@ -325,6 +346,25 @@ func marshalDivorcePayload(result uint16, request MarriagePairRequest) []byte {
 }
 
 func BuildLocalStartWeddingResponse(packet []byte, result uint16, request StartWeddingRequest, nickname, targetNickname, word string) ([]byte, error) {
+	payload, err := marshalStartWeddingPayload(result, request, nickname, targetNickname, word)
+	if err != nil {
+		return nil, err
+	}
+	return buildMarriageResponse(packet, StartWeddingCommand, payload)
+}
+
+// BuildLocalStartWeddingNotification sends the same record to the rest of
+// the room: every client runs SetWeddingStart from it, which sets the
+// script's sparkUin/beSparkedUin that AnswerWedding and WeddingOver use.
+func BuildLocalStartWeddingNotification(template []byte, request StartWeddingRequest, nickname, targetNickname, word string) ([]byte, error) {
+	payload, err := marshalStartWeddingPayload(MarriageResultSuccess, request, nickname, targetNickname, word)
+	if err != nil {
+		return nil, err
+	}
+	return buildMarriageNotification(template, StartWeddingCommand, payload)
+}
+
+func marshalStartWeddingPayload(result uint16, request StartWeddingRequest, nickname, targetNickname, word string) ([]byte, error) {
 	payload := binary.BigEndian.AppendUint32(nil, request.UIN)
 	payload = binary.BigEndian.AppendUint32(payload, request.TargetUIN)
 	var err error
@@ -342,7 +382,7 @@ func BuildLocalStartWeddingResponse(packet []byte, result uint16, request StartW
 		return nil, err
 	}
 	payload = binary.BigEndian.AppendUint16(payload, request.WeddingModeID)
-	return buildMarriageResponse(packet, StartWeddingCommand, payload)
+	return payload, nil
 }
 
 func BuildLocalWeddingConfirmNotification(template []byte, request StartWeddingRequest, nickname, targetNickname, word string) ([]byte, error) {
@@ -409,6 +449,25 @@ func BuildLocalChangeWeddingModeResponse(packet []byte, result uint16, request C
 		return nil, err
 	}
 	return buildMarriageResponse(packet, ChangeWeddingModeCommand, payload)
+}
+
+// BuildLocalStartWeddingFailure answers a REQUEST_START_WEDDING with a failed
+// RESPONSE_CHANGE_WEDMODE: the client shows its ResultWord, whereas any 0x10A
+// runs SetWeddingStart and locks the wedding panel whatever its ResultID.
+func BuildLocalStartWeddingFailure(packet []byte, result uint16, uin uint32, word string) ([]byte, error) {
+	decoded, err := decodeLocalPacket(packet)
+	if err != nil {
+		return nil, err
+	}
+	if decoded.Command != StartWeddingCommand {
+		return nil, fmt.Errorf("local game command 0x%04X, want 0x%04X", decoded.Command, StartWeddingCommand)
+	}
+	payload := binary.BigEndian.AppendUint32(nil, uin)
+	payload = binary.BigEndian.AppendUint16(payload, result)
+	if payload, err = appendMarriageText8(payload, word); err != nil {
+		return nil, err
+	}
+	return buildLocalMessageFromRequest(packet, decoded, ChangeWeddingModeCommand, payload, nil)
 }
 
 func BuildLocalChangeWeddingModeNotification(template []byte, uin uint32, mode uint16) ([]byte, error) {

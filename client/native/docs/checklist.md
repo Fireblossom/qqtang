@@ -24,7 +24,7 @@
 - [x] 家族（`docs/kin-re.md`，`qqtclient/kin.py`）：DoKinTask 0～15、查询原生函数、17 种应答和脚本回调、邀请走信封、/KINCHAT 与 /ki；双客户端实测建族、邀请经信封同意、家族聊天、退出并再次加入，零 warn。服务端修了：回复邀请按（被邀请人, 家族）查邀请（原版第一个字段是族长）、0xBD 作为应答发出（以前没有发）、退出发事件 8、开除事件的 Uin 填被开除者、排行榜按电信/网通×荣誉/活跃各 10 条并补组大小 100 和两条 SameGroup（组大小 100 是推断）。界面点击路径（打开家族页签等）没实测
 - [x] 斜杠命令（`docs/slash-commands-re.md`，`qqtclient/slash.py`）：普通玩家的 /W /R /IN /JOIN|/GO /AUTOJOIN /AR /WHO /whoami /mute /unmute /refuse /unrefuse /DONTADDME /CANADDME /M /U /c2c；表情代码不算命令，非会员用会员表情会被拦下；裁判/管理员命令按普通账号提示"输入无效命令"。悄悄话、邀请、邀请结果都按原版的 0x6C 内容格式（`wisper_…`、`in_…`、`inresult_…`）收发。双客户端实测：/w 后的悄悄话、/r 回复、/IN 邀请弹框并同意进房、5 秒防刷。/KINCHAT、/ki 等家族功能做完再接
 - [x] 宠物（服务端支持）：面板七种操作、缓存与回调、房间跟随（`docs/pet-re.md`）；当铺查看宠物未做（服务端无当铺）
-- [ ] 婚礼、配偶（服务端支持）
+- [x] 婚礼、配偶（服务端支持）：求婚、资料、爱情宣言、离婚、婚礼仪式（`docs/wedding-re.md`），含服务端修正
 - [x] 地图筛选（`request_UserSelGameModeList`，QQTSection `0x1003C880`/`0x1003D04E`）：模式号原样放进 ROOM_LIST 请求（1 普通…13 糖客），"所有房间"用操作 1；服务端原来按"模式+2"解码，已改为按规则号；双客户端实测抢包子房间只在筛"抢包子"时出现
 
 ## 房间
@@ -36,7 +36,7 @@
 - [x] 改房间属性（`sc_modifyRoom`）：双客户端实测改名、加密码后大厅卡片更新并显示锁，不带密码进房被拒、带对密码可进
 - [x] 聊天室背景：背景列表 0x00FF、换背景 0x0100、通知 0x0101 后按原版（`0x0052D3D0`）执行 `setChatBackground(id)`；双客户端实测换背景两端同步
 - [x] 房间里人物走动/放泡（`docs/chatroom-move-re.md`，`qqtclient/roomwalk.py`；原版所有房间都能走，聊天房间默认显示名牌）：方向键 0.26 px/ms、可走范围、空格放装饰泡（3 秒、连锁、十字火 400 ms）、F8 名牌；经 TCP 0x0065 发出、服务端转 Type-2，进房先 UDP Type-1 登记，收到后照原版调用脚本 `remotePlayerMove/remotePlayerPutBomb`，远端按"先横后纵"走到每个点。双客户端实测对方走动、放泡和爆炸都同步；打完一局回到房间后会重新登记 UDP（211 双 autoplay 实测，零 warn）。原版之间明文 Type-2 能否被 QQTPPP 接受未验证
-- [ ] 婚礼房间（服务端支持）
+- [x] 婚礼房间（服务端支持）：婚礼模式面板、牧师问答、烟花、情侣爱心
 
 ## 对战：普通规则
 
