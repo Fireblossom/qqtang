@@ -52,6 +52,8 @@ REFUSED_TEXT = "{name}[{uin}]拒绝了您的添加好友的请求"
 OFFLINE_TEXT = "{uin}玩家已经下线"
 FIND_FAILED_TEXT = "查找好友失败, 请稍后再试"
 # QQTSection 0x1005FCFC / 0x1005FD18 / 0x1005FD40.
+PURSUIT_CLOSED_TEXT = "抱歉，好友追踪已关闭!"  # 0x10062798
+PURSUIT_ENABLED = False
 PURSUIT_OFFLINE_TEXT = "你要追踪的玩家不在线"
 PURSUIT_NO_ROOM_TEXT = "该玩家和你在同一小区,且不在房间中"
 PURSUIT_IN_GAME_TEXT = "该玩家正在游戏中,请稍候再继续追踪"
@@ -218,9 +220,13 @@ def build_friend_natives(runtime: UIRuntime, session: Session) -> dict[str, Call
             if state.find(uin) is not None:
                 session.send(friend.REMOVE_FRIEND_COMMAND, friend.build_remove_friend(session.uin, uin))
         elif task == TASK_PURSUIT:
-            # CFriendHandler::RequestPursuit 0x1000F7BF: friends only, a
-            # FIND_FRIEND whose answer goes to the pursuit handler.
-            if state.find(uin) is not None:
+            # XSection::DoFriendTask 0x1002C68D answers task 3 with this line
+            # only: the final client switched pursuit off. Its unused
+            # handler (CFriendHandler::RequestPursuit 0x1000F7BF, answers in
+            # 0x10010D83) is kept below behind PURSUIT_ENABLED.
+            if not PURSUIT_ENABLED:
+                system_line(PURSUIT_CLOSED_TEXT)
+            elif state.find(uin) is not None:
                 state.pursuing = uin
                 session.send(friend.FIND_FRIEND_COMMAND, friend.build_find_friend(session.uin, uin))
         elif task == TASK_ANSWER:
