@@ -178,6 +178,7 @@ type stateView struct {
 	TCPOut  []tcpPacket    `json:"tcp_out,omitempty"`
 	Kick    *kickView      `json:"kick,omitempty"` // rule 2
 	Box     *boxView       `json:"box,omitempty"`
+	Boss    *bossView      `json:"boss,omitempty"`
 	Machine *machineView   `json:"machine,omitempty"`
 }
 
@@ -260,6 +261,7 @@ func runOnline(init command, lines *bufio.Scanner, out *json.Encoder) error {
 		state.Kick = match.kick.view()
 		match.kick.markStyles(state.Bombs)
 	}
+	state.Boss = match.bossView()
 	if err := out.Encode(state); err != nil {
 		return err
 	}
@@ -298,6 +300,7 @@ func runOnline(init command, lines *bufio.Scanner, out *json.Encoder) error {
 			state.Kick = match.kick.view()
 			match.kick.markStyles(state.Bombs)
 		}
+		state.Boss = match.bossView()
 		if err := out.Encode(state); err != nil {
 			return err
 		}

@@ -49,6 +49,7 @@ type boxNPCActor struct {
 	moveInitialized                 bool
 	netMove                         game.PlayerMoveSequence
 	netMoveSet                      bool
+	bossSpeed                       bool // a Boss moves by the NPC speed table
 }
 type boxNPCOutbound struct {
 	author  uint16
@@ -256,22 +257,36 @@ func (match *onlineMatch) tryCreateBoxNPC(now uint32) {
 }
 
 func (match *onlineMatch) queueBoxNPC(author uint16, schema uint16, now uint32, body []byte) {
-	s := match.boxNPCState()
-	match.messageSeq++
-	s.outbox = append(s.outbox, boxNPCOutbound{author: author, message: game.BattleMessageData{Time: now, DataID: uint32(schema), Sequence: match.messageSeq, Data: body, GameTime: now}})
+	match.queueNPC(&match.boxNPCState().outbox, author, schema, now, body)
 }
 func (match *onlineMatch) flushBoxNPC() {
-	s := match.boxNPCState()
-	if s == nil || len(s.outbox) == 0 || !match.presence || match.conn == nil {
+	if s := match.boxNPCState(); s != nil {
+		match.flushNPC(&s.outbox)
+	}
+}
+
+// queueNPC adds one message authored by a scene entity (or by the
+// arbitrator about it). Each goes out as its own package whose PlayerID is
+// the author, so peers attribute it to the NPC.
+func (match *onlineMatch) queueNPC(outbox *[]boxNPCOutbound, author uint16, schema uint16, now uint32, body []byte) {
+	match.messageSeq++
+	*outbox = append(*outbox, boxNPCOutbound{author: author, message: game.BattleMessageData{Time: now, DataID: uint32(schema), Sequence: match.messageSeq, Data: body, GameTime: now}})
+}
+func (match *onlineMatch) flushNPC(outbox *[]boxNPCOutbound) {
+	if len(*outbox) == 0 || !match.presence || match.conn == nil {
+		return
+	}
+	if len(match.peerIDs()) == 0 {
+		*outbox = nil // everyone else left; the reliable mirrors still go
 		return
 	}
 	targets := []game.LegacyUDPMulticastTarget{}
 	for _, id := range match.peerIDs() {
 		targets = append(targets, game.LegacyUDPMulticastTarget{PlayerID: id, UIN: match.uins[id]})
 	}
-	for start := 0; start < len(s.outbox); start += 16 {
+	for start := 0; start < len(*outbox); start += 16 {
 		batch := game.GameplayBatch{GameID: match.begin.GameID}
-		for _, out := range s.outbox[start:min(start+16, len(s.outbox))] {
+		for _, out := range (*outbox)[start:min(start+16, len(*outbox))] {
 			message := out.message
 			batch.Entries = append(batch.Entries, game.GameplayBatchEntry{Index: uint16(message.Sequence), Package: game.GameplayDataPackage{PlayerID: out.author, Time: message.Time, GameID: match.begin.GameID, MessageIndexes: []uint32{message.Sequence}, Messages: []game.BattleMessageData{message}}})
 		}
@@ -283,9 +298,12 @@ func (match *onlineMatch) flushBoxNPC() {
 		match.multicastNumber++
 		match.sendControl(game.LegacyUDPControlPacket{Header: match.header(game.LegacyUDPMulticastType, match.multicastNumber), Multicast: &game.LegacyUDPMulticastPayload{Targets: targets, Data: data}})
 	}
-	s.outbox = nil
+	*outbox = nil
 }
 func (match *onlineMatch) publishBoxNPCMove(n *boxNPCActor, now uint32, force bool) {
+	match.publishNPCMove(&match.boxNPCState().outbox, n, now, force)
+}
+func (match *onlineMatch) publishNPCMove(outbox *[]boxNPCOutbound, n *boxNPCActor, now uint32, force bool) {
 	if !force && n.moveInitialized && now-n.lastMoveSent < movementHeartbeat && n.moving == n.lastMoveMoving && n.facing == n.lastMoveFacing {
 		return
 	}
@@ -301,7 +319,7 @@ func (match *onlineMatch) publishBoxNPCMove(n *boxNPCActor, now uint32, force bo
 	move := game.PlayerMoveSequence{Sequence: n.sequence, TimeStamp: now, CurrentPosX: uint16(n.pos.X), CurrentPosY: uint16(n.pos.Y), EndPosX: uint16(end.X), EndPosY: uint16(end.Y), WalkAndDirection: walk, Speed: n.speed}
 	body, err := (game.PlayerMove{PlayerID: n.id, Entries: []game.PlayerMoveEntry{{PlayerID: n.id, Move: move}}}).MarshalNetworkBinary()
 	if err == nil {
-		match.queueBoxNPC(n.id, game.PlayerMoveSchema, now, body)
+		match.queueNPC(outbox, n.id, game.PlayerMoveSchema, now, body)
 	}
 	n.lastMoveSent = now
 	n.lastMovePos = n.pos
@@ -339,6 +357,8 @@ func (match *onlineMatch) boxNPCTick(now uint32) {
 		match.flushBoxNPC()
 	}
 }
+
+// interpolateBoxNPC follows the owner's last PLAYER_MOVE segment.
 func (match *onlineMatch) interpolateBoxNPC(n *boxNPCActor, now uint32) {
 	if !n.netMoveSet || n.trapped || now < n.netMove.TimeStamp {
 		return
@@ -347,6 +367,9 @@ func (match *onlineMatch) interpolateBoxNPC(n *boxNPCActor, now uint32) {
 	pos := battleengine.Position{X: int32(m.CurrentPosX), Y: int32(m.CurrentPosY)}
 	end := battleengine.Position{X: int32(m.EndPosX), Y: int32(m.EndPosY)}
 	speed, _ := battleengine.NativeSpeedPixelsPerSecond(m.Speed)
+	if n.bossSpeed {
+		speed = uint16(bossPixelsPerSecond(m.Speed))
+	}
 	travel := int32(uint64(now-m.TimeStamp) * uint64(speed) / 1000)
 	if m.WalkAndDirection&0x10 != 0 {
 		if pos.X != end.X {

@@ -1488,3 +1488,17 @@ func TestSinglePlayerBossCardRequiresEligibleBossMap(t *testing.T) {
 		t.Fatalf("eligible Water11 Boss start = handled:%t response:%d begin:%d Boss:%d result:%s", boss.handled, len(boss.response), len(boss.followUp), len(boss.startFollowUp), boss.result)
 	}
 }
+
+func TestCompetitiveBossNormalRewardsStayWithinClientLimit(t *testing.T) {
+	var configured []CompetitiveBossRewardConfig
+	for _, id := range []uint32{81, 82, 83, 84, 85, 86, 87, 88, 89, 93} {
+		configured = append(configured, CompetitiveBossRewardConfig{ItemID: id, ItemCount: 1})
+	}
+	if _, err := buildCompetitiveBossRewardItems("sailor", configured); err != nil {
+		t.Fatalf("ten normal rewards: %v", err)
+	}
+	configured = append(configured, CompetitiveBossRewardConfig{ItemID: 94, ItemCount: 1})
+	if _, err := buildCompetitiveBossRewardItems("sailor", configured); err == nil {
+		t.Fatal("eleven normal rewards accepted; the client would drop them all")
+	}
+}

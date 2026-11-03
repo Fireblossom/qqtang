@@ -54,3 +54,79 @@ func TestRuleNPCPickupsAndDeathDropsAreExplicit(t *testing.T) {
 		t.Fatal("NPC item path altered participant slots")
 	}
 }
+
+func TestBossNPCOwnerIsSeparateOptIn(t *testing.T) {
+	cfg := testConfig()
+	e := mustEngine(t, cfg)
+	if err := e.RegisterRuleNPCOwner(30001); err == nil {
+		t.Fatal("Boss owner registered without NativeBossNPC")
+	}
+	cfg.Rules.NativeBossNPC = true
+	e = mustEngine(t, cfg)
+	if err := e.RegisterRuleNPCOwner(20001); err == nil {
+		t.Fatal("Boss rule admitted a rule-8 NPC identity")
+	}
+	if err := e.RegisterRuleNPCOwner(30009); err == nil {
+		t.Fatal("Boss rule admitted an identity outside CREATE_NPC_BOSS's 8 entries")
+	}
+	if err := e.RegisterRuleNPCOwner(30001); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.PlaceRuleNPCBomb(30001, Cell{Row: 1, Col: 2}, 9, 0, 100); err != nil || len(e.Actors()) != 2 {
+		t.Fatalf("Boss bubble %v, actors %d", err, len(e.Actors()))
+	}
+}
+
+func TestBossRewardScenesBecomeRulePickups(t *testing.T) {
+	cfg := testConfig()
+	e := mustEngine(t, cfg)
+	if err := e.AddBossRewardScene(86); err == nil {
+		t.Fatal("reward scene admitted without NativeBossNPC")
+	}
+	cfg.Rules.NativeBossNPC = true
+	e = mustEngine(t, cfg)
+	if err := e.RegisterRuleNPCOwner(30001); err != nil {
+		t.Fatal(err)
+	}
+	drops := []Pickup{{SceneID: 86, Cell: Cell{Row: 1, Col: 2}, State: PickupAvailable}}
+	if _, err := e.InstallRuleNPCDrops(30001, drops); err == nil {
+		t.Fatal("unregistered experience scene installed")
+	}
+	if err := e.AddBossRewardScene(86); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.InstallRuleNPCDrops(30001, drops); err != nil {
+		t.Fatal(err)
+	}
+	if !e.Clone().rules.rulePickup(86) {
+		t.Fatal("clone lost the Boss reward scene")
+	}
+}
+
+func TestBossNPCAdmitsOneCooperativeTeam(t *testing.T) {
+	cfg := testConfig()
+	for i := range cfg.Participants {
+		cfg.Participants[i].TeamID = 1
+	}
+	if _, err := New(cfg); err == nil {
+		t.Fatal("one team accepted without NativeBossNPC")
+	}
+	cfg.Rules.NativeBossNPC = true
+	mustEngine(t, cfg)
+}
+
+func TestBossGlueSlowsPlayersOnly(t *testing.T) {
+	cfg := testConfig()
+	cfg.Rules.NativeBossNPC = true
+	e := mustEngine(t, cfg)
+	if err := e.InstallRuleNPCFieldObjects(30001, 43, []Cell{{Row: 1, Col: 2}}); err == nil {
+		t.Fatal("unregistered Boss placed glue")
+	}
+	e.RegisterRuleNPCOwner(30001)
+	if err := e.InstallRuleNPCFieldObjects(30001, 7, []Cell{{Row: 1, Col: 2}}); err == nil {
+		t.Fatal("non-field scene accepted")
+	}
+	if err := e.InstallRuleNPCFieldObjects(30001, 43, []Cell{{Row: 1, Col: 2}}); err != nil || len(e.FieldObjects()) != 1 || e.FieldObjects()[0].ActionID != 43 {
+		t.Fatalf("glue %v %+v", err, e.FieldObjects())
+	}
+}

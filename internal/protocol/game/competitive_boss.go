@@ -7,12 +7,16 @@ import (
 )
 
 const (
-	CreateNPCBossEvent         = 0x1389
-	CompetitiveBossMaxCount    = 8
-	CompetitiveBossMaxItems    = 20
-	CompetitiveBossMaxOutfits  = 10
-	CompetitiveBossMaxSkills   = 10
-	CompetitiveBossMaxMetadata = 128
+	CreateNPCBossEvent      = 0x1389
+	CompetitiveBossMaxCount = 8
+	CompetitiveBossMaxItems = 20
+	// CompetitiveBossNativeMaxNormalItems is what the final client accepts:
+	// 0x005AFDFA discards the whole NormalItems list when it is longer, so a
+	// Boss would drop nothing. The wire array still has 20 slots.
+	CompetitiveBossNativeMaxNormalItems = 10
+	CompetitiveBossMaxOutfits           = 10
+	CompetitiveBossMaxSkills            = 10
+	CompetitiveBossMaxMetadata          = 128
 )
 
 // CompetitiveBossInfo mirrors BOSS_INFO from the shipped QQTMsgData.bin.

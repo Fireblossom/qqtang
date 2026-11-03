@@ -339,6 +339,8 @@ Cool的5/99随机分支未在上述长局中抽中；其半场持续伤害、景
 
 **风险**：一旦支持多真人，地图 11 和 124 多人开局时**一定**会触发水手 Boss（`TestWater11StartsCooperativeNativeBossOverlay` 通过）[验证]，必须先拦住或提示。
 
+**进展（2026-11-03）**：AIType 3 控制器、Boss 出生/受伤/掉落/死亡、接触击杀和技能 1 已实现，地图 11 不再拦下；逆向记录在 `boss-lifecycle-re.md`（创建、受伤、死亡、渲染）和 `boss-ai-re.md`（控制器、寻路、技能），实现与已知差别见 `../README.md` 的"Boss 叠加层"条目。上面"移植 `FUN_005df20b`"中，海盗解释器和 AIType 5（踢炸弹 Boss）仍未做。
+
 ---
 
 ## 3. battleengine 缺什么；扩展引擎还是放进 sidecar

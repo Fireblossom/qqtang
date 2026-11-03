@@ -32,6 +32,7 @@ type autoplayBot struct {
 	tank      *tankRule
 	machine   *machineRule
 	box       *boxRule
+	boss      *bossRule // a Boss overlay: its living Bosses are targets too
 	// Rule 2: no own bubbles; kick the dropped ones instead.
 	kick bool
 }
@@ -176,7 +177,7 @@ func (bot *autoplayBot) act(engine *battleengine.Engine) battleengine.Action {
 		return bot.follow(action, actor, path)
 	}
 	worthBombing := func(cell battleengine.Cell) bool {
-		return world.worthBombing(cell, actor) || bot.tank != nil && bot.tank.worthBombing(world, cell, actor)
+		return world.worthBombing(cell, actor) || bot.tank != nil && bot.tank.worthBombing(world, cell, actor) || bot.bossInReach(world, cell, actor)
 	}
 	// 4. Place a bubble beside a breakable wall or an opponent, if it can be
 	// escaped.
@@ -189,6 +190,19 @@ func (bot *autoplayBot) act(engine *battleengine.Engine) battleengine.Action {
 		return bot.follow(action, actor, path)
 	}
 	return action
+}
+
+// bossInReach: a bubble at cell would catch a Boss that can be hurt.
+func (bot *autoplayBot) bossInReach(world autoplayWorld, cell battleengine.Cell, actor battleengine.Actor) bool {
+	if bot.boss == nil {
+		return false
+	}
+	for _, b := range bot.boss.actors {
+		if !b.dead && b.hp > 0 && world.blastCovers(cell, actor.BombPower, b.pos.Cell()) {
+			return true
+		}
+	}
+	return false
 }
 
 func (bot *autoplayBot) follow(action battleengine.Action, actor battleengine.Actor, path []battleengine.Cell) battleengine.Action {

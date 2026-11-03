@@ -37,6 +37,8 @@ FLIGHT_PX_PER_MS = 0.4
 FLIGHT_STEPS = {0: (1, 0), 1: (0, -1), 2: (-1, 0), 3: (0, 1)}  # wire direction: right, up, left, down
 # Avatar canvas (100x100) point that sits on the actor's position.
 AVATAR_ANCHOR = (50, 64)
+# A named Boss plays its cloth's "birth" for 1000 ms (0x005ACBFC).
+BOSS_BIRTH_MS = 1000
 WALK_FRAME_MS = 100
 FLAME_FRAME_MS = 70
 ITEM_FRAME_MS = 120
@@ -499,7 +501,7 @@ class BattleScene:
         if self.rule == "wrestle" and streak > self.local_streak and streak >= 2:
             self.streak_badge = (min(streak, 99), self.now_ms)
         self.local_streak = streak
-        for actor in self.state["actors"]:
+        for actor in list(self.state["actors"]) + list((self.state.get("boss") or {}).get("actors") or ()):
             if actor.get("protected_until", 0) > previous_clock:
                 self.flash_ms[actor["id"]] = self.flash_ms.get(actor["id"], 0) + min(self.clock, actor["protected_until"]) - previous_clock
         for event in self.state["events"] or ():
@@ -559,6 +561,15 @@ class BattleScene:
             # Banana and glue placed with items 41/42 (scene IDs 42/43).
             self._draw_frames(field, f"object/item/item{field_object['action']}_stand.img", self.clock // ITEM_FRAME_MS,
                               *self._item_at(field_object["action"], field_object["row"], field_object["col"]))
+        for flight in (self.state.get("boss") or {}).get("flights") or ():
+            # A Boss skill's objects fly from its cell to theirs at 400 px/s
+            # (0x005FDB18 -> 0x005D9BBF) and lie there once landed.
+            span = max(flight["lands"] - flight["start"], 1)
+            done = min(max(self.clock - flight["start"], 0), span) / span
+            x0, y0 = self._item_at(flight["scene"], flight["from_row"], flight["from_col"])
+            x1, y1 = self._item_at(flight["scene"], flight["row"], flight["col"])
+            self._draw_frames(field, f"object/item/item{flight['scene']}_stand.img", self.clock // ITEM_FRAME_MS,
+                              int(x0 + (x1 - x0) * done), int(y0 + (y1 - y0) * done))
         kick = self.state.get("kick") or {}
         for fall in kick.get("falls") or ():
             # Rule 2's dropped items fall from row 0 of their column at
@@ -600,6 +611,7 @@ class BattleScene:
             self._draw_tank_bases(field, row)
             self._draw_machine_gates(field, row)
             self._draw_boxes(field, row)
+            self._draw_bosses(field, row)
             for actor in sorted(actors_by_row.get(row, ()), key=lambda item: item["y"]):
                 self._draw_actor(field, actor)
                 if self.map.rule == 8:
@@ -698,6 +710,35 @@ class BattleScene:
                 for col in range(max(0, effect["col"] - 1), min(self.map.width, effect["col"] + 2)):
                     self._draw_frames(field, f"object/flame/flame{effect['style']}_stand.img",
                                       (self.clock - effect["start"]) // 50, FIELD_ORIGIN[0] + col * CELL, FIELD_ORIGIN[1] + row * CELL)
+
+    def _draw_bosses(self, field: pygame.Surface, row: int) -> None:
+        """A Boss overlay's NPCs (docs/boss-lifecycle-re.md): the role's cloth
+        "birth" for the first 1000 ms (0x005ACBFC), then stand/walk, the HP bar
+        over the head (0x005D2835, every client) and the 3 s flash after a
+        hit. A dead Boss disappears at once (0x00606606)."""
+        for boss in (self.state.get("boss") or {}).get("actors") or ():
+            if min(max(boss["y"] // CELL, 0), self.map.height - 1) != row:
+                continue
+            record = {"id": boss["id"], "role": boss["role"], "avatar_role": 0, "team": 7, "x": boss["x"], "y": boss["y"],
+                      "facing": boss["facing"], "state": 0, "protected_until": boss["protected_until"], "durability": boss["hp"]}
+            born_for = self.clock - boss["born"]
+            cloth = self.avatars.parts(boss["role"], "stand").get("cloth")
+            birth = f"object/cloth/cloth{cloth}_birth.img"
+            if 0 <= born_for < BOSS_BIRTH_MS and cloth and self.sprites.get(birth):
+                frames = len(self.sprites.get(birth) or ()) or 1
+                self._draw_frames(field, birth, min(frames - 1, born_for * frames // BOSS_BIRTH_MS),
+                                  boss["x"] - AVATAR_ANCHOR[0], boss["y"] - AVATAR_ANCHOR[1])
+            else:
+                if boss.get("moving"):
+                    self.walk_started.setdefault(boss["id"], self.clock)
+                else:
+                    self.walk_started.pop(boss["id"], None)
+                self._draw_actor(field, record)
+            # 0x005D2448: misc196's frame is drawn for every non-local actor.
+            if boss["hp"] > 0:
+                self._draw_frames(field, "object/misc/misc196_stand.img", 0, boss["x"] - 11, boss["y"] - 43)
+                number = 190 + boss["hp"] if boss["hp"] <= 5 else 191 + min(boss["hp"], 10)
+                self._draw_frames(field, f"object/misc/misc{number}_stand.img", 0, boss["x"] - 10, boss["y"] - 42)
 
     def _draw_box_health(self, field: pygame.Surface, actor: dict[str, Any]) -> None:
         hp = actor.get("durability", 0)

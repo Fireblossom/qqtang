@@ -24,9 +24,6 @@ from .script import call_script, log
 from .session import Session
 
 DEFAULT_ROOM_NAME = "一起来玩吧"
-# Maps whose sailor Boss starts whenever two humans play (docs/other-rules.md);
-# Boss matches are not implemented.
-BOSS_WITH_TWO_HUMANS = (11, 124)
 CHAT_LIST = "UI.room.chatArea.chatPanel.chatList"
 SYSTEM_CHAT_COLOR = (255, 255, 0)
 CHAT_COLOR = (255, 255, 255)
@@ -399,9 +396,6 @@ def build_room_natives(runtime: UIRuntime, session: Session, avatars: AvatarCach
         if mine is None:
             return
         if am_owner():
-            if state.snapshot is not None and state.snapshot.map_id in BOSS_WITH_TWO_HUMANS and len(state.members) >= 2:
-                notify("这张地图有两名以上玩家时会进入 BOSS 战，本客户端暂不支持，请换一张地图。")
-                return
             session.send(room.START_GAME_COMMAND, room.build_simple_request(session.uin))
         else:
             command = room.CANCEL_READY_COMMAND if mine.status else room.READY_COMMAND

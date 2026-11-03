@@ -405,8 +405,8 @@ func buildCompetitiveBossRewardItems(candidateID string, configured []Competitiv
 			inventory.NormalItems = append(inventory.NormalItems, wire)
 		}
 	}
-	if len(inventory.NormalItems) > game.CompetitiveBossMaxItems {
-		return competitiveBossRewardInventory{}, fmt.Errorf("competitive Boss %q normal reward count %d exceeds %d", candidateID, len(inventory.NormalItems), game.CompetitiveBossMaxItems)
+	if len(inventory.NormalItems) > game.CompetitiveBossNativeMaxNormalItems {
+		return competitiveBossRewardInventory{}, fmt.Errorf("competitive Boss %q normal reward count %d exceeds the client's %d", candidateID, len(inventory.NormalItems), game.CompetitiveBossNativeMaxNormalItems)
 	}
 	if len(inventory.OutfitItems) > game.CompetitiveBossMaxOutfits {
 		return competitiveBossRewardInventory{}, fmt.Errorf("competitive Boss %q death reward count %d exceeds %d", candidateID, len(inventory.OutfitItems), game.CompetitiveBossMaxOutfits)

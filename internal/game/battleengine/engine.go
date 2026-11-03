@@ -131,7 +131,8 @@ func (engine *Engine) Reset(config Config) error {
 		teamSeen[participant.TeamID] = struct{}{}
 		participants[index] = participant
 	}
-	if len(teamSeen) < 2 {
+	// A Boss overlay unifies every player into one cooperative team.
+	if len(teamSeen) < 2 && !(config.Rules.NativeBossNPC && len(teamSeen) == 1) {
 		return fmt.Errorf("standard battle requires at least two teams")
 	}
 	pickups := append([]Pickup(nil), config.Pickups...)

@@ -205,6 +205,7 @@ type onlineMatch struct {
 	machine   *machineRule
 	tank      *tankRule
 	kick      *kickRule // rule 2; nil otherwise
+	boss      *bossRule // a map that can host a Boss overlay; nil otherwise
 }
 
 // respawnRule is a special rule's relive timing, from Client.exe's rule
@@ -268,6 +269,17 @@ func newOnlineMatch(init command) (*onlineMatch, beginView, error) {
 	rules, respawn, err := ruleOptions(entry, options.LocalID, begin.ArbitratorPlayerID)
 	if err != nil {
 		return nil, beginView{}, err
+	}
+	boss := newBossRule(entry, begin)
+	if boss != nil {
+		rules.NativeBossNPC = true
+		// The server projects every player of a Boss round into team 1 and
+		// alone concludes it (Boss death, or every player dead).
+		teams := map[byte]bool{}
+		for _, info := range begin.Players {
+			teams[info.TeamID] = true
+		}
+		rules.ExternalConclusion = rules.ExternalConclusion || len(teams) == 1
 	}
 	participants := make([]battleengine.Participant, 0, len(begin.Players))
 	uins := make(map[uint16]uint32, len(begin.Players))
@@ -364,7 +376,7 @@ func newOnlineMatch(init command) (*onlineMatch, beginView, error) {
 		fieldContacts: map[fieldContactKey]bool{}, itemUses: map[[3]uint32]bool{}, useRequested: map[uint8]uint32{},
 		preparedRequested: map[uint32]uint32{},
 		pickupRequests:    map[pickupKey]pickupRequest{}, sceneRequests: map[sceneRequestKey]uint32{},
-		box: box, machine: machine, tank: tank, respawn: respawn, eliminatedAt: map[uint16]uint32{}, departed: map[uint16]bool{},
+		box: box, machine: machine, tank: tank, boss: boss, respawn: respawn, eliminatedAt: map[uint16]uint32{}, departed: map[uint16]bool{},
 		kills: map[uint16]int{}, streaks: map[uint16]int{},
 	}
 	if box != nil {
@@ -395,6 +407,7 @@ func newOnlineMatch(init command) (*onlineMatch, beginView, error) {
 		match.bot.tank = match.tank
 		match.bot.machine = match.machine
 		match.bot.box = match.box
+		match.bot.boss = match.boss
 		match.bot.kick = match.kick != nil
 		match.logf("autoplay: the test bot plays player %d", match.local)
 	}
@@ -606,6 +619,8 @@ func (match *onlineMatch) step(step command) ([]battleengine.Event, error) {
 		tickEvents = append(tickEvents, match.kickTick()...)
 		tickEvents = append(tickEvents, match.machineTick()...)
 		tickEvents = append(tickEvents, match.boxTick()...)
+		match.bossTick(match.engine.ElapsedMS(), tickEvents)
+		tickEvents = append(tickEvents, match.takeBossEvents()...)
 		events = append(events, tickEvents...)
 	}
 	match.collectLooseDispatches()
@@ -759,7 +774,7 @@ func (match *onlineMatch) handleDatagram(data []byte) []battleengine.Event {
 		var events []battleengine.Event
 		for _, entry := range batch.Entries {
 			author := entry.Package.PlayerID
-			if author != sender && !match.boxNPCProxy(sender, author) {
+			if author != sender && !match.boxNPCProxy(sender, author) && !match.bossProxy(sender, author) {
 				continue
 			}
 			for _, message := range entry.Package.Messages {
@@ -783,6 +798,9 @@ func (match *onlineMatch) applyRemote(sender uint16, message game.BattleMessageD
 	schema := uint16(message.DataID)
 	event := game.GameEvent{Schema: schema, Body: message.Data}
 	if events, handled := match.boxRemote(sender, event); handled {
+		return events
+	}
+	if events, handled := match.bossRemote(sender, event); handled {
 		return events
 	}
 	if events, handled := match.machineRemote(sender, event); handled {
@@ -1359,6 +1377,10 @@ func (match *onlineMatch) handleTCP(packet tcpPacket) {
 			return
 		}
 		if _, handled := match.boxNPCRemote(match.arbitrator, game.GameEvent{Schema: notify.Schema, Body: notify.Body}); handled {
+			return
+		}
+		if notify.Schema == game.CreateNPCBossEvent {
+			match.bossRemote(match.arbitrator, game.GameEvent{Schema: notify.Schema, Body: notify.Body})
 			return
 		}
 		switch notify.Schema {
@@ -2100,8 +2122,8 @@ func (match *onlineMatch) publishElimination(event battleengine.Event, drops []g
 		}
 		return
 	}
-	if !arbitrator || event.PlayerID == 0 {
-		return
+	if !arbitrator || event.PlayerID == 0 || isBossID(event.PlayerID) {
+		return // a Boss's kill is published by bossContact
 	}
 	body, err := (game.PlayerKilledEvent{
 		PlayerInteractionEvent: game.PlayerInteractionEvent{PlayerID: event.PlayerID, ClientTime: now, DestinationPlayerID: event.TargetID,

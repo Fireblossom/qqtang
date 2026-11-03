@@ -355,6 +355,23 @@ func ParseEntityHarmedEvent(event GameEvent) (EntityHarmedEvent, error) {
 	return decoded, nil
 }
 
+// MarshalNetworkBinary encodes the 13-byte PLAYER_BE_HARMED (0x10F4) body.
+func (event EntityHarmedEvent) MarshalNetworkBinary() ([]byte, error) {
+	if event.ObjectID == 0 {
+		return nil, fmt.Errorf("entity-harmed object ID must be non-zero")
+	}
+	body := make([]byte, 13)
+	binary.BigEndian.PutUint16(body[0:2], event.ObjectID)
+	binary.BigEndian.PutUint32(body[2:6], event.Time)
+	binary.BigEndian.PutUint16(body[6:8], event.PosX)
+	binary.BigEndian.PutUint16(body[8:10], event.PosY)
+	if event.IsAvatar {
+		body[10] = 1
+	}
+	binary.BigEndian.PutUint16(body[11:13], event.LossHP)
+	return body, nil
+}
+
 func ParsePlayerHarmedEvent(event GameEvent) (PlayerHarmedEvent, error) {
 	return ParseEntityHarmedEvent(event)
 }

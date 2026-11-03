@@ -116,3 +116,15 @@ func TestMachineStateCountPacksMachineIndex(t *testing.T) {
 		t.Fatalf("decoded launch %+v, %v", parsed, err)
 	}
 }
+
+func TestEntityHarmedEventRoundTrip(t *testing.T) {
+	want := EntityHarmedEvent{ObjectID: 30001, Time: 12345, PosX: 220, PosY: 60, LossHP: 1000}
+	body, err := want.MarshalNetworkBinary()
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := ParseEntityHarmedEvent(GameEvent{Schema: PlayerBeHarmed, Body: body})
+	if err != nil || got != want {
+		t.Fatalf("round trip %+v %v", got, err)
+	}
+}

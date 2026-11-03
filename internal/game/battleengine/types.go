@@ -329,6 +329,15 @@ type Rules struct {
 	NativeDurabilityLayers byte
 	// NativeBoxPhysics permits explicit rule-8 dynamic element registration.
 	NativeBoxPhysics bool
+	// NativeBossNPC permits the CREATE_NPC_BOSS objects of a rule-1/2 Boss
+	// overlay (IDs 30001..30008) to own bubbles as rule NPCs, and admits the
+	// overlay's single cooperative team. Only maps that can host a Boss set it.
+	NativeBossNPC bool
+	// BossRewardSceneIDs are a Boss's BOSS_INFO NormalItems/OutfitItems
+	// (sugar, experience, outfits). They are rule pickups whose effect the
+	// server applies at settlement; AddBossRewardScene fills them in once
+	// CREATE_NPC_BOSS has arrived. Empty unless NativeBossNPC is set.
+	BossRewardSceneIDs [20]uint32
 	// StartClockMS is the native game clock at the first controllable frame.
 	// It is part of (and therefore consumes) the absolute RoundDurationMS scene
 	// deadline, while still letting offline/RL callers skip empty Ready/Go steps.
@@ -523,6 +532,11 @@ func (rules Rules) pickupSupported(sceneID uint32) bool {
 
 func (rules Rules) rulePickup(sceneID uint32) bool {
 	for _, id := range rules.RulePickupSceneIDs {
+		if id != 0 && id == sceneID {
+			return true
+		}
+	}
+	for _, id := range rules.BossRewardSceneIDs {
 		if id != 0 && id == sceneID {
 			return true
 		}

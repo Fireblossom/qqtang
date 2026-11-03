@@ -2,12 +2,14 @@ package battleengine
 
 import "fmt"
 
-// RegisterRuleNPCOwner reserves a native rule-8 entity identity without
-// adding it to human participants, team outcomes or policy observations.
-// Identities remain known after death so already-created bubbles can finish;
-// the rule controller owns the active/dead lifecycle.
+// RegisterRuleNPCOwner reserves a native rule-8 entity identity, or a Boss
+// overlay object, without adding it to human participants, team outcomes or
+// policy observations. Identities remain known after death so already-created
+// bubbles can finish; the rule controller owns the active/dead lifecycle.
 func (engine *Engine) RegisterRuleNPCOwner(id uint16) error {
-	if engine == nil || !engine.rules.NativeBoxPhysics || id < 20001 || id >= 23000 {
+	boxNPC := engine != nil && engine.rules.NativeBoxPhysics && id >= 20001 && id < 23000
+	boss := engine != nil && engine.rules.NativeBossNPC && id >= 30001 && id <= 30008
+	if !boxNPC && !boss {
 		return fmt.Errorf("rule NPC owner %d is not permitted", id)
 	}
 	if engine.ruleNPCOwners == nil {
@@ -67,4 +69,44 @@ func (engine *Engine) InstallRuleNPCDrops(owner uint16, drops []Pickup) ([]Event
 		return nil, err
 	}
 	return engine.installDeathDrops(owner, drops), nil
+}
+
+// AddBossRewardScene admits one BOSS_INFO reward item as a rule pickup, so
+// that the Boss's hit and death drops can be installed and collected.
+func (engine *Engine) AddBossRewardScene(sceneID uint32) error {
+	if engine == nil || !engine.rules.NativeBossNPC || sceneID == 0 {
+		return fmt.Errorf("Boss reward scene %d is not permitted", sceneID)
+	}
+	if engine.rules.pickupSupported(sceneID) {
+		return nil
+	}
+	for i, id := range engine.rules.BossRewardSceneIDs {
+		if id == 0 {
+			engine.rules.BossRewardSceneIDs[i] = sceneID
+			return nil
+		}
+	}
+	return fmt.Errorf("too many Boss reward scenes")
+}
+
+// InstallRuleNPCFieldObjects places the scene objects of a Boss skill
+// (NOTIFY_NPCUSE_SKILL items: 43 slow glue, 41 trap) once they have landed.
+// They behave like the native field actions of the same number; Boss IDs are
+// not actors, so they are never caught by them (0x005CDBF8 excludes them).
+func (engine *Engine) InstallRuleNPCFieldObjects(owner uint16, actionID uint8, cells []Cell) error {
+	if !engine.HasRuleNPCOwner(owner) {
+		return fmt.Errorf("unregistered rule NPC field owner %d", owner)
+	}
+	if actionID != 41 && actionID != 42 && actionID != 43 {
+		return fmt.Errorf("rule NPC field action %d is not a native field object", actionID)
+	}
+	for _, cell := range cells {
+		if _, inside := engine.grid.Cell(cell); !inside {
+			return fmt.Errorf("rule NPC field cell %d,%d is outside the grid", cell.Row, cell.Col)
+		}
+	}
+	for _, cell := range cells {
+		engine.installAuthoritativeFieldObject(actionID, cell)
+	}
+	return nil
 }
