@@ -129,6 +129,8 @@ CGO_ENABLED=1 go build -tags onnxruntime -o qqt-server ./cmd/qqt-server
 
 ### 道具场特殊地图元素
 
+实测（双 autoplay，道具场，`/private/tmp/qqt-integrated-final/run-special.sh`，`GT=1`）：820 两端传送记录一致；117 非仲裁方站进爆炸石 3×3 被炸死，0x1176/10 → 仲裁方 0xFA7 被服务端接受、两端同判 1 队胜；115、113、413 整局零 warn。光环（414 被箱子围住）在实局里还没触发过，只有单元测试。服务端 AI 局的服务端镜像没有打开这个开关（坚石多层、连锁不会同步到服务端 AI 的视角）。
+
 依据 `docs/special-elements-re.md`、`docs/transdoor-strip-re.md`（静态逆向，函数地址见文档）。引擎开关 `Rules.NativeSpecialElements`（默认关，地图里有这些元素时 sidecar 才打开）；计时、本机触发和 0x1176（16 字节：EventID、PlayerID、时间、源格、目标格）在 `cmd/qqt-battle-sidecar/special.go`。
 
 - 爆炸石 17019（地图 117）：被炸时立即对周围 3×3 的地图元素再发一次"被炸"（会炸箱子、坚石掉一层、相邻爆炸石同帧连锁），之后 500 ms 内站在 3×3 里的本机玩家直接阵亡（不是被困）：仲裁方自己发 0xFA7，非仲裁方发 0x1176/10 请求、由仲裁方代发 0xFA7。连锁由每个客户端自己算，仲裁方的 0x0FA4 只列火焰直接打到的元素。特效画 `magic0131`（`Totem_Flame.eff` 从 400 ms 处开始）。

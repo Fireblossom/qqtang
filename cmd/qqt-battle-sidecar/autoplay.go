@@ -207,6 +207,23 @@ func (bot *autoplayBot) act(engine *battleengine.Engine) battleengine.Action {
 				return bot.follow(action, actor, path)
 			}
 		}
+		// Bomb the explode stones first (it is the bot's job to try them).
+		stoneNext := func(c battleengine.Cell) bool {
+			for _, d := range autoplayDirections {
+				if tile, inside := world.grid.Cell(stepCell(c, d)); inside && tile.MapElementID == battleengine.ElementExplodeStone && tile.Durability > 0 {
+					return true
+				}
+			}
+			return false
+		}
+		if stoneNext(here) && world.worthBombing(here, actor) && safe(here) {
+			if path := world.escape(here, bot.timeline, now, msPerCell); len(path) > 1 {
+				action.PlaceBomb = true
+				return action
+			}
+		} else if path := world.nearest(here, safe, stoneNext); len(path) > 0 {
+			return bot.follow(action, actor, path)
+		}
 		if now%30000 >= 10000 && now%30000 < 20000 && len(s.doors) > 0 && s.doorAt(here) < 0 {
 			if path := world.nearest(here, safe, func(c battleengine.Cell) bool { return s.doorAt(c) >= 0 }); len(path) > 0 {
 				return bot.follow(action, actor, path)
