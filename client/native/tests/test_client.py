@@ -15,6 +15,7 @@ sys.path.insert(0, str(ROOT / "tools"))
 import types  # noqa: E402
 
 import numpy as np  # noqa: E402
+import pygame  # noqa: E402
 
 from qqtclient import dimg  # noqa: E402
 from qqtclient.avatar import tint  # noqa: E402
@@ -217,6 +218,86 @@ class TextLayoutTest(unittest.TestCase):
         self.assertEqual(Renderer._wrap("1000 糖块", 12, 48), ["1000 糖", "块"])
         self.assertEqual(Renderer._wrap("ab\ncd", 12, 0), ["ab", "cd"])
         self.assertEqual(Renderer._wrap("糖", 12, 11), [])
+
+
+class DialogKeyboardTest(unittest.TestCase):
+    def setUp(self):
+        calls = self.calls = []
+
+        class UI:
+            class children:
+                class screen:
+                    class children:
+                        class outside:
+                            type = "EDIT"
+
+                class dialog:
+                    visible = 0
+
+                    def OnEnter(this):
+                        calls.append(("enter", this))
+
+                    def OnEscape(this):
+                        calls.append(("escape", this))
+
+                    class children:
+                        class first:
+                            type = "EDIT"
+
+                        class second:
+                            type = "EDIT"
+
+                        class button:
+                            type = "BUTTON"
+
+        self.runtime = UIRuntime(types.SimpleNamespace(namespace={}))
+        self.runtime.root = build("UI", UI, None)
+        self.runtime._register(self.runtime.root)
+        self.runtime.screens = {"test": "UI.screen"}
+        self.runtime.current_screen = "test"
+        self.dialog = self.runtime.find("UI.dialog")
+        self.first = self.runtime.find("UI.dialog.first")
+        self.second = self.runtime.find("UI.dialog.second")
+
+    def open_dialog(self):
+        # Exact Add Friend script sequence: focus while hidden, then show
+        # and focus/capture its parent through ui_setCapture.
+        self.runtime.set_focus(self.first)
+        self.dialog.visible = True
+        self.runtime.set_focus(self.dialog)
+        self.runtime.capture = self.dialog
+
+    def test_parent_capture_keeps_explicit_edit_and_accepts_typing(self):
+        self.open_dialog()
+        self.runtime.handle(pygame.event.Event(pygame.TEXTINPUT, text="hello糖"))
+        self.runtime.handle(pygame.event.Event(pygame.KEYDOWN, key=pygame.K_BACKSPACE, mod=0))
+        self.assertEqual(self.first.text, "hello")
+        self.assertIs(self.runtime.focus, self.first)
+        self.assertIs(self.runtime.capture, self.dialog)
+        self.runtime.set_focus(self.runtime.find("UI.dialog.button"))
+        self.assertEqual(self.runtime.focus.path, "UI.dialog.button")
+
+    def test_tab_stays_in_the_modal_and_enter_escape_bubble_to_it(self):
+        self.open_dialog()
+        for expected in (self.second, self.first):
+            self.runtime.handle(pygame.event.Event(pygame.KEYDOWN, key=pygame.K_TAB, mod=0))
+            self.assertIs(self.runtime.focus, expected)
+        self.runtime.handle(pygame.event.Event(pygame.KEYDOWN, key=pygame.K_RETURN, mod=0))
+        self.runtime.handle(pygame.event.Event(pygame.KEYDOWN, key=pygame.K_ESCAPE, mod=0))
+        self.assertEqual(self.calls, [("enter", "UI.dialog"), ("escape", "UI.dialog")])
+
+    def test_other_dialog_does_not_retain_an_unrelated_edit(self):
+        self.runtime.set_focus(self.runtime.find("UI.screen.outside"))
+        self.dialog.visible = True
+        self.runtime.set_focus(self.dialog)
+        self.assertIs(self.runtime.focus, self.dialog)
+
+    def test_modal_without_enter_handler_does_not_activate_background_screen(self):
+        self.open_dialog()
+        self.dialog.cls = type("EmptyDialog", (), {})
+        self.runtime.find("UI.screen").cls = type("Screen", (), {"OnEnter": lambda this: self.calls.append(this)})
+        self.runtime.handle(pygame.event.Event(pygame.KEYDOWN, key=pygame.K_RETURN, mod=0))
+        self.assertEqual(self.calls, [])
 
 
 class PropBarTest(unittest.TestCase):

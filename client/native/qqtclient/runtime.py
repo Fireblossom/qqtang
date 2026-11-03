@@ -400,7 +400,34 @@ class UIRuntime:
         widget.checked = 1
 
     def set_focus(self, widget: Widget | None) -> None:
+        # ui_setCapture shows a dialog and focuses it after the calling
+        # script explicitly focused one of its edits. Preserve that edit;
+        # capture and keyboard focus are independent. This repairs the
+        # original script's parent-focus overwrite (e.g. Add Friend).
+        current = self.focus
+        if (widget is not None and current is not None and current.type in TEXT_INPUT_TYPES
+                and current.editable and current.enabled and current.shown()
+                and current in widget.walk()):
+            return
         self.focus = widget
+
+    def _bubble_key(self, name: str) -> None:
+        modal = self.modal_root()
+        widget = self.focus
+        if modal is not None and (widget is None or widget not in modal.walk()):
+            widget = modal
+        seen = set()
+        while widget is not None:
+            seen.add(widget)
+            if widget.handler(name):
+                self.call(widget, name)
+                return
+            if widget is modal:
+                return
+            widget = widget.parent
+        screen = self.screen_widget()
+        if screen is not None and screen not in seen:
+            self.call(screen, name)
 
     def _type_text(self, text: str, widget: Widget | None = None) -> None:
         widget = widget or self.focus
@@ -426,18 +453,16 @@ class UIRuntime:
         elif event.key in (pygame.K_RETURN, pygame.K_KP_ENTER):
             if self.msgbox() is not None:
                 self._answer_msgbox(True)
-            elif widget is not None and widget.handler("OnEnter"):
-                self.call(widget, "OnEnter")
-            elif (screen := self.screen_widget()) is not None:
-                self.call(screen, "OnEnter")
+            else:
+                self._bubble_key("OnEnter")
         elif event.key == pygame.K_ESCAPE:
             if self.msgbox() is not None:
                 self._answer_msgbox(False)
-            elif (screen := self.screen_widget()) is not None:
-                self.call(screen, "OnEscape")
+            else:
+                self._bubble_key("OnEscape")
 
     def _next_edit(self, widget: Widget) -> None:
-        screen = self.screen_widget()
+        screen = self.modal_root() or self.screen_widget()
         if screen is None:
             return
         edits = [item for item in screen.walk() if item.type in TEXT_INPUT_TYPES and item.shown() and item.enabled]
