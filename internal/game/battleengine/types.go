@@ -771,6 +771,9 @@ type Actor struct {
 	adventureUsed    int
 	adventureResume  uint32
 	adventureBubbles map[uint32]struct{}
+	// adventureAttr is the sum of NPC skill SpeedDel, BombPowerDel and
+	// BombCountDel effects still on the actor (AdjustAdventureAttributes).
+	adventureAttr [3]int
 	// A live FA5 has been produced, but its authoritative echo is pending.
 	// Keep the actor's outcome uncommitted while excluding local physics.
 	nativeHitPending  bool

@@ -51,6 +51,8 @@ type advPlayer struct {
 	protectedUntil uint32
 	dyingSince     uint32
 	dead           bool
+	// NPC skill control effects on the player (adventure_skill.go).
+	moveLocks, bombLocks, reversed int
 }
 
 type advNPC struct {
@@ -71,6 +73,13 @@ type advNPC struct {
 	target                  uint16
 	counter                 int
 	route                   []battleengine.Cell // cells from here to the goal
+	// Skills (adventure_skill.go): when the battle began, the end of the
+	// current prepare stop, the last fire by prop Tier, and the move locks
+	// of CanUseMoveKey=0 effects.
+	battleSince    uint32
+	preparingUntil uint32
+	lastFire       map[int]uint32
+	moveLocks      int
 }
 
 type adventureRule struct {
@@ -94,6 +103,8 @@ type adventureRule struct {
 	doorSent    bool
 	roundMS     uint32
 	events      []battleengine.Event
+	props       map[uint32]mapdata.AdventureProp // config/errorPPP.ini
+	casts       []*advCast
 }
 
 type advActorView struct {
@@ -128,6 +139,7 @@ type adventureView struct {
 	Height  int                      `json:"height"`
 	Locked  bool                     `json:"locked,omitempty"`
 	FlashAt uint32                   `json:"flash_at,omitempty"`
+	Casts   []advCastView            `json:"casts,omitempty"`
 }
 
 func newAdventureRule(stage mapdata.AdventureStage, field mapdata.AdventureBattlefield, begin game.GameBeginData) *adventureRule {
@@ -255,7 +267,7 @@ func (match *onlineMatch) createAdventureNPCs(batch game.CreatePVENPCEvent, now 
 		}
 		cell := battleengine.Cell{Row: int16(info.BornRow), Col: int16(info.BornCol)}
 		n := &advNPC{base: uint16(info.NPCBaseID), info: info, hp: int(info.HP), maxHP: int(info.HP), defense: int(info.Defense), harm: int(info.Harm), view: int(info.View), bounds: bounds,
-			enmity: map[uint16]int{}, strategy: int(info.MoveStrategy)}
+			enmity: map[uint16]int{}, strategy: int(info.MoveStrategy), lastFire: map[int]uint32{}}
 		n.id, n.role, n.pos, n.facing, n.lastTick, n.speed, n.bossSpeed = id, uint16(info.ImageID), battleengine.PositionAtCellCenter(cell), 3, now, byte(min(info.Speed, 10)), true
 		rule.npcs[id] = n
 	}
@@ -408,6 +420,7 @@ func (match *onlineMatch) adventureTick(now uint32) {
 			}
 		}
 	}
+	match.adventureCastTick(now)
 	match.adventureDoor(now)
 	if arbitrator {
 		match.flushNPC(&rule.outbox)
@@ -657,7 +670,9 @@ func (match *onlineMatch) adventureEnmity() {
 func (match *onlineMatch) adventureNPCTick(n *advNPC, now uint32) {
 	if n.counter <= bossDecideFrames {
 		n.counter++
-	} else if d := match.adventureNPCDecide(n); d == bossDirStop {
+	} else if now < n.preparingUntil || n.moveLocks > 0 {
+		n.path = nil
+	} else if d := match.adventureNPCDecide(n, now); d == bossDirStop {
 		n.path = nil
 	} else {
 		n.counter = 0
@@ -667,8 +682,9 @@ func (match *onlineMatch) adventureNPCTick(n *advNPC, now uint32) {
 }
 
 // adventureNPCDecide is vtbl+0x70 0x005BAE70: the battle switch, then the
-// move strategy (PVE NPCs never place bubbles; skills are not played yet).
-func (match *onlineMatch) adventureNPCDecide(n *advNPC) int {
+// skill check 0x005BBAFA, then the move strategy (PVE NPCs never place
+// bubbles).
+func (match *onlineMatch) adventureNPCDecide(n *advNPC, now uint32) int {
 	players := match.livingAdventurePlayers()
 	// 0x005BADE5 with GEnmity 0x005BBBFF.
 	total := 0
@@ -684,7 +700,10 @@ func (match *onlineMatch) adventureNPCDecide(n *advNPC) int {
 	case n.battle && total == 0:
 		n.battle, n.strategy, n.route = false, n.savedStrategy, nil
 	case !n.battle && total >= 1:
-		n.battle, n.savedStrategy, n.strategy, n.route = true, n.strategy, 4, nil
+		n.battle, n.savedStrategy, n.strategy, n.route, n.battleSince = true, n.strategy, 4, nil, now
+	}
+	if match.adventureTrySkill(n, now) {
+		return bossDirStop
 	}
 	here := n.pos.Cell()
 	if len(n.route) > 1 && match.adventureRouteValid(n, here) {
@@ -874,6 +893,10 @@ func (match *onlineMatch) adventureRemote(sender uint16, event game.GameEvent) (
 		}
 		return nil, false
 	}
+	if (event.Schema == game.NotifyPlayerUseItem || event.Schema == game.NotifyPropTrigger) && (isAdventureNPC(sender) || sender == match.arbitrator) &&
+		match.adventureSkillRemote(event) {
+		return nil, true
+	}
 	if !isAdventureNPC(sender) {
 		return nil, false
 	}
@@ -924,7 +947,7 @@ func (match *onlineMatch) adventureView() *adventureView {
 	}
 	view := &adventureView{Players: map[uint16]advPlayerView{}, Field: rule.currentField(), DoorRow: rule.stage.LevelRow, DoorCol: rule.stage.LevelCol,
 		Open: rule.clearAt != 0, Width: int(rule.field.Battlefield.Width), Height: int(rule.field.Battlefield.Height),
-		Locked: rule.locked, FlashAt: rule.lockFlashAt}
+		Locked: rule.locked, FlashAt: rule.lockFlashAt, Casts: match.adventureCastView()}
 	for id, p := range rule.players {
 		view.Players[id] = advPlayerView{HP: p.hp, MaxHP: p.maxHP, ProtectedUntil: p.protectedUntil, DyingSince: p.dyingSince}
 	}

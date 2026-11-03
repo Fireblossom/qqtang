@@ -279,6 +279,9 @@ func newOnlineMatch(init command) (*onlineMatch, beginView, error) {
 			return nil, beginView{}, err
 		}
 		adventure = newAdventureRule(stage, adventureField, begin)
+		if adventure.props, err = mapdata.LoadAdventureProps(init.ClientRoot); err != nil {
+			return nil, beginView{}, err
+		}
 	}
 	view := beginView{GameID: begin.GameID, MapID: begin.MapID, Rule: string(entry.Rule), Arbitrator: begin.ArbitratorPlayerID}
 	if spec, ok := mapdata.LookupCompetitiveRuleByNativeID(entry.NativeRule); ok {
@@ -646,6 +649,7 @@ func (match *onlineMatch) step(step command) ([]battleengine.Event, error) {
 		}
 		match.boxInput(&action)
 		match.bossInput(&action)
+		match.adventureInput(&action)
 		match.launchMachine(&action)
 		events = append(events, match.throwMachine(&action)...)
 		var actions []battleengine.Action

@@ -110,3 +110,38 @@ func TestBattlefieldLockKeepsTheActorInside(t *testing.T) {
 		t.Fatalf("released actor stayed at column %d", col)
 	}
 }
+
+func TestAdventureSkillAttributesAddAndRestore(t *testing.T) {
+	cfg := testConfig()
+	if err := mustEngine(t, cfg).AdjustAdventureAttributes(cfg.Participants[0].PlayerID, -1, 0, 0); err == nil {
+		t.Fatal("skill attributes outside the adventure rule")
+	}
+	cfg.Rules.NativeAdventure, cfg.Rules.ExternalConclusion = true, true
+	cfg.Rules.SpeedPixelsPerSecondByRate = nativeSpeedPixelsPerSecondByRate
+	for i := range cfg.Participants {
+		cfg.Participants[i].TeamID = 1
+		cfg.Participants[i].SpeedRate, cfg.Participants[i].BombCapacity, cfg.Participants[i].BombPower = 3, 2, 4
+		cfg.Participants[i].SpeedPixelsPerSecond = nativeSpeedPixelsPerSecondByRate[3]
+	}
+	e := mustEngine(t, cfg)
+	a := &e.actors[0]
+	if err := e.AdjustAdventureAttributes(a.PlayerID, -2, -50, -2); err != nil {
+		t.Fatal(err)
+	}
+	c := e.actorCapabilities(a, DirectionRight)
+	if c.EffectiveSpeedRate != 1 || c.EffectiveBombCapacity != 0 || e.adventureBombPower(a) != 1 {
+		t.Fatalf("speed %d count %d power %d", c.EffectiveSpeedRate, c.EffectiveBombCapacity, e.adventureBombPower(a))
+	}
+	if _, ok := e.prospectiveBomb(0, true); ok {
+		t.Fatal("placed a bubble with count 0")
+	}
+	_ = e.AdjustAdventureAttributes(a.PlayerID, -2, 0, 0)
+	if e.effectiveSpeedPixelsPerSecond(a, DirectionRight) != 0 {
+		t.Fatal("speed rate 0 still moves")
+	}
+	_ = e.AdjustAdventureAttributes(a.PlayerID, 4, 50, 2)
+	c = e.actorCapabilities(a, DirectionRight)
+	if c.EffectiveSpeedRate != 3 || c.EffectiveBombCapacity != 2 || e.adventureBombPower(a) != 4 {
+		t.Fatalf("restored speed %d count %d power %d", c.EffectiveSpeedRate, c.EffectiveBombCapacity, e.adventureBombPower(a))
+	}
+}

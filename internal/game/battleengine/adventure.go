@@ -118,3 +118,34 @@ func (actor *Actor) fieldContains(cell Cell) bool {
 func (actor *Actor) fieldAllows(cell Cell) bool {
 	return !actor.fieldLock || !actor.fieldContains(actor.Position.Cell()) || actor.fieldContains(cell)
 }
+
+// AdjustAdventureAttributes adds NPC skill effects to a rule-12 actor
+// (0x005FA37A): SpeedDel, BombPowerDel and BombCountDel change the speed
+// rate, bubble power and bubble count by the given amounts until the same
+// call with the opposite values (RestorePlayerAttr) takes them back. The
+// effective values never go below 0 (speed, count) or 1 (power).
+func (engine *Engine) AdjustAdventureAttributes(playerID uint16, speed, power, count int) error {
+	if engine == nil || !engine.rules.NativeAdventure {
+		return fmt.Errorf("skill attributes require the adventure rule")
+	}
+	index := engine.actorIndex(playerID)
+	if index < 0 {
+		return fmt.Errorf("skill attributes player %d is not a participant", playerID)
+	}
+	actor := &engine.actors[index]
+	actor.adventureAttr[0] += speed
+	actor.adventureAttr[1] += power
+	actor.adventureAttr[2] += count
+	return nil
+}
+
+func adventureAdjusted(base byte, delta, low, high int) byte {
+	return byte(min(max(int(base)+delta, low), high))
+}
+
+func (engine *Engine) adventureBombPower(actor *Actor) byte {
+	if !engine.rules.NativeAdventure {
+		return actor.BombPower
+	}
+	return adventureAdjusted(actor.BombPower, actor.adventureAttr[1], 1, 255)
+}

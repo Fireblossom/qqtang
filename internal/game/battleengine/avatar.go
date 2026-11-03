@@ -19,6 +19,15 @@ type ActorCapabilities struct {
 }
 
 func (engine *Engine) actorCapabilities(actor *Actor, direction Direction) ActorCapabilities {
+	capabilities := engine.baseActorCapabilities(actor, direction)
+	if actor != nil && engine.rules.NativeAdventure {
+		capabilities.EffectiveSpeedRate = adventureAdjusted(capabilities.EffectiveSpeedRate, actor.adventureAttr[0], 0, MaxNativeSpeedRate)
+		capabilities.EffectiveBombCapacity = adventureAdjusted(capabilities.EffectiveBombCapacity, actor.adventureAttr[2], 0, 255)
+	}
+	return capabilities
+}
+
+func (engine *Engine) baseActorCapabilities(actor *Actor, direction Direction) ActorCapabilities {
 	capabilities := ActorCapabilities{CanCollectItems: true}
 	if actor == nil {
 		return capabilities
@@ -121,6 +130,9 @@ func (engine *Engine) NativeEffectiveSpeedRate(playerID uint16, direction Direct
 
 func (engine *Engine) effectiveSpeedPixelsPerSecond(actor *Actor, direction Direction) uint16 {
 	rate := engine.effectiveSpeedRate(actor, direction)
+	if rate == 0 && actor != nil && engine.rules.NativeAdventure && actor.adventureAttr[0] != 0 {
+		return 0 // a SpeedDel down to rate 0 stands still (table entry 0)
+	}
 	if rate != 0 && rate <= MaxNativeSpeedRate {
 		return engine.rules.SpeedPixelsPerSecondByRate[rate]
 	}

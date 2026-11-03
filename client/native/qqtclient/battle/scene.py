@@ -714,6 +714,7 @@ class BattleScene:
         self._draw_streak(field)
         self._draw_box_effects(field)
         self._draw_field_lock(field)
+        self._draw_adventure_casts(field)
         charge = (self.state.get("machine") or {}).get("charge")
         actor = self._local_actor() if charge is not None else None
         if actor is not None and actor["state"] != ACTOR_ELIMINATED:
@@ -851,6 +852,17 @@ class BattleScene:
         for row in range(f["Row"], f["Row"] + f["H"]):
             for col in range(f["Col"], f["Col"] + f["W"]):
                 self._draw_frames(field, "object/flame/flame255_stand.img", frame, ox + col * CELL, oy + row * CELL)
+
+    def _draw_adventure_casts(self, field: pygame.Surface) -> None:
+        """NPC skill traps (stage 3) and projectiles (stage 4). The props'
+        .eff animations are not decoded yet, so this is a placeholder mark,
+        not the original look."""
+        ox, oy = FIELD_ORIGIN
+        for cast in (self.state.get("adventure") or {}).get("casts") or ():
+            color = (200, 60, 200, 110) if cast["stage"] == 1 else (255, 140, 40, 170)
+            mark = pygame.Surface((CELL, CELL), pygame.SRCALPHA)
+            pygame.draw.circle(mark, color, (CELL // 2, CELL // 2), CELL // 2 - 4 if cast["stage"] == 1 else CELL // 4)
+            field.blit(mark, (ox + cast["x"] - CELL // 2, oy + cast["y"] - CELL // 2))
 
     def _draw_adventure_npcs(self, field: pygame.Surface, row: int) -> None:
         """Rule 12's NPCs: the model of their ImageID (object/player/
