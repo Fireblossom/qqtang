@@ -527,3 +527,33 @@ func TestKickBossStandsStillBeforeTheFirstAirdrop(t *testing.T) {
 		t.Fatalf("moved %d before the first batch", d)
 	}
 }
+
+func TestGreatNianTransformsAndAHitOnlyRemovesIt(t *testing.T) {
+	owner, peer := bossMatch(t, 1), bossMatch(t, 2)
+	b := owner.boss.actors[30001]
+	b.role, b.info.Skills, b.bornAt = 31, []uint32{1, 3}, 0
+	ai := b.ai.(*bossGeneral)
+	ai.tick(owner, b, owner.engine.ElapsedMS())
+	ai.last[3] = 0
+	ai.genericSkills(owner.bossWorld(31000), b)
+	grants := mirrored(t, owner, game.NotifyPlayerGetItem)
+	if len(grants) != 1 || !b.transformed() || b.speed != 8 || b.capacity != 8 || b.avatarRole() != 42 {
+		t.Fatalf("grants %d, transformed %v speed %d capacity %d", len(grants), b.transformed(), b.speed, b.capacity)
+	}
+	peer.applyRemote(30001, game.BattleMessageData{DataID: game.NotifyPlayerGetItem, Data: grants[0].Body})
+	if !peer.boss.actors[30001].transformed() {
+		t.Fatal("the peer did not transform the Boss")
+	}
+	// A hit on the demon: no HP lost, no drop, the transformation goes.
+	b.ai, b.protectedUntil = nil, 0
+	explodeAt(t, owner, b.pos.Cell())
+	harms := mirrored(t, owner, game.PlayerBeHarmed)
+	if b.hp != 5 || b.transformed() || len(harms) != 1 || len(owner.boss.actors[30001].normal) != 2 {
+		t.Fatalf("hit on the demon: HP %d transformed %v harms %d", b.hp, b.transformed(), len(harms))
+	}
+	harm, _ := game.ParseEntityHarmedEvent(harms[0])
+	peer.applyRemote(30001, game.BattleMessageData{DataID: game.PlayerBeHarmed, Data: harms[0].Body})
+	if !harm.IsAvatar || peer.boss.actors[30001].transformed() || peer.boss.actors[30001].hp != 5 {
+		t.Fatalf("peer after the avatar hit: %+v", peer.boss.actors[30001])
+	}
+}

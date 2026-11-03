@@ -44,6 +44,10 @@ type bossActor struct {
 	normal         []game.BossItemInfo // NormalItems still to drop
 	ai             bossController
 	greeted        bool
+	// The demon transformation of skill 3 (item 110): until when, and the
+	// speed/capacity it replaced.
+	avatarUntil              uint32
+	savedSpeed, savedBubbles byte
 }
 
 // bossGreetings are the lines 0x005AE672 sends when the birth ends, as GBK
@@ -102,6 +106,7 @@ type bossActorView struct {
 	MaxHP          int    `json:"max_hp"`
 	Born           uint32 `json:"born"`
 	ProtectedUntil uint32 `json:"protected_until"`
+	AvatarRole     uint16 `json:"avatar_role,omitempty"`
 }
 
 type bossView struct {
@@ -210,6 +215,53 @@ func (match *onlineMatch) createBosses(data game.CreateNPCBoss, now uint32) {
 	}
 }
 
+const (
+	// 0x0060546B grants an item without a ground check when the 0x0FAC time
+	// carries this mark; the demon avatar is role 42 (object/player/player42).
+	bossGrantTimeMark   = 1_000_000
+	bossAvatarRole      = 42
+	bossAvatarMS        = 30_000
+	bossAvatarSpeed     = 8
+	bossAvatarBubbles   = 8
+	bossAvatarProtectMS = 3000
+)
+
+func (b *bossActor) transformed() bool { return b.avatarUntil != 0 }
+
+func (b *bossActor) avatarRole() uint16 {
+	if b.transformed() {
+		return bossAvatarRole
+	}
+	return 0
+}
+
+// bossTransform installs the demon (0x00611BEB): 30 s, speed level 8, up to
+// 8 bubbles, power kept, 3 s of immunity.
+func (match *onlineMatch) bossTransform(b *bossActor, now uint32) {
+	if !b.transformed() {
+		b.savedSpeed, b.savedBubbles = b.speed, b.capacity
+	}
+	b.avatarUntil = now + bossAvatarMS
+	b.speed, b.capacity = bossAvatarSpeed, bossAvatarBubbles
+	b.protectedUntil = max(b.protectedUntil, now+bossAvatarProtectMS)
+	match.logf("Boss %d transforms until %d", b.id, b.avatarUntil)
+}
+
+// bossUntransform takes the demon off: on expiry (3 s immunity, 0x005F78BF)
+// or when a hit removes it (no HP, no drop; only the arbitrator, which
+// controls the Boss, adds 3 s of immunity in 0x005ADF5A).
+func (match *onlineMatch) bossUntransform(b *bossActor, now uint32, protect bool) {
+	if !b.transformed() {
+		return
+	}
+	b.avatarUntil = 0
+	b.speed, b.capacity = b.savedSpeed, b.savedBubbles
+	if protect {
+		b.protectedUntil = max(b.protectedUntil, now+bossAvatarProtectMS)
+	}
+	match.logf("Boss %d loses its transformation at %d", b.id, now)
+}
+
 func (match *onlineMatch) bossTick(now uint32, events []battleengine.Event) {
 	rule := match.boss
 	if rule == nil || len(rule.actors) == 0 {
@@ -234,6 +286,9 @@ func (match *onlineMatch) bossTick(now uint32, events []battleengine.Event) {
 	for _, b := range rule.ordered() {
 		if b.dead {
 			continue
+		}
+		if b.transformed() && now >= b.avatarUntil {
+			match.bossUntransform(b, now, true)
 		}
 		if !match.isArbitrator() {
 			match.interpolateBoxNPC(&b.boxNPCActor, now)
@@ -337,13 +392,17 @@ func (match *onlineMatch) bossExplosionHit(b *bossActor, now uint32) bool {
 	}
 	// LossHP is the sum of the flame objects' +0x24 in the Boss's cell; the
 	// captures show 500 each. Rule-1/2 receivers ignore it.
-	harm := game.EntityHarmedEvent{ObjectID: b.id, Time: now, PosX: uint16(b.pos.X), PosY: uint16(b.pos.Y), LossHP: uint16(min(burning[b.pos.Cell()], 100) * 500)}
+	harm := game.EntityHarmedEvent{ObjectID: b.id, Time: now, PosX: uint16(b.pos.X), PosY: uint16(b.pos.Y), IsAvatar: b.transformed(), LossHP: uint16(min(burning[b.pos.Cell()], 100) * 500)}
 	body, err := harm.MarshalNetworkBinary()
 	if err != nil {
 		return false
 	}
 	match.queueNPC(&match.boss.outbox, b.id, game.PlayerBeHarmed, now, body)
 	match.mirror(game.PlayerBeHarmed, body)
+	if harm.IsAvatar {
+		match.bossUntransform(b, now, true)
+		return false
+	}
 	match.bossHarmed(b, now)
 	if b.hp >= 1 {
 		match.bossHitDrops(b, now)
@@ -589,8 +648,12 @@ func (match *onlineMatch) bossRemote(sender uint16, event game.GameEvent) ([]bat
 		return []battleengine.Event{placed}, true
 	case game.PlayerBeHarmed:
 		harm, err := game.ParseEntityHarmedEvent(event)
-		if err == nil && harm.ObjectID == b.id && !b.dead && b.hp > 0 && !harm.IsAvatar {
-			match.bossHarmed(b, harm.Time)
+		if err == nil && harm.ObjectID == b.id && !b.dead && b.hp > 0 {
+			if harm.IsAvatar {
+				match.bossUntransform(b, harm.Time, false)
+			} else {
+				match.bossHarmed(b, harm.Time)
+			}
 		}
 	case game.NotifyNPCDropItem:
 		drop, err := game.ParseNPCDropItemEvent(event)
@@ -609,6 +672,10 @@ func (match *onlineMatch) bossRemote(sender uint16, event game.GameEvent) ([]bat
 	case game.NotifyPlayerGetItem:
 		q, err := game.ParsePlayerItemEvent(event)
 		if err == nil && q.PlayerID == b.id && !b.dead {
+			if q.ItemID == bossTransformItem && q.ClientTime >= bossGrantTimeMark {
+				match.bossTransform(b, match.engine.ElapsedMS())
+				return nil, true
+			}
 			match.engine.CollectRuleNPCPickup(b.id, q.ItemID, battleengine.Position{X: int32(q.PosX), Y: int32(q.PosY)}.Cell())
 			b.pickup(q.ItemID, q.ClientTime)
 		}
@@ -630,7 +697,7 @@ func (match *onlineMatch) bossView() *bossView {
 			continue
 		}
 		view.Actors = append(view.Actors, bossActorView{ID: b.id, Role: b.role, X: b.pos.X, Y: b.pos.Y, Facing: byte(battleDirection(b.facing)),
-			Moving: b.moving, HP: b.hp, MaxHP: int(b.info.HP), Born: b.bornAt, ProtectedUntil: b.protectedUntil})
+			Moving: b.moving, HP: b.hp, MaxHP: int(b.info.HP), Born: b.bornAt, ProtectedUntil: b.protectedUntil, AvatarRole: b.avatarRole()})
 	}
 	now := match.engine.ElapsedMS()
 	for id, f := range match.boss.bombFlights {

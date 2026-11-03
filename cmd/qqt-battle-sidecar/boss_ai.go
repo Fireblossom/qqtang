@@ -640,7 +640,7 @@ func (ai *bossGeneral) genericSkills(w *bossWorld, b *bossActor) {
 			// duration is not known yet (docs/boss-ai-re.md §11.7).
 			return
 		case 3:
-			if now-ai.last[3] < bossSkillLongMS {
+			if now-ai.last[3] < bossSkillLongMS || b.transformed() {
 				return
 			}
 			body.ObjectID = b.id
@@ -753,7 +753,17 @@ func (match *onlineMatch) applyBossSkill(b *bossActor, skill game.NPCUseSkillEve
 		}
 		match.logf("Boss %d skill %d throws %d objects", b.id, skill.SkillID, len(skill.Items))
 	case 3:
-		match.logf("Boss %d skill 3 (transformation item %d) is not played yet", b.id, bossTransformItem)
+		// 0x5FDC57: only the arbitrator answers, by granting item 110 to the
+		// Boss (0x0FAC with the +1000000 mark, answered as 0x0FAD at once).
+		if match.isArbitrator() {
+			now := match.engine.ElapsedMS()
+			grant := game.PlayerItemEvent{PlayerID: b.id, ClientTime: now + bossGrantTimeMark, ItemID: bossTransformItem, PosX: uint16(b.pos.X), PosY: uint16(b.pos.Y)}
+			if body, err := grant.MarshalNetworkBinary(); err == nil {
+				match.queueNPC(&match.boss.outbox, b.id, game.NotifyPlayerGetItem, now, body)
+				match.mirror(game.NotifyPlayerGetItem, body)
+			}
+			match.bossTransform(b, now)
+		}
 	case 5:
 		match.boss.bubbleLock++
 		match.logf("Boss %d locks the bubbles", b.id)

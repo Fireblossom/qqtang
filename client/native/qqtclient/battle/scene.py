@@ -720,7 +720,7 @@ class BattleScene:
         for boss in (self.state.get("boss") or {}).get("actors") or ():
             if min(max(boss["y"] // CELL, 0), self.map.height - 1) != row:
                 continue
-            record = {"id": boss["id"], "role": boss["role"], "avatar_role": 0, "team": 7, "x": boss["x"], "y": boss["y"],
+            record = {"id": boss["id"], "role": boss["role"], "avatar_role": boss.get("avatar_role", 0), "team": 7, "x": boss["x"], "y": boss["y"],
                       "facing": boss["facing"], "state": 0, "protected_until": boss["protected_until"], "durability": boss["hp"]}
             born_for = self.clock - boss["born"]
             cloth = self.avatars.parts(boss["role"], "stand").get("cloth")
