@@ -8,6 +8,13 @@ from qqtclient.net import shop, chat
 
 
 class PresentTest(unittest.TestCase):
+    def test_restore_layout_and_catalog_quote(self):
+        self.assertEqual(shop.build_restore(1000001, 19, 848, 123), bytes.fromhex("000f4241 0000007b 00000013 00000350"))
+        payload = struct.pack(">HIH", 1, 19, 0) + "该道具无需修理".encode("gbk").ljust(128, b"\0")
+        self.assertEqual(shop.parse_restore(payload), (1, 19, 0, "该道具无需修理"))
+        config = b"[public]\nVERSION=848\n[COMMODITY.1]\nCOMMODITYID=19\nITEM.1.ID=19\nRESTORPRICE=17\n"
+        self.assertEqual(host.Catalog(config).commodities[19].repair_price, 17)
+
     def test_gift_note_is_visible_while_recipient_is_in_shop(self):
         messages = []
         runtime = types.SimpleNamespace(current_screen="shop", namespace={},

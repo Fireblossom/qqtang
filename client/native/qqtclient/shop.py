@@ -56,6 +56,7 @@ class Commodity:
     item_id: int
     item_count: int
     period: int  # days; 0 permanent
+    repair_price: int = 0
 
 
 class Catalog:
@@ -80,7 +81,7 @@ class Catalog:
                 number("COMMODITYID"), row.get("COMMODITYNAME", ""), kind >> 8, kind & 0xFF,
                 number("QPRICE", -1), number("QQPOINTPRICE", -1), number("QQTANGPRICE", -1),
                 number("MEMBERREBATE", 100), number("REBATE", 100), number("ATTRIBUTE"),
-                number("ITEM.1.ID"), number("ITEM.1.NUM", 1), number("ITEM.1.AVAILPERIOD"),
+                number("ITEM.1.ID"), number("ITEM.1.NUM", 1), number("ITEM.1.AVAILPERIOD"), number("RESTORPRICE"),
             )
             self.commodities[commodity.id] = commodity
             self.categories.setdefault((commodity.major, commodity.minor), []).append(commodity.id)
@@ -401,11 +402,29 @@ def build_shop_natives(runtime: UIRuntime, session: Session, resources: Resource
 
     # Not supported by this server ---------------------------------------------
 
-    def GetRepairPrice(_item_id):
-        return 0
+    def GetRepairPrice(item_id):
+        return next((c.repair_price for c in get_catalog().commodities.values() if c.item_id == int(item_id)), 0)
 
-    def RepairCommodity(*_args):
-        notify("暂不支持修理")
+    def RepairCommodity(item_id, _deal=2, _pay=3):
+        address = shop_address()
+        if address is None or session.profile is None:
+            notify("无法连接商城服务器")
+            return
+        version = session.hall.version if session.hall else 0
+        payload = shop.build_restore(session.uin, int(item_id), version)
+
+        def work():
+            try:
+                reply = shop.request(address, session.uin, section_id(), shop.RESTORE_COMMAND, payload)
+                result, item, period, reason = shop.parse_restore(reply.payload)
+            except (OSError, ValueError, ConnectionError) as error:
+                log(f"[shop] restore failed: {error}")
+                runtime.post(lambda: notify("无法完成修理，请检查连接"))
+                return
+            log(f"[shop] restore {item}: {result}, period {period}: {reason}")
+            runtime.post(lambda: notify(reason or "该道具无需修理"))
+
+        threading.Thread(target=work, name="shop-restore", daemon=True).start()
 
     def IsBook(_item_id):
         return 0

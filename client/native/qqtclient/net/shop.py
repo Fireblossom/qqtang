@@ -21,6 +21,7 @@ from .player import ItemInfo
 SHOP_LIST_COMMAND = 0x035E
 BUY_COMMAND = 0x0259
 PRESENT_COMMAND = 0x025A
+RESTORE_COMMAND = 0x0263
 MONEY_NOTIFY_COMMAND = 0x0094
 ITEM_STATUS_COMMAND = 0x0085
 ITEM_ADD_NOTIFY_COMMAND = 0x00D9
@@ -86,6 +87,17 @@ def parse_present(payload: bytes) -> tuple[int, str, int]:
     result = struct.unpack_from(">H", payload)[0]
     text = payload[2:130].split(b"\0", 1)[0].decode("gbk", "replace")
     return result, text, struct.unpack_from(">I", payload, 134)[0]
+
+
+def build_restore(uin: int, item: int, version: int, now: int | None = None) -> bytes:
+    return _stamp(uin, now) + struct.pack(">II", item, version)
+
+
+def parse_restore(payload: bytes) -> tuple[int, int, int, str]:
+    if len(payload) != 136:
+        raise ValueError("invalid restore response length")
+    result, item, period = struct.unpack_from(">HIH", payload)
+    return result, item, period, payload[8:136].split(b"\0", 1)[0].decode("gbk", "replace")
 
 
 def parse_buy(payload: bytes) -> BuyResult:

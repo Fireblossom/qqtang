@@ -131,6 +131,8 @@ CGO_ENABLED=1 go build -tags onnxruntime -o qqt-server ./cmd/qqt-server
 
 测试不需要原版客户端、服务端或显示器。
 
+Go 的游戏、协议和服务端测试可在 macOS 运行；包含本地 TCP/UDP 的测试需要允许绑定本机端口。Windows 启动器包依赖 Windows 进程接口，整个仓库的 `go test ./...` 在 macOS 上会在这些包处失败，不能当成原生客户端规则回归失败。Windows 包需在 Windows 执行测试；交叉编译只能验证编译。
+
 ### 道具场特殊地图元素
 
 实测（双 autoplay，道具场，`/private/tmp/qqt-integrated-final/run-special.sh`，`GT=1`）：820 两端传送记录一致；117 非仲裁方站进爆炸石 3×3 被炸死，0x1176/10 → 仲裁方 0xFA7 被服务端接受、两端同判 1 队胜；115、113、413 整局零 warn。光环（414 被箱子围住）在实局里还没触发过，只有单元测试。服务端 AI 局的服务端镜像没有打开这个开关（坚石多层、连锁不会同步到服务端 AI 的视角）。

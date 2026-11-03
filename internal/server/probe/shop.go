@@ -45,6 +45,9 @@ func (server *Server) handleShopCatalogMessage(session *connectionSession, conne
 // on the same QQTDir-advertised shop endpoint. Configuration messages remain
 // owned by the login/config dispatcher.
 func (server *Server) handleShopType2SessionMessage(session *connectionSession, connectionID string, data []byte) ([]byte, string, bool) {
+	if request, err := game.DecodeLocalShopRestoreRequest(data); err == nil {
+		return server.handleShopRestore(session, connectionID, data, request)
+	}
 	if request, err := game.DecodeLocalShopPresentRequest(data); err == nil {
 		return server.handleShopPresent(session, connectionID, data, request)
 	}

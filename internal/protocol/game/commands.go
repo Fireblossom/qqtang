@@ -146,6 +146,7 @@ const (
 	CombineForgeCommand               = 0x00CF
 	ShopBuyCommand                    = 0x0259
 	ShopPresentCommand                = 0x025A
+	ShopRestoreCommand                = 0x0263
 	GetConfigFileCommand              = 0x0266
 	ShopListCommand                   = 0x035E
 	ForgeCommand                      = 0x0353
@@ -279,6 +280,7 @@ var commandDefinitions = [...]CommandDefinition{
 	{CombineForgeCommand, "combine_forge", CommandFamilyCraft, CommandBidirectional},
 	{ShopBuyCommand, "shop_buy", CommandFamilyShop, CommandBidirectional},
 	{ShopPresentCommand, "shop_present", CommandFamilyShop, CommandBidirectional},
+	{ShopRestoreCommand, "shop_restore", CommandFamilyShop, CommandBidirectional},
 	{GetConfigFileCommand, "get_config_file", CommandFamilyConfig, CommandBidirectional},
 	{ShopListCommand, "shop_list", CommandFamilyShop, CommandBidirectional},
 	{ForgeCommand, "forge", CommandFamilyCraft, CommandBidirectional},

@@ -40,7 +40,7 @@
 
 本轮测试服为持久目录 `/Users/cduan/qqtang-test/qqt-server-present`，配置和测试账号库沿用原路径。
 
-## 修理（协议已查清，结算未启用）
+## 修理（请求/提示已接通，限时结算未启用）
 
 GetRepairPrice：Client.exe `0x0056B300` → 商城查询操作 1，以物品 ID 查目录 RESTORPRICE；QQTShop2ND `0x100022AA` 遍历商品表并返回结构 `+0xFC`。
 
@@ -49,3 +49,8 @@ RepairCommodity：Client.exe `0x0056B370` → QQTShop2ND 操作 3（`0x1000B1F4`
 传输命令 **0x0263**，请求 schema **0x0430**，固定 16 字节：u32 UIN、时间、物品 ID、客户端版本。回复 schema **0x0818**，固定 136 字节：u16 ResultID、u32 ItemID、u16 AvailPeriod、128 字节 GBK ResultString。
 
 本机发行目录 Commodity.ini 共 2978 个商品，RESTORPRICE 全为 0；本地目录也只发行永久商品。限时物品修理后如何恢复时长/耐久，尚无已确认规则。不能按购买另发一件物品代替修理，也不能对永久物品收取无意义费用。
+
+
+原生客户端现读取 RESTORPRICE 报价并发原版请求。服务端对当前永久物品返回“该道具无需修理”；缺失物品有明确提示，非永久物品提示限时修理未启用。所有这些路径均不扣钱、不重购、不改期限。1000007 的 19 号帽子实测：报价 0，收到 0x0263 回复，通知框正确显示“关闭”，前后账号余额与完整背包完全一致，服务端零 warn/error。产物在 `/private/tmp/qqt-mall-re/restore-live`，当前持久测试服为 `qqt-server-restore`。
+
+验证补充：Python 全套 154 项通过。Go 的游戏、协议、服务端及数据库包均通过；`go test ./...` 在 macOS 上仍因既有 Windows 启动器包未提供 Darwin 实现而整体失败。五个对应包已用 GOOS=windows、GOARCH=amd64 交叉编译测试二进制通过（以 /usr/bin/true 代替执行），没有在 Windows 上运行这些测试。
