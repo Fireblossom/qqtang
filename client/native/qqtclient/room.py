@@ -10,6 +10,7 @@ scripts are 0..7; the protocol numbers seats 1..8.
 from __future__ import annotations
 
 import dataclasses
+import struct
 import types
 from typing import Any, Callable
 
@@ -17,10 +18,10 @@ import pygame
 
 from .avatar import AvatarCache
 from .lobby import native_game_info
-from .net import room
+from .net import pet, room
 from .net.player import GameInfo
 from .runtime import UIRuntime
-from .roomwalk import RoomWalk
+from .roomwalk import RoomPet, RoomWalk
 from .script import call_script, log
 from .session import Session
 
@@ -51,6 +52,7 @@ class SeatAvatar:
     direction: int = 3
     walking: bool = False
     queue: list = dataclasses.field(default_factory=list)
+    pet: Any = None  # roomwalk.RoomPet, rebuilt with the avatar
 
 
 class RoomState:
@@ -355,7 +357,7 @@ def build_room_natives(runtime: UIRuntime, session: Session, avatars: AvatarCach
         room.USE_BACKGROUND_COMMAND: ignore,
     }
     # Plain acknowledgements; the state change arrives as a notification.
-    for command in (room.PLAYER_PETS_COMMAND, room.READY_COMMAND, room.CANCEL_READY_COMMAND, room.CHANGE_ROLE_COMMAND,
+    for command in (room.READY_COMMAND, room.CANCEL_READY_COMMAND, room.CHANGE_ROLE_COMMAND,
                     room.CHANGE_TEAM_COMMAND, room.MODIFY_ROOM_INFO_COMMAND, room.MODIFY_ROOM_COMMAND,
                     room.SET_SEAT_STATUS_COMMAND, room.ROOM_CHAT_COMMAND):
         handlers[command] = ignore
@@ -524,12 +526,30 @@ def build_room_natives(runtime: UIRuntime, session: Session, avatars: AvatarCach
             avatar.queue.clear()
         avatar.team, avatar.role = team, role
         avatar.wear.clear()
+        avatar.pet = None  # DeletePet (0x452F70)
         member = state.members.get(index + 1)
         if role == -1 or member is None:
             return
         for item in member.items:
             if item.role_id == role:
                 script("useCommItem", index + 1, item.item_id, item.effect, item.color)
+        avatar.pet = seat_pet(index, member, avatar)
+
+    def seat_pet(index: int, member: room.RoomPlayer, avatar: SeatAvatar) -> RoomPet | None:
+        """AddPets (0x452DF0) from the seat's PET_BASE_INFO: the local seat
+        uses the cache's carried pet, the others their room record."""
+        if state.snapshot is not None and index == state.snapshot.local_seat - 1 and session.pets is not None:
+            entry = session.pets.active()
+        else:
+            try:
+                entry = pet.parse_pet(member.pet)[0]
+            except (ValueError, IndexError, struct.error):
+                entry = None
+        resolve = runtime.namespace.get("GetPetResId")
+        if entry is None or entry.pet_id == 0 or not callable(resolve):
+            return None
+        res_id = resolve(entry.type_id, entry.level)
+        return RoomPet(res_id, avatar) if res_id else None
 
     def room_setPlayerPos(index, x, y):
         """0x00458A50 only sets the seat's start point; a standing avatar
@@ -564,7 +584,7 @@ def build_room_natives(runtime: UIRuntime, session: Session, avatars: AvatarCach
         walk.draw(screen, AVATAR_ANCHOR)
 
     excluded = {"script", "notify", "in_room_screen", "me", "am_owner", "role_id", "refresh_seat", "refresh_all_seats",
-                "add_chat", "enter", "leave_to_lobby", "member_update", "ignore", "draw_players", "walk", "room_view"}
+                "add_chat", "enter", "leave_to_lobby", "member_update", "ignore", "draw_players", "walk", "room_view", "seat_pet"}
     natives = {name: value for name, value in locals().items()
                if callable(value) and name not in excluded and not name.startswith("on_")}
     return natives, draw_players

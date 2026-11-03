@@ -206,7 +206,7 @@ LEAVE_ROOM_NOTIFY_COMMAND = 0x008E
 ROOM_CHAT_NOTIFY_COMMAND = 0x0093
 MODIFY_ROOM_COMMAND = 0x0098
 MODIFY_ROOM_NOTIFY_COMMAND = 0x0099
-PLAYER_PETS_COMMAND = 0x00D4  # sent before create/enter results; not used by the host
+PLAYER_PETS_COMMAND = 0x00D4  # sent before create/enter results; pet.py keeps the cache
 
 # SET_SEAT_STATUS uses its own numbering (1 open, 2 locked).
 SET_SEAT_OPEN, SET_SEAT_LOCKED = 1, 2

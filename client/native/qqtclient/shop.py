@@ -22,7 +22,7 @@ from typing import Any, Callable
 import pygame
 
 from .avatar import AvatarCache
-from .net import shop
+from .net import pet, shop
 from .resources import Resources
 from .runtime import UIRuntime
 from .script import call_script, log
@@ -104,6 +104,13 @@ class Preview:
     started: int = 0
 
 
+def item_view(item: Any) -> types.SimpleNamespace:
+    """The ITEM_INFO object scripts read."""
+    return types.SimpleNamespace(
+        m_nItemID=item.item_id, m_iNumOfItem=item.quantity, m_bItemStatus=item.status, m_bItemRoleID=item.role_id,
+        m_bItemEffect=item.effect, m_bItemColor=item.color, m_dwBuyTime=item.buy_time, m_dwAvailPeriod=item.available_period)
+
+
 def build_shop_natives(runtime: UIRuntime, session: Session, resources: Resources,
                        avatars: AvatarCache) -> tuple[dict[str, Callable[..., Any]], Callable[[pygame.Surface], None]]:
     """Return the natives and the SC_shopDemo_draw preview callback."""
@@ -149,11 +156,6 @@ def build_shop_natives(runtime: UIRuntime, session: Session, resources: Resource
 
     def recycled_items() -> list:
         return [item for item in inventory() if item.quantity > 0 and item.status == shop.STATUS_RECYCLED]
-
-    def item_view(item: Any) -> types.SimpleNamespace:
-        return types.SimpleNamespace(
-            m_nItemID=item.item_id, m_iNumOfItem=item.quantity, m_bItemStatus=item.status, m_bItemRoleID=item.role_id,
-            m_bItemEffect=item.effect, m_bItemColor=item.color, m_dwBuyTime=item.buy_time, m_dwAvailPeriod=item.available_period)
 
     def find_item(item_id: int) -> Any:
         return next((item for item in inventory() if item.item_id == int(item_id)), None)
@@ -377,9 +379,6 @@ def build_shop_natives(runtime: UIRuntime, session: Session, resources: Resource
     def GetAffectionItem(_role, _item_id):
         return 0
 
-    def GetPlayerAllPetsId():
-        return []
-
     # Not supported by this server ---------------------------------------------
 
     def GetRepairPrice(_item_id):
@@ -489,6 +488,9 @@ def build_shop_natives(runtime: UIRuntime, session: Session, resources: Resource
             script("ui_updateMyItems")
             if runtime.namespace["Win_IsVisible"]("UI.shop.recycler"):
                 script("ui_updateRecycler")
+        # QQTSection 0x1002A543: any pet item in the update refreshes the pet panel's items.
+        if any(item.item_id in pet.PET_ITEMS for item in update.items):
+            script("UpdatePetItemUi")
 
     def on_item_status(packet) -> None:
         result = shop.parse_result(packet.payload)

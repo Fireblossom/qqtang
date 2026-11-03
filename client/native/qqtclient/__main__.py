@@ -100,6 +100,7 @@ def main() -> int:
     from .props import build_props_natives
     from .friend import build_friend_natives
     from .kin import build_kin_natives
+    from .pet import build_pet_natives
     from .shop import build_shop_natives
     from .lobby import build_lobby_natives
     from .room import build_room_natives
@@ -147,6 +148,7 @@ def main() -> int:
     namespace.update(room_natives)
     shop_natives, draw_shop_preview = build_shop_natives(runtime, session, resources, AvatarCache(resources))
     namespace.update(shop_natives)
+    namespace.update(build_pet_natives(runtime, session, resources))  # replaces the shop's pet list and the room's ignored 0x00D4
     renderer.draw_callbacks["SC_shopDemo_draw"] = draw_shop_preview
     renderer.draw_callbacks["SC_room_drawPlayer"] = draw_room_players
     pending = scheduled_events(args)

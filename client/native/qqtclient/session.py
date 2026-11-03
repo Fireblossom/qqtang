@@ -40,6 +40,8 @@ class Session:
         self.shielded: set[int] = set()
         # The current room for slash commands (room.py sets it).
         self.room_view: Callable[[], Any] = lambda: None
+        # The pet cache (pet.py sets it); the room shows the carried pet.
+        self.pets: Any = None
         self.uin = 0
         self.nickname = ""
         self.gender = 0

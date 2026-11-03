@@ -10,6 +10,7 @@ scripts' remotePlayerMove / remotePlayerPutBomb as the original does.
 
 from __future__ import annotations
 
+import random
 import socket
 import time
 from typing import Any, Callable
@@ -36,6 +37,86 @@ FLAME_FRAME_MS = 50
 CHAT_ROOM_TYPE = 4
 PRESENCE_RETRY_MS = 1000
 NAME_COLOR_SELF, NAME_COLOR_OTHER = (0, 255, 0), (255, 255, 0)
+
+
+# Pets (docs/pet-re.md §8.1, CPet::Update 0x451120; read from the pseudo C):
+# speed by squared distance to the owner, a jump back past 300 px, idle
+# wandering every 1000..5000 ms. Image anchor (0x32, 0x54) (0x44C120).
+PET_ANCHOR = (0x32, 0x54)
+PET_FAR = 90000
+PET_SPEEDS = ((3600, 100), (10000, 260), (22500, 300))  # (d below, px/s); else 340
+PET_FAST = 340
+PET_FRAME_MS = 100
+
+
+class RoomPet:
+    """A seat's pet in the room scene (CPet, created by AddPets 0x452DF0)."""
+
+    def __init__(self, res_id: int, owner: Any, rng: random.Random | None = None) -> None:
+        self.res_id = res_id
+        self.rng = rng or random.Random()
+        self.direction, self.walking = 3, False
+        self.wandering = False
+        self.target: tuple[float, float] | None = None
+        self.idle_ms = 0
+        self.x, self.y = float(owner.x), float(owner.y)
+        self.jump_beside(owner)
+
+    def jump_beside(self, owner: Any) -> None:
+        """0x451520: beside the owner, on the side its facing picks."""
+        side = -1 if owner.direction == 0 else 1
+        self.x = owner.x + side * (20 + self.rng.randrange(50))
+        self.y = owner.y + self.rng.randrange(-20, 21)
+        self.clamp()
+        self.target, self.wandering, self.walking = None, False, False
+
+    def clamp(self) -> None:
+        self.x = min(max(self.x, BOUNDS[0]), BOUNDS[2])
+        self.y = min(max(self.y, BOUNDS[1]), BOUNDS[3])
+
+    def update(self, owner: Any, dt: int) -> None:
+        d = (owner.x - self.x) ** 2 + (owner.y - self.y) ** 2
+        if d > PET_FAR:
+            self.jump_beside(owner)
+            return
+        speed = next((value for limit, value in PET_SPEEDS if d < limit), PET_FAST)
+        self.idle_ms -= dt
+        if owner.walking:
+            if d > 3600:
+                self.target, self.wandering = (owner.x, owner.y), False
+        elif not self.wandering:
+            if d < 1600:
+                self.target, self.walking = None, False
+            if d < 401 or self.idle_ms <= 0:
+                # Wander to a random point near the owner (0x451AE0).
+                self.target = (owner.x + self.rng.randrange(-60, 61), owner.y + self.rng.randrange(-40, 41))
+                self.wandering = True
+                self.idle_ms = 1000 + self.rng.randrange(4001)
+        if self.target is None:
+            self.walking = False
+            return
+        tx, ty = self.target
+        dx, dy = tx - self.x, ty - self.y
+        distance = (dx * dx + dy * dy) ** 0.5
+        step = speed * dt / 1000.0
+        if distance <= step or distance < 1:
+            self.x, self.y = tx, ty
+            self.target, self.wandering, self.walking = None, False, False
+        else:
+            self.x += dx * step / distance
+            self.y += dy * step / distance
+            self.walking = True
+            self.direction = (0 if dx > 0 else 2) if abs(dx) >= abs(dy) else (3 if dy > 0 else 1)
+        self.clamp()
+
+    def draw(self, screen: pygame.Surface, sprites: Any, clock: int) -> None:
+        frames = sprites.get(f"object/pet/pet{self.res_id}_{'walk' if self.walking else 'stand'}.img") if sprites else None
+        if not frames:
+            return
+        per_direction = max(1, len(frames) // 4)
+        image, ox, oy = frames[min(self.direction, 3) * per_direction % len(frames) + (clock // PET_FRAME_MS) % per_direction]
+        if image is not None:
+            screen.blit(image, (int(self.x) - PET_ANCHOR[0] + ox, int(self.y) - PET_ANCHOR[1] + oy))
 
 
 def cell_of(x: int, y: int) -> tuple[int, int]:
@@ -194,6 +275,8 @@ class RoomWalk:
             avatar = self.avatar(index)
             if avatar is not None:
                 self.step(avatar, dt)
+                if getattr(avatar, "pet", None) is not None:
+                    avatar.pet.update(avatar, dt)
         if mine is not None:
             # 0x00457CF0: a moved avatar is sent at most every 300 ms, or at
             # once on a turn.
@@ -306,7 +389,7 @@ class RoomWalk:
     # Drawing ----------------------------------------------------------------
 
     def draw(self, screen: pygame.Surface, avatar_anchor: tuple[int, int]) -> None:
-        """0x004575D0: bubbles, flames, then the avatars by seat."""
+        """0x004575D0: bubbles, flames, then the avatars (each with its pet) by seat."""
         for (row, col), (_placed, style) in self.bombs.items():
             frames = self.sprites.get(f"object/bomb/bomb{style}_stand.img") if self.sprites else None
             if frames:
@@ -333,6 +416,8 @@ class RoomWalk:
                 image = self.avatars.get(avatar.role, avatar.team, "stand", avatar.direction, wear=wear)
             if image is not None:
                 screen.blit(image, (avatar.x - avatar_anchor[0], avatar.y - avatar_anchor[1]))
+            if getattr(avatar, "pet", None) is not None:
+                avatar.pet.draw(screen, self.sprites, self.clock)
             if names and self.font is not None:
                 self.draw_name(screen, seat, avatar)
 
