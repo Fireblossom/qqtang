@@ -57,6 +57,10 @@ class UIRuntime:
         # A battle in progress: gets keyboard events and frame ticks from the
         # main loop (battle.practice.PracticeSession, battle.online.OnlineBattle).
         self.activity: Any = None
+        # Host parts that run outside any widget (room avatar walking):
+        # called with every input event and with each frame's elapsed ms.
+        self.event_hooks: list[Callable[[Any], None]] = []
+        self.tick_hooks: list[Callable[[int], None]] = []
 
     # Tree management -----------------------------------------------------
 

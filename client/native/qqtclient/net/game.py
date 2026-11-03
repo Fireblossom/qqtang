@@ -140,6 +140,13 @@ class GameConnection:
                             self.inner_sequence, route, MARKER, self.section_id, payload)
             self.sock.sendall(encode(packet))
 
+    def send_raw(self, build: Callable[[int], bytes]) -> None:
+        """A packet with its own envelope (the 0x0065 room-fast packet):
+        build gets the route sequence."""
+        with self.lock:
+            self.outer_sequence += 1
+            self.sock.sendall(build(self.outer_sequence & 0xFFFF))
+
     def close(self) -> None:
         self.closed = True
         try:

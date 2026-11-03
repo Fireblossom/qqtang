@@ -142,7 +142,8 @@ def main() -> int:
             runtime.activity = None
         runtime.activity = OnlineBattle(runtime, renderer, resources, session, begin, context, start_battle)
 
-    room_natives, draw_room_players = build_room_natives(runtime, session, AvatarCache(resources), start_battle)
+    room_natives, draw_room_players = build_room_natives(runtime, session, AvatarCache(resources), start_battle,
+                                                         sprites=renderer.sprites, font=renderer.font)
     namespace.update(room_natives)
     shop_natives, draw_shop_preview = build_shop_natives(runtime, session, resources, AvatarCache(resources))
     namespace.update(shop_natives)
@@ -176,8 +177,12 @@ def main() -> int:
             for event in pygame.event.get():
                 if runtime.activity is not None:
                     runtime.activity.handle(event)
+                for hook in runtime.event_hooks:
+                    hook(event)
                 runtime.handle(event)
             runtime.tick(elapsed)
+            for hook in runtime.tick_hooks:
+                hook(elapsed)
             if runtime.activity is not None:
                 runtime.activity.tick(elapsed)
                 if getattr(runtime.activity, "finished", False):

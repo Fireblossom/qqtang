@@ -35,7 +35,7 @@
 - [x] 装备道具栏和道具仓库
 - [x] 改房间属性（`sc_modifyRoom`）：双客户端实测改名、加密码后大厅卡片更新并显示锁，不带密码进房被拒、带对密码可进
 - [x] 聊天室背景：背景列表 0x00FF、换背景 0x0100、通知 0x0101 后按原版（`0x0052D3D0`）执行 `setChatBackground(id)`；双客户端实测换背景两端同步
-- [ ] 聊天室里人物走动/放泡（`RemotePlayerMove`、`RemotePlayerPutBomb`、`ChangePosition`），消息和移动规则没逆向
+- [x] 房间里人物走动/放泡（`docs/chatroom-move-re.md`，`qqtclient/roomwalk.py`；原版所有房间都能走，聊天房间默认显示名牌）：方向键 0.26 px/ms、可走范围、空格放装饰泡（3 秒、连锁、十字火 400 ms）、F8 名牌；经 TCP 0x0065 发出、服务端转 Type-2，进房先 UDP Type-1 登记，收到后照原版调用脚本 `remotePlayerMove/remotePlayerPutBomb`，远端按"先横后纵"走到每个点。双客户端实测对方走动、放泡和爆炸都同步。原版之间明文 Type-2 能否被 QQTPPP 接受未验证
 - [ ] 婚礼房间（服务端支持）
 
 ## 对战：普通规则

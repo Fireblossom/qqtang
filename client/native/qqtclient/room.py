@@ -20,6 +20,7 @@ from .lobby import native_game_info
 from .net import room
 from .net.player import GameInfo
 from .runtime import UIRuntime
+from .roomwalk import RoomWalk
 from .script import call_script, log
 from .session import Session
 
@@ -43,6 +44,13 @@ class SeatAvatar:
     x: int = 0
     y: int = 0
     wear: dict[str, int] = dataclasses.field(default_factory=dict)  # part -> id, from room_playerWear
+    # The room scene's walking (roomwalk.py): the seat's start point from
+    # room_setPlayerPos, facing (0 right .. 3 down), and remote way points.
+    home_x: int = 0
+    home_y: int = 0
+    direction: int = 3
+    walking: bool = False
+    queue: list = dataclasses.field(default_factory=list)
 
 
 class RoomState:
@@ -84,12 +92,14 @@ def native_room_player(member: room.RoomPlayer | None) -> types.SimpleNamespace:
 
 
 def build_room_natives(runtime: UIRuntime, session: Session, avatars: AvatarCache,
-                       start_battle: Callable[[bytes, Any], None] | None = None) -> tuple[dict[str, Callable[..., Any]], Callable]:
+                       start_battle: Callable[[bytes, Any], None] | None = None, sprites: Any = None,
+                       font: Callable[[int], pygame.font.Font] | None = None) -> tuple[dict[str, Callable[..., Any]], Callable]:
     """Return the natives and the SC_room_drawPlayer draw callback.
 
     start_battle(GameBegin payload, battle.online.MatchContext) switches to
     the match when the server starts it."""
     state = RoomState()
+    walk = RoomWalk(runtime, session, state, avatars, sprites, font)
 
     def room_view() -> types.SimpleNamespace | None:
         """The room the slash commands need (/IN, /GO, /AR), or None."""
@@ -507,6 +517,11 @@ def build_room_natives(runtime: UIRuntime, session: Session, avatars: AvatarCach
         avatar = state.avatars[index]
         if (avatar.team, avatar.role) == (team, role):
             return
+        if avatar.role <= 0 or avatar.team < 0:
+            # A new avatar starts on the seat point facing down; a rebuilt
+            # one keeps its place (0x00458240).
+            avatar.x, avatar.y, avatar.direction, avatar.walking = avatar.home_x, avatar.home_y, 3, False
+            avatar.queue.clear()
         avatar.team, avatar.role = team, role
         avatar.wear.clear()
         member = state.members.get(index + 1)
@@ -517,9 +532,25 @@ def build_room_natives(runtime: UIRuntime, session: Session, avatars: AvatarCach
                 script("useCommItem", index + 1, item.item_id, item.effect, item.color)
 
     def room_setPlayerPos(index, x, y):
+        """0x00458A50 only sets the seat's start point; a standing avatar
+        is not moved."""
         if 0 <= int(index) < room.MAX_SEATS:
             avatar = state.avatars[int(index)]
-            avatar.x, avatar.y = int(x), int(y)
+            avatar.home_x, avatar.home_y = int(x), int(y)
+            if avatar.role <= 0 or avatar.team < 0:
+                avatar.x, avatar.y = int(x), int(y)
+
+    def RemotePlayerMove(seat, direction, x, y, _speed):
+        walk.remote_move(int(seat), int(direction), int(x), int(y))
+
+    def RemotePlayerPutBomb(seat, _x, _y):
+        walk.remote_bomb(int(seat))
+
+    def Navigate(_index):
+        log("[room] Navigate: the VIP pages of config/http.ini are gone")
+
+    def ChangePosition(*_args):
+        pass  # not registered in the original either (docs/chatroom-move-re.md §6)
 
     def room_playerWear(index, kind, part, _effect=0, _color=0):
         if 0 <= int(index) < room.MAX_SEATS:
@@ -530,15 +561,10 @@ def build_room_natives(runtime: UIRuntime, session: Session, avatars: AvatarCach
                 wear.pop(str(kind), None)
 
     def draw_players(screen: pygame.Surface) -> None:
-        for avatar in state.avatars:
-            if avatar.role <= 0 or avatar.team < 0:
-                continue
-            image = avatars.get(avatar.role, avatar.team, wear=tuple(sorted(avatar.wear.items())))
-            if image is not None:
-                screen.blit(image, (avatar.x - AVATAR_ANCHOR[0], avatar.y - AVATAR_ANCHOR[1]))
+        walk.draw(screen, AVATAR_ANCHOR)
 
     excluded = {"script", "notify", "in_room_screen", "me", "am_owner", "role_id", "refresh_seat", "refresh_all_seats",
-                "add_chat", "enter", "leave_to_lobby", "member_update", "ignore", "draw_players"}
+                "add_chat", "enter", "leave_to_lobby", "member_update", "ignore", "draw_players", "walk", "room_view"}
     natives = {name: value for name, value in locals().items()
                if callable(value) and name not in excluded and not name.startswith("on_")}
     return natives, draw_players
