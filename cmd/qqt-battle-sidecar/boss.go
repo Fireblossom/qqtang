@@ -337,6 +337,11 @@ func (match *onlineMatch) bossTick(now uint32, events []battleengine.Event) {
 // bossMove walks the Boss along b.path at its native speed (shared by the
 // controllers).
 func (match *onlineMatch) bossMove(b *bossActor, now uint32) {
+	match.bossMoveNPC(&b.boxNPCActor, now)
+}
+
+// bossMoveNPC walks any scripted NPC along its path by the NPC speed table.
+func (match *onlineMatch) bossMoveNPC(b *boxNPCActor, now uint32) {
 	dt := now - b.lastTick
 	b.moving = false
 	b.fraction += uint32(bossPixelsPerSecond(b.speed)) * dt

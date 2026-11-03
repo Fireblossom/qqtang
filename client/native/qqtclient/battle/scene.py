@@ -8,6 +8,7 @@ from the top-left of the map with actors at their centre (40 px cells).
 from __future__ import annotations
 
 import dataclasses
+import types
 from typing import Any, Callable
 
 import pygame
@@ -38,6 +39,8 @@ FLIGHT_STEPS = {0: (1, 0), 1: (0, -1), 2: (-1, 0), 3: (0, 1)}  # wire direction:
 # Avatar canvas (100x100) point that sits on the actor's position.
 AVATAR_ANCHOR = (50, 64)
 BIG_BOMB_ANCHOR = (45, 70)
+# Rule 12's camera view (0x005C87B0).
+VIEW_SIZE = (800, 520)
 # A named Boss plays its cloth's "birth" for 1000 ms (0x005ACBFC).
 BOSS_BIRTH_MS = 1000
 WALK_FRAME_MS = 100
@@ -118,6 +121,7 @@ PLAYER_TITLES = (
 )
 PLAYER_TITLE_RANKS = {24: ("王子", "公主"), 25: ("国王", "女王"), 26: ("皇帝", "女皇")}
 GAME_MODE_NORMAL = 0
+GAME_MODE_PVE = 1
 READY_MS = 3000  # online Ready/Go countdown from GAME_BEGIN
 RESULT_DRAW, RESULT_WIN = 1, 2  # net.match.RESULT_*
 # Result screen (object/misc): a Win/Lose/Draw card, then the result table.
@@ -301,6 +305,7 @@ class BattleScene:
         """wear: worn costume parts by PlayerID, as the room drew them."""
         self.resources, self.sprites, self.avatars, self.sidecar = resources, sprites, avatars, sidecar
         self.local_id = local_id
+        self.players = players
         self.wear = wear or {}
         description = mapfile.load_descriptions(resources)[map_id]
         self.map = mapfile.parse_map(resources.read("map/" + description.file_name))
@@ -316,6 +321,10 @@ class BattleScene:
         begin = state.get("begin") or {}
         self.rule = begin.get("rule") or "ordinary"
         self.round_end_ms = begin.get("round_ms") or ROUND_END_MS
+        # Rule 12 stages scroll (0x005C87B0); others fit the 15x13 field.
+        self.scrolling = self.map.rule == 12 or self.map.width > 15 or self.map.height > 13
+        self.camera = (0, 0)
+        self.world: pygame.Surface | None = None
         # The native scoreboard keeps its leader flags clear until the first
         # score update.
         self.treasure_scored = False
@@ -359,6 +368,8 @@ class BattleScene:
         self.runtime: UIRuntime | None = None
         self.shown_seconds = -1
         self.shown_tank_hp: dict[int, int] = {}
+        self.shown_pve_hp: dict[Any, int] = {}
+        self.shown_pve_bosses: tuple[int, ...] = ()
         self.font: Callable[[int], pygame.font.Font] | None = None
         self.text: Callable[[str, int, tuple[int, int, int]], pygame.Surface] | None = None
         log(f"[battle] map {map_id} {self.map_name} ({self.map.width}x{self.map.height}, rule {self.map.rule})")
@@ -373,11 +384,48 @@ class BattleScene:
         # shows the player again only when playing a replay back.
         self._script("showRecordRecorder", 0)
         self._script("showRecordPlayer", 0)
-        self._script("ui_SetGameMode", GAME_MODE_NORMAL)
+        if self.rule == "adventure":
+            # 0x005A3D45: rule 12 shows the PVE player list, function bar and
+            # timer, then fills them from GetPVEPlayerInfo/GetPVEBossInfo.
+            runtime.namespace["GetPVEPlayerInfo"] = self._pve_player_info
+            runtime.namespace["GetPVEBossInfo"] = self._pve_boss_info
+            self._script("ui_SetGameMode", GAME_MODE_PVE)
+            self._script("ui_InitPVEPlayer")
+        else:
+            self._script("ui_SetGameMode", GAME_MODE_NORMAL)
         self._script("ui_InitPVEBoss")  # hides the boss bars when there are none
         self._script("game_setMapID", map_id)
         self._update_timer()
         self._update_tank_bases()
+
+    def _pve_player_info(self) -> list[Any]:
+        """tagPVEPLAYERINFO for ui_InitPVEPlayer, in GAME_BEGIN order."""
+        hp = (self.state.get("adventure") or {}).get("players") or {}
+        return [types.SimpleNamespace(m_nPlayerID=p["id"], m_nRoleID=p.get("role", 0), m_szNickName=p.get("name", ""),
+                                      m_nPoints=p.get("ext_point", 0), m_nHP=(hp.get(str(p["id"])) or {}).get("max_hp", 0))
+                for p in self.players]
+
+    def _pve_boss_info(self) -> list[Any]:
+        """0x00534240 for rule 12: the NPCs that are Bosses (at most three bars)."""
+        return [types.SimpleNamespace(m_iNPCID=npc["id"], m_iImageID=npc["role"], m_iHP=npc["max_hp"])
+                for npc in (self.state.get("adventure") or {}).get("npcs") or () if npc.get("boss")][:3]
+
+    def _update_adventure(self) -> None:
+        adventure = self.state.get("adventure")
+        if not adventure:
+            return
+        for key, player in (adventure.get("players") or {}).items():
+            if self.shown_pve_hp.get(key) != player["hp"]:
+                self.shown_pve_hp[key] = player["hp"]
+                self._script("ui_UpdatePVEPlayerLife", int(key), player["hp"])
+        bosses = tuple(sorted(npc["id"] for npc in adventure.get("npcs") or () if npc.get("boss")))
+        if bosses != self.shown_pve_bosses:
+            self.shown_pve_bosses = bosses
+            self._script("ui_InitPVEBoss")  # 0x005FCFD3 after each 0x138C
+        for npc in adventure.get("npcs") or ():
+            if npc.get("boss") and self.shown_pve_hp.get(npc["id"]) != npc["hp"]:
+                self.shown_pve_hp[npc["id"]] = npc["hp"]
+                self._script("ui_UpdatePVEBossLife", npc["id"], npc["hp"])
 
     def _script(self, name: str, *args: Any) -> Any:
         function = self.runtime.namespace.get(name) if self.runtime else None
@@ -390,7 +438,8 @@ class BattleScene:
         seconds = max(0, end - self.clock) // 1000
         if seconds != self.shown_seconds and self.runtime is not None:
             self.shown_seconds = seconds
-            self.runtime.namespace["Win_SetText"](PLAYER_LIST + ".time", f"{seconds // 60:02d}:{seconds % 60:02d}")
+            label = "UI.game.pveTime" if self.rule == "adventure" else PLAYER_LIST + ".time"
+            self.runtime.namespace["Win_SetText"](label, f"{seconds // 60:02d}:{seconds % 60:02d}")
 
     # Input and stepping -----------------------------------------------------
 
@@ -513,6 +562,7 @@ class BattleScene:
         self._update_timer()
         self._update_status_bar()
         self._update_tank_bases()
+        self._update_adventure()
         if self.outcome["ended"] and not self.end_logged:
             self.end_logged = True
             log(f"[battle] ended: {self.outcome}")
@@ -545,9 +595,44 @@ class BattleScene:
 
     # Drawing ----------------------------------------------------------------
 
+    def _update_camera(self) -> None:
+        """0x005C87B0 for rule 12: follow the local player in an 800x520 view
+        with a dead zone of 200..600 px across and 130..390 px down, kept
+        inside the map."""
+        actor = self._local_actor()
+        if actor is None:
+            return
+        width, height = self.map.width * CELL, self.map.height * CELL
+        px, py = actor["x"], actor["y"]
+        cx, cy = self.camera
+        if px < cx + 200:
+            cx = 0 if px < 200 else px - 200
+        elif px > cx + 600:
+            cx = width - VIEW_SIZE[0] if px > width - 200 else max(0, px - 600)
+        if py < cy + 130:
+            cy = 0 if py < 130 else py - 130
+        elif py > cy + 390:
+            cy = height - VIEW_SIZE[1] if py > height - 130 else max(0, py - 390)
+        self.camera = (min(max(cx, 0), max(width - VIEW_SIZE[0], 0)), min(max(cy, 0), max(height - VIEW_SIZE[1], 0)))
+
     def draw(self, screen: pygame.Surface) -> None:
         ox, oy = FIELD_ORIGIN
-        field = screen.subsurface(pygame.Rect(0, 0, ox + self.map.width * CELL, oy + self.map.height * CELL))
+        if getattr(self, "scrolling", False):
+            # Rule 12's stages are larger than the screen: draw the whole map
+            # off screen and show the camera's 800x520 view at the field origin.
+            size = (ox + self.map.width * CELL, oy + self.map.height * CELL)
+            if self.world is None or self.world.get_size() != size:
+                self.world = pygame.Surface(size).convert()
+            self.world.fill((0, 0, 0))
+            self._update_camera()
+            self._draw_field(self.world, self.world)
+            cx, cy = self.camera
+            screen.blit(self.world, (ox, oy), pygame.Rect(ox + cx, oy + cy, *VIEW_SIZE))
+            return
+        self._draw_field(screen, screen.subsurface(pygame.Rect(0, 0, ox + self.map.width * CELL, oy + self.map.height * CELL)))
+
+    def _draw_field(self, screen: pygame.Surface, field: pygame.Surface) -> None:
+        ox, oy = FIELD_ORIGIN
         for row in range(self.map.height):
             for col in range(self.map.width):
                 self._draw_element(field, self.map.element(mapfile.LAYER_FLOOR, row, col), row, col)
@@ -620,6 +705,7 @@ class BattleScene:
             self._draw_machine_gates(field, row)
             self._draw_boxes(field, row)
             self._draw_bosses(field, row)
+            self._draw_adventure_npcs(field, row)
             for actor in sorted(actors_by_row.get(row, ()), key=lambda item: item["y"]):
                 self._draw_actor(field, actor)
                 if self.map.rule == 8:
@@ -636,6 +722,8 @@ class BattleScene:
                 fill = frames[0][0]
                 width = min(38, int((charge["count"] + charge["elapsed"] / max(charge["period"], 1)) * 38 / 5))
                 field.blit(fill, (actor["x"] - 10, actor["y"] - 35), (0, 0, width, fill.get_height()))
+        if getattr(self, "scrolling", False):
+            return  # rule 12 draws no gametop/gameleft frame (0x005B82C8)
         for path, position in ((FRAME_TOP, (0, 0)), (FRAME_LEFT, (0, oy))):
             self._draw_frames(screen, path, 0, *position)
 
@@ -747,6 +835,19 @@ class BattleScene:
                 self._draw_frames(field, "object/misc/misc196_stand.img", 0, boss["x"] - 11, boss["y"] - 43)
                 number = 190 + boss["hp"] if boss["hp"] <= 5 else 191 + min(boss["hp"], 10)
                 self._draw_frames(field, f"object/misc/misc{number}_stand.img", 0, boss["x"] - 10, boss["y"] - 42)
+
+    def _draw_adventure_npcs(self, field: pygame.Surface, row: int) -> None:
+        """Rule 12's NPCs: the model of their ImageID (object/player/
+        player<ImageID>.ini) and the flash while protected."""
+        for npc in (self.state.get("adventure") or {}).get("npcs") or ():
+            if min(max(npc["y"] // CELL, 0), self.map.height - 1) != row:
+                continue
+            if npc.get("moving"):
+                self.walk_started.setdefault(npc["id"], self.clock)
+            else:
+                self.walk_started.pop(npc["id"], None)
+            self._draw_actor(field, {"id": npc["id"], "role": npc["role"], "avatar_role": 0, "team": 9, "x": npc["x"], "y": npc["y"],
+                                     "facing": npc["facing"], "state": 0, "protected_until": npc["protected_until"]})
 
     def _draw_box_health(self, field: pygame.Surface, actor: dict[str, Any]) -> None:
         hp = actor.get("durability", 0)
@@ -1130,7 +1231,8 @@ class BattleScene:
         if self._slots()[self.selected_slot][0]:
             slot = pygame.Rect(SLOT_ORIGIN[0] + self.selected_slot * SLOT_STEP, SLOT_ORIGIN[1], SLOT_SIZE, SLOT_SIZE)
             pygame.draw.rect(screen, (255, 230, 80), slot, 2)
-        self._draw_player_list(screen)
+        if self.rule != "adventure":  # ui_SetGameMode(1) hides the player list
+            self._draw_player_list(screen)
         if self.rule in ("treasure", "wrestle"):
             self._draw_treasure(screen)
         if self.map.rule == 7:

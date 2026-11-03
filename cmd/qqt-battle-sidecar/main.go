@@ -37,6 +37,8 @@ type player struct {
 	AI bool `json:"ai"`
 	// Props brought from the room (online, item rooms only).
 	Prepared []preparedView `json:"prepared,omitempty"`
+	// ExtPoint is GAME_BEGIN's adventure courage (the PVE level).
+	ExtPoint uint32 `json:"ext_point,omitempty"`
 }
 
 type preparedView struct {
@@ -173,13 +175,14 @@ type stateView struct {
 	Tank      *tankView      `json:"tank,omitempty"`
 	Sculpture *sculptureView `json:"sculpture,omitempty"` // rule 6
 	// Kills and kill streaks by player ID, from the kill notices.
-	Kills   map[string]int `json:"kills,omitempty"`
-	Streaks map[string]int `json:"streaks,omitempty"`
-	TCPOut  []tcpPacket    `json:"tcp_out,omitempty"`
-	Kick    *kickView      `json:"kick,omitempty"` // rule 2
-	Box     *boxView       `json:"box,omitempty"`
-	Boss    *bossView      `json:"boss,omitempty"`
-	Machine *machineView   `json:"machine,omitempty"`
+	Kills     map[string]int `json:"kills,omitempty"`
+	Streaks   map[string]int `json:"streaks,omitempty"`
+	TCPOut    []tcpPacket    `json:"tcp_out,omitempty"`
+	Kick      *kickView      `json:"kick,omitempty"` // rule 2
+	Box       *boxView       `json:"box,omitempty"`
+	Boss      *bossView      `json:"boss,omitempty"`
+	Adventure *adventureView `json:"adventure,omitempty"`
+	Machine   *machineView   `json:"machine,omitempty"`
 }
 
 func main() {
@@ -262,6 +265,7 @@ func runOnline(init command, lines *bufio.Scanner, out *json.Encoder) error {
 		match.kick.markStyles(state.Bombs)
 	}
 	state.Boss = match.bossView()
+	state.Adventure = match.adventureView()
 	if err := out.Encode(state); err != nil {
 		return err
 	}
@@ -301,6 +305,7 @@ func runOnline(init command, lines *bufio.Scanner, out *json.Encoder) error {
 			match.kick.markStyles(state.Bombs)
 		}
 		state.Boss = match.bossView()
+		state.Adventure = match.adventureView()
 		if err := out.Encode(state); err != nil {
 			return err
 		}

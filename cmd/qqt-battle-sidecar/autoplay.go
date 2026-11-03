@@ -33,6 +33,7 @@ type autoplayBot struct {
 	machine   *machineRule
 	box       *boxRule
 	boss      *bossRule // a Boss overlay: its living Bosses are targets too
+	adventure *adventureRule // rule 12: its NPCs are the targets
 	// Rule 2: no own bubbles; kick the dropped ones instead.
 	kick bool
 }
@@ -77,6 +78,15 @@ func (bot *autoplayBot) act(engine *battleengine.Engine) battleengine.Action {
 	msPerCell := uint32(1000 * battleengine.CellSizePixels / max(1, int(actor.SpeedPixelsPerSecond)))
 	here := actor.Position.Cell()
 	world := newAutoplayWorld(engine)
+	if bot.adventure != nil {
+		// Rule 12 flames keep hurting for as long as they burn, not only at
+		// the impact instant: never walk into one.
+		for _, flame := range engine.Flames() {
+			if flame.ImpactAtMS <= now && now < flame.ExpiresAtMS && flame.Cell != here {
+				world.bombs[flame.Cell] = true
+			}
+		}
+	}
 	if bot.box != nil {
 		return bot.actBox(engine, world, actor, action, msPerCell)
 	}
@@ -169,6 +179,16 @@ func (bot *autoplayBot) act(engine *battleengine.Engine) battleengine.Action {
 			return bot.follow(action, actor, path)
 		}
 	}
+	// Rule 12: once the stage is clear, walk to the exit door.
+	if a := bot.adventure; a != nil && a.clearAt != 0 && !a.doorSent {
+		door := battleengine.Cell{Row: int16(a.stage.LevelRow), Col: int16(a.stage.LevelCol)}
+		if here == door {
+			return action
+		}
+		if path := world.nearest(here, safe, func(c battleengine.Cell) bool { return c == door }); len(path) > 0 {
+			return bot.follow(action, actor, path)
+		}
+	}
 	// 3. Collect the nearest visible item; gems (rule objectives) first.
 	if path := world.nearest(here, safe, world.objectiveAt); len(path) > 0 {
 		return bot.follow(action, actor, path)
@@ -177,7 +197,7 @@ func (bot *autoplayBot) act(engine *battleengine.Engine) battleengine.Action {
 		return bot.follow(action, actor, path)
 	}
 	worthBombing := func(cell battleengine.Cell) bool {
-		return world.worthBombing(cell, actor) || bot.tank != nil && bot.tank.worthBombing(world, cell, actor) || bot.bossInReach(world, cell, actor)
+		return world.worthBombing(cell, actor) || bot.tank != nil && bot.tank.worthBombing(world, cell, actor) || bot.bossInReach(world, cell, actor) || bot.adventureNPCInReach(world, cell, actor)
 	}
 	// 4. Place a bubble beside a breakable wall or an opponent, if it can be
 	// escaped.
@@ -194,11 +214,23 @@ func (bot *autoplayBot) act(engine *battleengine.Engine) battleengine.Action {
 
 // bossInReach: a bubble at cell would catch a Boss that can be hurt.
 func (bot *autoplayBot) bossInReach(world autoplayWorld, cell battleengine.Cell, actor battleengine.Actor) bool {
-	if bot.boss == nil {
+	if bot.boss == nil || len(bot.boss.actors) == 0 {
 		return false
 	}
 	for _, b := range bot.boss.actors {
 		if !b.dead && b.hp > 0 && world.blastCovers(cell, actor.BombPower, b.pos.Cell()) {
+			return true
+		}
+	}
+	return false
+}
+
+func (bot *autoplayBot) adventureNPCInReach(world autoplayWorld, cell battleengine.Cell, actor battleengine.Actor) bool {
+	if bot.adventure == nil {
+		return false
+	}
+	for _, n := range bot.adventure.npcs {
+		if !n.dead && world.blastCovers(cell, actor.BombPower, n.pos.Cell()) {
 			return true
 		}
 	}

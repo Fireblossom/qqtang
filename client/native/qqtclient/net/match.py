@@ -16,6 +16,9 @@ HELLO_COMMAND = 0x0088
 
 # NOTIFY_GAME_EVENT schemas the client handles itself.
 SCHEMA_GAME_OVER = 0x0FBB
+# NOTIFY_GAME_NEXTMAP: an adventure stage's successor; the body is the next
+# stage's GAME_BEGIN_DATA without the uint16 length prefix (0x5A2452).
+SCHEMA_GAME_NEXTMAP = 0x1177
 SCHEMA_CHANGE_ARBITRATOR = 0x0FB1
 
 RESULT_LOSS, RESULT_DRAW, RESULT_WIN = 0, 1, 2

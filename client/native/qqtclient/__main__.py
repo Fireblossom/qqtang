@@ -138,7 +138,7 @@ def main() -> int:
         if runtime.activity is not None:
             runtime.activity.close()
             runtime.activity = None
-        runtime.activity = OnlineBattle(runtime, renderer, resources, session, begin, context)
+        runtime.activity = OnlineBattle(runtime, renderer, resources, session, begin, context, start_battle)
 
     room_natives, draw_room_players = build_room_natives(runtime, session, AvatarCache(resources), start_battle)
     namespace.update(room_natives)

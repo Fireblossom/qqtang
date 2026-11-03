@@ -50,8 +50,9 @@ class MatchContext:
 
 class OnlineBattle:
     def __init__(self, runtime: UIRuntime, renderer: Renderer, resources: Resources, session: Session,
-                 begin: bytes, context: MatchContext):
+                 begin: bytes, context: MatchContext, next_stage: Callable[[bytes, MatchContext], None] | None = None):
         self.runtime, self.renderer, self.session, self.context = runtime, renderer, session, context
+        self.next_stage = next_stage
         if session.profile is None or session.section is None or session.hall is None:
             raise SidecarError("not in a section")
         server = session.hall.server(session.section.server_id)
@@ -127,6 +128,12 @@ class OnlineBattle:
             event = match.parse_game_event_notify(packet.payload)
         except (ValueError, IndexError) as error:
             log(f"[match] bad game event: {error}")
+            return
+        if event.schema == match.SCHEMA_GAME_NEXTMAP and self.next_stage is not None:
+            # A new GameID and stage: the scene is rebuilt from it (0x5A2452).
+            log(f"[match] next adventure stage ({len(event.body)} bytes)")
+            self.close()
+            self.next_stage(len(event.body).to_bytes(2, "big") + event.body, self.context)
             return
         if event.schema != match.SCHEMA_GAME_OVER:
             self.scene.pending_tcp.append((packet.command, packet.payload))

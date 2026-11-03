@@ -180,6 +180,17 @@ func ParsePlayerDeathEvent(event GameEvent) (PlayerDeathEvent, error) {
 	return death, nil
 }
 
+// MarshalNetworkBinary encodes the 14-byte REQUEST_GAME_NEXTMAP body.
+func (request GameNextMapRequest) MarshalNetworkBinary() ([]byte, error) {
+	if request.PlayerID == 0 {
+		return nil, fmt.Errorf("REQUEST_GAME_NEXTMAP player ID must be non-zero")
+	}
+	body := binary.BigEndian.AppendUint16(make([]byte, 0, 14), request.PlayerID)
+	body = binary.BigEndian.AppendUint32(body, request.ClientTime)
+	body = binary.BigEndian.AppendUint32(body, request.ContinueID)
+	return binary.BigEndian.AppendUint32(body, request.NextMapID), nil
+}
+
 func ParseGameNextMapRequest(event GameEvent) (GameNextMapRequest, error) {
 	if event.Schema != RequestGameNextMap {
 		return GameNextMapRequest{}, fmt.Errorf("game-next-map schema 0x%04X, want 0x%04X", event.Schema, RequestGameNextMap)

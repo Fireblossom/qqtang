@@ -204,8 +204,9 @@ type onlineMatch struct {
 	box       *boxRule
 	machine   *machineRule
 	tank      *tankRule
-	kick      *kickRule // rule 2; nil otherwise
-	boss      *bossRule // a map that can host a Boss overlay; nil otherwise
+	kick      *kickRule      // rule 2; nil otherwise
+	boss      *bossRule      // a map that can host a Boss overlay; nil otherwise
+	adventure *adventureRule // a rule-12 stage; nil otherwise
 }
 
 // respawnRule is a special rule's relive timing, from Client.exe's rule
@@ -259,18 +260,42 @@ func newOnlineMatch(init command) (*onlineMatch, beginView, error) {
 		return nil, beginView{}, err
 	}
 	entry, ok := catalog.CompetitiveMap(begin.MapID)
+	var adventure *adventureRule
+	var adventureField mapdata.AdventureBattlefield
+	var levels []mapdata.AdventureLevel
 	if !ok {
-		return nil, beginView{}, fmt.Errorf("map %d is not a competitive map", begin.MapID)
+		stageMap, isStage := catalog.Map(begin.MapID)
+		if !isStage {
+			return nil, beginView{}, fmt.Errorf("map %d is neither a competitive map nor an adventure stage", begin.MapID)
+		}
+		if adventureField, err = mapdata.LoadAdventureBattlefield(init.ClientRoot, stageMap); err != nil {
+			return nil, beginView{}, err
+		}
+		stage, err := mapdata.LoadAdventureStage(init.ClientRoot, begin.MapID)
+		if err != nil {
+			return nil, beginView{}, err
+		}
+		if levels, err = mapdata.LoadAdventureLevels(init.ClientRoot); err != nil {
+			return nil, beginView{}, err
+		}
+		adventure = newAdventureRule(stage, adventureField, begin)
 	}
 	view := beginView{GameID: begin.GameID, MapID: begin.MapID, Rule: string(entry.Rule), Arbitrator: begin.ArbitratorPlayerID}
 	if spec, ok := mapdata.LookupCompetitiveRuleByNativeID(entry.NativeRule); ok {
 		view.RoundMS = spec.RoundDurationMS
 	}
-	rules, respawn, err := ruleOptions(entry, options.LocalID, begin.ArbitratorPlayerID)
-	if err != nil {
+	var rules battleengine.Rules
+	var respawn *respawnRule
+	if adventure != nil {
+		view.Rule, view.RoundMS = "adventure", adventure.roundMS
+		rules = onlineRules(options.LocalID, begin.ArbitratorPlayerID)
+	} else if rules, respawn, err = ruleOptions(entry, options.LocalID, begin.ArbitratorPlayerID); err != nil {
 		return nil, beginView{}, err
 	}
-	boss := newBossRule(entry, begin)
+	var boss *bossRule
+	if adventure == nil {
+		boss = newBossRule(entry, begin)
+	}
 	spawnMode := battleengine.NativeSpawnModeForMap(entry, options.FreeRule)
 	if boss != nil {
 		rules.NativeBossNPC = true
@@ -295,8 +320,13 @@ func newOnlineMatch(init command) (*onlineMatch, beginView, error) {
 		if err != nil {
 			return nil, beginView{}, err
 		}
+		if adventure != nil {
+			level, _ := mapdata.AdventureLevelFor(levels, info.ExtPoint)
+			participant = adventureParticipant(participant, level)
+			adventure.players[info.PlayerID] = &advPlayer{hp: int(level.HP), maxHP: int(level.HP), damage: int(level.BombPow)}
+		}
 		participants = append(participants, participant)
-		entry := player{ID: info.PlayerID, Role: uint16(info.RoleID), Team: info.TeamID}
+		entry := player{ID: info.PlayerID, Role: uint16(info.RoleID), Team: info.TeamID, ExtPoint: info.ExtPoint}
 		for _, item := range info.NewItems {
 			entry.Prepared = append(entry.Prepared, preparedView{Item: item.ItemID, Count: item.Quantity})
 		}
@@ -317,17 +347,25 @@ func newOnlineMatch(init command) (*onlineMatch, beginView, error) {
 			virtual[playerID] = true
 		}
 	}
-	config, err := battleengine.ConfigFromCompetitiveMap(entry, battleengine.CompetitiveMapConfigOptions{
-		SimulationSeed: uint64(begin.SpawnSeed)<<32 | uint64(begin.ItemSeed),
-		SpawnSeed:      begin.SpawnSeed, ItemSeed: begin.ItemSeed,
-		SpawnMode:            spawnMode,
-		Rules:                rules,
-		Participants:         participants,
-		RecordedWallItems:    wallItems(begin.NewItems),
-		RecordedDelayedItems: wallItems(begin.Items),
-		UseRecordedWallItems: true,
-		AllowSpecialRules:    entry.Rule != mapdata.CompetitiveRuleOrdinary,
-	})
+	var config battleengine.Config
+	if adventure != nil {
+		config, err = battleengine.ConfigFromAdventureStage(adventureField, battleengine.AdventureConfigOptions{
+			SimulationSeed: uint64(begin.SpawnSeed)<<32 | uint64(begin.ItemSeed), ItemSeed: begin.ItemSeed,
+			GameTimeSeconds: begin.GameTimeMS, Rules: rules, Participants: participants, WallItems: wallItems(begin.NewItems),
+		})
+	} else {
+		config, err = battleengine.ConfigFromCompetitiveMap(entry, battleengine.CompetitiveMapConfigOptions{
+			SimulationSeed: uint64(begin.SpawnSeed)<<32 | uint64(begin.ItemSeed),
+			SpawnSeed:      begin.SpawnSeed, ItemSeed: begin.ItemSeed,
+			SpawnMode:            spawnMode,
+			Rules:                rules,
+			Participants:         participants,
+			RecordedWallItems:    wallItems(begin.NewItems),
+			RecordedDelayedItems: wallItems(begin.Items),
+			UseRecordedWallItems: true,
+			AllowSpecialRules:    entry.Rule != mapdata.CompetitiveRuleOrdinary,
+		})
+	}
 	if err != nil {
 		return nil, beginView{}, err
 	}
@@ -383,7 +421,7 @@ func newOnlineMatch(init command) (*onlineMatch, beginView, error) {
 		fieldContacts: map[fieldContactKey]bool{}, itemUses: map[[3]uint32]bool{}, useRequested: map[uint8]uint32{},
 		preparedRequested: map[uint32]uint32{},
 		pickupRequests:    map[pickupKey]pickupRequest{}, sceneRequests: map[sceneRequestKey]uint32{},
-		box: box, machine: machine, tank: tank, boss: boss, respawn: respawn, eliminatedAt: map[uint16]uint32{}, departed: map[uint16]bool{},
+		box: box, machine: machine, tank: tank, boss: boss, adventure: adventure, respawn: respawn, eliminatedAt: map[uint16]uint32{}, departed: map[uint16]bool{},
 		kills: map[uint16]int{}, streaks: map[uint16]int{},
 	}
 	if box != nil {
@@ -415,6 +453,7 @@ func newOnlineMatch(init command) (*onlineMatch, beginView, error) {
 		match.bot.machine = match.machine
 		match.bot.box = match.box
 		match.bot.boss = match.boss
+		match.bot.adventure = match.adventure
 		match.bot.kick = match.kick != nil
 		match.logf("autoplay: the test bot plays player %d", match.local)
 	}
@@ -629,6 +668,8 @@ func (match *onlineMatch) step(step command) ([]battleengine.Event, error) {
 		tickEvents = append(tickEvents, match.boxTick()...)
 		match.bossTick(match.engine.ElapsedMS(), tickEvents)
 		tickEvents = append(tickEvents, match.takeBossEvents()...)
+		match.adventureTick(match.engine.ElapsedMS())
+		tickEvents = append(tickEvents, match.takeAdventureEvents()...)
 		events = append(events, tickEvents...)
 	}
 	match.collectLooseDispatches()
@@ -782,7 +823,7 @@ func (match *onlineMatch) handleDatagram(data []byte) []battleengine.Event {
 		var events []battleengine.Event
 		for _, entry := range batch.Entries {
 			author := entry.Package.PlayerID
-			if author != sender && !match.boxNPCProxy(sender, author) && !match.bossProxy(sender, author) {
+			if author != sender && !match.boxNPCProxy(sender, author) && !match.bossProxy(sender, author) && !match.adventureProxy(sender, author) {
 				continue
 			}
 			for _, message := range entry.Package.Messages {
@@ -809,6 +850,9 @@ func (match *onlineMatch) applyRemote(sender uint16, message game.BattleMessageD
 		return events
 	}
 	if events, handled := match.bossRemote(sender, event); handled {
+		return events
+	}
+	if events, handled := match.adventureRemote(sender, event); handled {
 		return events
 	}
 	if events, handled := match.machineRemote(sender, event); handled {
@@ -1389,6 +1433,9 @@ func (match *onlineMatch) handleTCP(packet tcpPacket) {
 		}
 		if notify.Schema == game.CreateNPCBossEvent {
 			match.bossRemote(match.arbitrator, game.GameEvent{Schema: notify.Schema, Body: notify.Body})
+			return
+		}
+		if match.handleAdventureTCP(notify.Schema, notify.Body) {
 			return
 		}
 		switch notify.Schema {
