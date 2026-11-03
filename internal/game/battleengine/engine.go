@@ -35,6 +35,8 @@ type Engine struct {
 	nativeBombRegistrations map[uint32]nativeBombRegistration
 	nativeBombLinks         map[uint32][]uint32
 	ruleNPCOwners           map[uint16]struct{}
+	elementChain            []Cell
+	stoneBlasts             []stoneBlast
 }
 
 type nativeContactRequestKey struct {
@@ -187,6 +189,7 @@ func (engine *Engine) Reset(config Config) error {
 	engine.nativeBombRegistrations = nil
 	engine.nativeBombLinks = nil
 	engine.ruleNPCOwners = nil
+	engine.elementChain, engine.stoneBlasts = nil, nil
 	return nil
 }
 
@@ -222,6 +225,8 @@ func (engine *Engine) Clone() *Engine {
 	clone.recycledPickupSceneIDs = append([]uint32(nil), engine.recycledPickupSceneIDs...)
 	clone.scheduledPickups = append([]NativeScheduledPickup(nil), engine.scheduledPickups...)
 	clone.projectiles = append([]ActionProjectile(nil), engine.projectiles...)
+	clone.elementChain = append([]Cell(nil), engine.elementChain...)
+	clone.stoneBlasts = append([]stoneBlast(nil), engine.stoneBlasts...)
 	if engine.pendingMapRetirements != nil {
 		clone.pendingMapRetirements = make(map[Cell]pendingMapRetirement, len(engine.pendingMapRetirements))
 		for key, p := range engine.pendingMapRetirements {

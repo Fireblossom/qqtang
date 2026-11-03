@@ -182,6 +182,7 @@ type stateView struct {
 	Box       *boxView       `json:"box,omitempty"`
 	Boss      *bossView      `json:"boss,omitempty"`
 	Adventure *adventureView `json:"adventure,omitempty"`
+	Special   *specialView   `json:"special,omitempty"`
 	Machine   *machineView   `json:"machine,omitempty"`
 }
 
@@ -266,6 +267,7 @@ func runOnline(init command, lines *bufio.Scanner, out *json.Encoder) error {
 	}
 	state.Boss = match.bossView()
 	state.Adventure = match.adventureView()
+	state.Special = match.specialView()
 	if err := out.Encode(state); err != nil {
 		return err
 	}
@@ -306,6 +308,7 @@ func runOnline(init command, lines *bufio.Scanner, out *json.Encoder) error {
 		}
 		state.Boss = match.bossView()
 		state.Adventure = match.adventureView()
+		state.Special = match.specialView()
 		if err := out.Encode(state); err != nil {
 			return err
 		}

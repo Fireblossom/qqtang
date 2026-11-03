@@ -20,7 +20,7 @@ from ..runtime import UIRuntime
 from ..script import call_script, log
 from . import mapfile
 from .sidecar import (ACTOR_ELIMINATED, ACTOR_TRAPPED, EVENT_ACTOR_ELIMINATED, EVENT_ACTOR_RESPAWNED, EVENT_BOMB_EXPLODED,
-                      EVENT_CELL_DESTROYED, EVENT_MAP_ELEMENT_MOVED, MOVE_DOWN, MOVE_LEFT, MOVE_NONE, MOVE_RIGHT, MOVE_UP, TICK_MS, Sidecar)
+                      EVENT_CELL_DAMAGED, EVENT_CELL_DESTROYED, EVENT_MAP_ELEMENT_MOVED, MOVE_DOWN, MOVE_LEFT, MOVE_NONE, MOVE_RIGHT, MOVE_UP, TICK_MS, Sidecar)
 
 CELL = mapfile.CELL
 # Where the 600x520 field sits on the 800x600 screen, inside the host-drawn
@@ -255,6 +255,18 @@ def flight_position(flight: dict[str, Any], clock: int, width: int, height: int)
     return int(x) - CELL // 2, int(y) - CELL // 2 + int(arc)
 
 
+SOLID_STONE = 17021  # CMESolidStone (docs/special-elements-re.md §3.2)
+EXPLODE_STONE = 17019
+# Special-element effects drawn from their .eff image tracks: the eff
+# player is not written, so these are the main image only, not the full
+# keyframes. Original points are screen coordinates; the field's own
+# origin there is (8, 21).
+STONE_FX = ("object/magic/magic0131.img", 400, 1195)  # Totem_Flame.eff, fast-forwarded 400 ms
+TOTEM_FX = "object/magic/magic0132.img"  # Totem_Ice.eff
+DOOR_FX = "object/magic/magic0048.img"  # TransDoor_Enter/_Trans.eff's 27-frame track
+DOOR_FX_MS = 2000
+
+
 @dataclasses.dataclass
 class ResultRow:
     """One player's line of the match result (NOTIFY_GAME_OVER)."""
@@ -355,6 +367,8 @@ class BattleScene:
         self.streak_badge: tuple[int, float] | None = None  # (streak, now_ms shown)
         self.explosions: dict[int, Explosion] = {}
         self.dying: dict[tuple[int, int, int], tuple[int, int]] = {}  # (layer, row, col) -> (element, clock)
+        self.wall_hits: dict[tuple[int, int], int] = {}  # multi-hit walls: hits taken so far
+        self.stone_fx: dict[tuple[int, int], int] = {}  # broken explode stones -> clock
         self.held: list[int] = []
         self.bomb_pressed = False
         self.use_pressed = 0  # held-item action to use on the next step
@@ -572,7 +586,13 @@ class BattleScene:
         kind, cell = event["kind"], event["cell"]
         if kind == EVENT_BOMB_EXPLODED:
             self.explosions[event["bomb"]] = Explosion(cell["row"], cell["col"], tuple(event["blast"]))
+        elif kind == EVENT_CELL_DAMAGED:
+            key = (cell["row"], cell["col"])
+            self.wall_hits[key] = self.wall_hits.get(key, 0) + 1
         elif kind == EVENT_CELL_DESTROYED:
+            self.wall_hits.pop((cell["row"], cell["col"]), None)
+            if self.map.element(mapfile.LAYER_WALL, cell["row"], cell["col"]) == EXPLODE_STONE:
+                self.stone_fx[(cell["row"], cell["col"])] = self.clock
             for layer in (mapfile.LAYER_WALL, mapfile.LAYER_TOP):
                 element = self.map.element(layer, cell["row"], cell["col"])
                 if element > 0 and (self.elements.get(element, mapfile.ElementInfo()).life_time > 0 or
@@ -715,6 +735,7 @@ class BattleScene:
         self._draw_box_effects(field)
         self._draw_field_lock(field)
         self._draw_adventure_casts(field)
+        self._draw_special(field)
         charge = (self.state.get("machine") or {}).get("charge")
         actor = self._local_actor() if charge is not None else None
         if actor is not None and actor["state"] != ACTOR_ELIMINATED:
@@ -852,6 +873,33 @@ class BattleScene:
         for row in range(f["Row"], f["Row"] + f["H"]):
             for col in range(f["Col"], f["Col"] + f["W"]):
                 self._draw_frames(field, "object/flame/flame255_stand.img", frame, ox + col * CELL, oy + row * CELL)
+
+    def _draw_special(self, field: pygame.Surface) -> None:
+        """Item-field map elements (docs/special-elements-re.md,
+        transdoor-strip-re.md): explode-stone blasts and active ice totems
+        at (col*40+26, row*40+40), teleporter light on players."""
+        ox, oy = FIELD_ORIGIN[0] - 8, FIELD_ORIGIN[1] - 21
+        path, start, end = STONE_FX
+        stone_fx = getattr(self, "stone_fx", {})
+        for (row, col), began in list(stone_fx.items()):
+            elapsed = self.clock - began + start
+            if elapsed >= end:
+                del stone_fx[(row, col)]
+                continue
+            self._draw_frames(field, path, elapsed // 100, ox + col * CELL + 26, oy + row * CELL + 40)
+        special = self.state.get("special") or {}
+        for totem in special.get("totems") or ():
+            frame = max(0, self.clock - totem["since"]) // 100
+            self._draw_frames(field, TOTEM_FX, frame, ox + totem["col"] * CELL + 26, oy + totem["row"] * CELL + 40)
+        actors = {actor["id"]: actor for actor in self.state["actors"]}
+        for effect in special.get("effects") or ():
+            actor = actors.get(effect["player"])
+            elapsed = self.clock - effect["since"]
+            if actor is None or not 0 <= elapsed < DOOR_FX_MS:
+                continue
+            frames = self.sprites.get(DOOR_FX) or ()
+            if frames:
+                self._draw_frames(field, DOOR_FX, elapsed * len(frames) // 2890, FIELD_ORIGIN[0] + actor["x"], FIELD_ORIGIN[1] + actor["y"], additive=True)
 
     def _draw_adventure_casts(self, field: pygame.Surface) -> None:
         """NPC skill traps (stage 3) and projectiles (stage 4). The props'
@@ -1075,9 +1123,13 @@ class BattleScene:
         if element <= 0:
             return
         path = mapfile.element_image(element, action)
+        info = self.elements.get(element, mapfile.ElementInfo())
+        hits = getattr(self, "wall_hits", {}).get((row, col), 0) if action == "stand" else 0
+        if element == SOLID_STONE and hits:
+            # 0x0061A04D: each hit swaps in effect/Stone_Life<left>.img.
+            path = f"effect/Stone_Life{max(info.life_time - hits, 1)}.img"
         if path is None:
             return
-        info = self.elements.get(element, mapfile.ElementInfo())
         ox, oy = FIELD_ORIGIN
         self._draw_frames(surface, path, frame, ox + col * CELL - info.offset[0], oy + row * CELL - info.offset[1])
 

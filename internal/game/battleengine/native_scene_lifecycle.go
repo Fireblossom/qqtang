@@ -48,6 +48,7 @@ func (engine *Engine) beginMapRetirement(cell Cell, cells []Cell, at uint32, own
 	if exists {
 		return Event{}, false
 	}
+	engine.queueElementChain(cell, tile, at)
 	return Event{Kind: EventCellDestroyed, TimeMS: at, PlayerID: owner, BombID: bombID, Cell: cell, ObjectID: tile.MapElementID,
 		OpenedTraversal: !tile.PlayerPassable(DirectionUp) || !tile.PlayerPassable(DirectionRight) || !tile.PlayerPassable(DirectionDown) || !tile.PlayerPassable(DirectionLeft)}, true
 }

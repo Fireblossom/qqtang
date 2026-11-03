@@ -20,6 +20,10 @@ type ActorCapabilities struct {
 
 func (engine *Engine) actorCapabilities(actor *Actor, direction Direction) ActorCapabilities {
 	capabilities := engine.baseActorCapabilities(actor, direction)
+	if actor != nil && engine.rules.NativeSpecialElements {
+		capabilities.EffectiveSpeedRate = elementBonused(capabilities.EffectiveSpeedRate, actor.MaxSpeedRate, actor.elementBonus[0], 2)
+		capabilities.EffectiveBombCapacity = elementBonused(capabilities.EffectiveBombCapacity, actor.MaxBombCapacity, actor.elementBonus[1], 1)
+	}
 	if actor != nil && engine.rules.NativeAdventure {
 		capabilities.EffectiveSpeedRate = adventureAdjusted(capabilities.EffectiveSpeedRate, actor.adventureAttr[0], 0, MaxNativeSpeedRate)
 		capabilities.EffectiveBombCapacity = adventureAdjusted(capabilities.EffectiveBombCapacity, actor.adventureAttr[2], 0, 255)

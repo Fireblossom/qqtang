@@ -230,6 +230,7 @@ func (engine *Engine) ApplyVerifiedBombExplosionAt(sceneMS uint32, bombs []Verif
 		if changed {
 			events = append(events, event)
 		}
+		events = append(events, engine.resolveElementChains(sceneMS)...)
 	}
 	events = append(events, engine.expireMapRetirements()...)
 
@@ -354,6 +355,12 @@ func (engine *Engine) applyVerifiedMapElementHitAt(sceneMS uint32, hit VerifiedM
 		// be reconciled exactly. The hidden seed stays hidden because this mirror
 		// could not prove which local map object owned it.
 		return Event{}, nil, false, nil
+	}
+	if engine.rules.NativeSpecialElements && tile.Durability > 1 {
+		// 006075d0 calls the element's own vtbl+0x40: a solid stone loses
+		// one life (0x0061A04D) instead of retiring.
+		engine.grid.Cells[engine.gridIndex(hit.Cell)].Durability--
+		return Event{Kind: EventCellDamaged, TimeMS: sceneMS, Cell: hit.Cell, ObjectID: tile.MapElementID}, []Cell{hit.Cell}, true, nil
 	}
 	footprint := []Cell{hit.Cell}
 	if tile.ElementWidth != 0 && tile.ElementHeight != 0 {

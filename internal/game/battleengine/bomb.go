@@ -53,7 +53,7 @@ func (engine *Engine) prospectiveBomb(actorIndex int, requireEmpty bool) (Bomb, 
 		return Bomb{}, false
 	}
 	return Bomb{
-		ID: engine.nextBombID, OwnerID: actor.PlayerID, Cell: cell, Power: engine.adventureBombPower(actor),
+		ID: engine.nextBombID, OwnerID: actor.PlayerID, Cell: cell, Power: engine.elementBombPower(actor, engine.adventureBombPower(actor)),
 		// 005df7d0 requires a negative remaining fuse; zero is still armed.
 		ExplodeAtMS:     saturatingAdd(saturatingAdd(engine.elapsedMS, engine.rules.BombFuseMS), 1),
 		SceneFourEffect: engine.sceneFourEffectActive(actor),
@@ -214,7 +214,7 @@ func (engine *Engine) commitBlastBatch(batch blastBatch) []Event {
 			}
 		}
 	}
-	return events
+	return append(events, engine.resolveElementChains(engine.elapsedMS)...)
 }
 
 func (engine *Engine) blastCells(bomb Bomb, _ map[uint32]bool, _ *[]uint32, batch *blastBatch) []Cell {

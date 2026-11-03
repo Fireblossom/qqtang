@@ -207,6 +207,7 @@ type onlineMatch struct {
 	kick      *kickRule      // rule 2; nil otherwise
 	boss      *bossRule      // a map that can host a Boss overlay; nil otherwise
 	adventure *adventureRule // a rule-12 stage; nil otherwise
+	special   *specialRule   // stones, totems, halos and teleporters; nil otherwise
 }
 
 // respawnRule is a special rule's relive timing, from Client.exe's rule
@@ -296,8 +297,15 @@ func newOnlineMatch(init command) (*onlineMatch, beginView, error) {
 		return nil, beginView{}, err
 	}
 	var boss *bossRule
+	var special *specialRule
 	if adventure == nil {
 		boss = newBossRule(entry, begin)
+		if layers, err := mapdata.LoadMapLayers(init.ClientRoot, entry.FileName); err == nil {
+			special = newSpecialRule(layers, int64(begin.SpawnSeed)<<32|int64(begin.ItemSeed)^int64(options.LocalID))
+		}
+		if special != nil {
+			rules.NativeSpecialElements = true
+		}
 	}
 	spawnMode := battleengine.NativeSpawnModeForMap(entry, options.FreeRule)
 	if boss != nil {
@@ -424,7 +432,7 @@ func newOnlineMatch(init command) (*onlineMatch, beginView, error) {
 		fieldContacts: map[fieldContactKey]bool{}, itemUses: map[[3]uint32]bool{}, useRequested: map[uint8]uint32{},
 		preparedRequested: map[uint32]uint32{},
 		pickupRequests:    map[pickupKey]pickupRequest{}, sceneRequests: map[sceneRequestKey]uint32{},
-		box: box, machine: machine, tank: tank, boss: boss, adventure: adventure, respawn: respawn, eliminatedAt: map[uint16]uint32{}, departed: map[uint16]bool{},
+		box: box, machine: machine, tank: tank, boss: boss, adventure: adventure, special: special, respawn: respawn, eliminatedAt: map[uint16]uint32{}, departed: map[uint16]bool{},
 		kills: map[uint16]int{}, streaks: map[uint16]int{},
 	}
 	if box != nil {
@@ -457,6 +465,7 @@ func newOnlineMatch(init command) (*onlineMatch, beginView, error) {
 		match.bot.box = match.box
 		match.bot.boss = match.boss
 		match.bot.adventure = match.adventure
+		match.bot.special = match.special
 		match.bot.kick = match.kick != nil
 		match.logf("autoplay: the test bot plays player %d", match.local)
 	}
@@ -638,6 +647,7 @@ func (match *onlineMatch) step(step command) ([]battleengine.Event, error) {
 	}
 	for ticks := 0; ticks < maxCatchUpTicks && match.engine.ElapsedMS() < target && !match.engine.Terminal().Ended && !match.machineFinishing() && !match.boxFinishing(); ticks++ {
 		before := match.runtime.EngineSnapshot()
+		beforeLocal, _ := actorByID(before.Actors(), match.local)
 		action := local
 		action.PlaceBomb, match.bombPressed = match.bombPressed, false
 		if match.bot != nil && match.localActive() {
@@ -650,6 +660,7 @@ func (match *onlineMatch) step(step command) ([]battleengine.Event, error) {
 		match.boxInput(&action)
 		match.bossInput(&action)
 		match.adventureInput(&action)
+		match.specialInput(&action)
 		match.launchMachine(&action)
 		events = append(events, match.throwMachine(&action)...)
 		var actions []battleengine.Action
@@ -673,6 +684,7 @@ func (match *onlineMatch) step(step command) ([]battleengine.Event, error) {
 		match.bossTick(match.engine.ElapsedMS(), tickEvents)
 		tickEvents = append(tickEvents, match.takeBossEvents()...)
 		match.adventureTick(match.engine.ElapsedMS())
+		tickEvents = append(tickEvents, match.specialTick(beforeLocal, action.Move != battleengine.DirectionNone)...)
 		tickEvents = append(tickEvents, match.takeAdventureEvents()...)
 		events = append(events, tickEvents...)
 	}
@@ -857,6 +869,9 @@ func (match *onlineMatch) applyRemote(sender uint16, message game.BattleMessageD
 		return events
 	}
 	if events, handled := match.adventureRemote(sender, event); handled {
+		return events
+	}
+	if events, handled := match.specialRemote(sender, event); handled {
 		return events
 	}
 	if events, handled := match.machineRemote(sender, event); handled {
@@ -2000,7 +2015,8 @@ func (match *onlineMatch) publishEvents(after *battleengine.Engine, events []bat
 			delete(match.bombs, event.BombID)
 		case battleengine.EventCellDamaged, battleengine.EventCellDestroyed:
 			// Destroyed walls start their 500 ms retirement in the blast tick.
-			if arbitrator && event.ObjectID != 0 {
+			// Explode-stone chains (no bomb) are left to every receiver.
+			if arbitrator && event.ObjectID != 0 && event.BombID != 0 {
 				explosion.MapElems = append(explosion.MapElems, game.ExplodedMapElement{MapElementID: uint16(event.ObjectID), Row: byte(event.Cell.Row), Column: byte(event.Cell.Col)})
 			}
 		case battleengine.EventPickupDestroyed:

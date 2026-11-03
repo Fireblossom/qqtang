@@ -34,6 +34,7 @@ type autoplayBot struct {
 	box       *boxRule
 	boss      *bossRule      // a Boss overlay: its living Bosses are targets too
 	adventure *adventureRule // rule 12: its NPCs are the targets
+	special   *specialRule   // teleporters and halos to try out
 	// Rule 2: no own bubbles; kick the dropped ones instead.
 	kick bool
 }
@@ -187,6 +188,29 @@ func (bot *autoplayBot) act(engine *battleengine.Engine) battleengine.Action {
 		}
 		if path := world.nearest(here, safe, func(c battleengine.Cell) bool { return c == door }); len(path) > 0 {
 			return bot.follow(action, actor, path)
+		}
+	}
+	// Test the special elements: push a halo off cooldown, and spend 10 s of
+	// every 30 s walking into teleporters.
+	if s := bot.special; s != nil && s.transit == nil {
+		for _, h := range s.halos {
+			if _, buffed := h.bonus[bot.player]; buffed || now < h.cooldownUntil {
+				continue
+			}
+			for _, d := range []battleengine.Direction{battleengine.DirectionUp, battleengine.DirectionRight, battleengine.DirectionDown, battleengine.DirectionLeft} {
+				if facingCell(here, d) == h.cell {
+					action.Move = d
+					return action
+				}
+			}
+			if path := world.nearest(here, safe, func(c battleengine.Cell) bool { return inThree(c, h.cell) && (c.Row == h.cell.Row || c.Col == h.cell.Col) && c != h.cell }); len(path) > 0 {
+				return bot.follow(action, actor, path)
+			}
+		}
+		if now%30000 >= 10000 && now%30000 < 20000 && len(s.doors) > 0 && s.doorAt(here) < 0 {
+			if path := world.nearest(here, safe, func(c battleengine.Cell) bool { return s.doorAt(c) >= 0 }); len(path) > 0 {
+				return bot.follow(action, actor, path)
+			}
 		}
 	}
 	// 3. Collect the nearest visible item; gems (rule objectives) first.

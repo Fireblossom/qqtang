@@ -340,6 +340,11 @@ type Rules struct {
 	// BombResumeMS refills bubbles. NPC identities 30300..30399 (the
 	// battlefield loader numbers them 30300 + index, 0x005E7A33) are rule NPCs.
 	NativeAdventure bool
+	// NativeSpecialElements enables the item-field map elements of
+	// docs/special-elements-re.md: explode stones break their 3x3 and kill
+	// for 500 ms (EliminateByMapElement), multi-life walls lose one life per
+	// verified hit as well, and totem/halo bonuses (AdjustElementBonus).
+	NativeSpecialElements bool
 	// NativeBossNPC permits the CREATE_NPC_BOSS objects of a rule-1/2 Boss
 	// overlay (IDs 30001..30008) to own bubbles as rule NPCs, and admits the
 	// overlay's single cooperative team. Only maps that can host a Boss set it.
@@ -774,6 +779,8 @@ type Actor struct {
 	// adventureAttr is the sum of NPC skill SpeedDel, BombPowerDel and
 	// BombCountDel effects still on the actor (AdjustAdventureAttributes).
 	adventureAttr [3]int
+	// elementBonus is the totem/halo speed, bubble and power bonus.
+	elementBonus [3]int
 	// A live FA5 has been produced, but its authoritative echo is pending.
 	// Keep the actor's outcome uncommitted while excluding local physics.
 	nativeHitPending  bool
