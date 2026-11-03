@@ -53,6 +53,7 @@ class RoomState:
         self.members: dict[int, room.RoomPlayer] = {}  # by seat 1..8
         self.avatars = [SeatAvatar() for _ in range(room.MAX_SEATS)]
         self.pending_password = ""
+        self.backgrounds: list[int] = []  # chat-room backgrounds the server offers
 
     @property
     def room_id(self) -> int:
@@ -310,6 +311,15 @@ def build_room_natives(runtime: UIRuntime, session: Session, avatars: AvatarCach
     def ignore(_packet) -> None:
         pass
 
+    def on_backgrounds(packet) -> None:
+        state.backgrounds = room.parse_background_list(packet.payload)
+        log(f"[room] chat backgrounds {state.backgrounds}")
+
+    def on_background(packet) -> None:
+        # Client.exe 0x0052D3D0 runs setChatBackground(%d) for the new one.
+        _uin, background = room.parse_background_notify(packet.payload)
+        script("setChatBackground", background)
+
     handlers = {
         room.CREATE_ROOM_COMMAND: on_create,
         room.ENTER_ROOM_COMMAND: on_enter,
@@ -330,6 +340,9 @@ def build_room_natives(runtime: UIRuntime, session: Session, avatars: AvatarCach
         room.KICK_OFF_PLAYER_COMMAND: on_kick_result,
         room.START_GAME_COMMAND: on_start_result,
         room.GAME_BEGIN_NOTIFY_COMMAND: on_game_begin,
+        room.BACKGROUND_LIST_COMMAND: on_backgrounds,
+        room.USE_BACKGROUND_NOTIFY_COMMAND: on_background,
+        room.USE_BACKGROUND_COMMAND: ignore,
     }
     # Plain acknowledgements; the state change arrives as a notification.
     for command in (room.PLAYER_PETS_COMMAND, room.READY_COMMAND, room.CANCEL_READY_COMMAND, room.CHANGE_ROLE_COMMAND,
@@ -476,7 +489,13 @@ def build_room_natives(runtime: UIRuntime, session: Session, avatars: AvatarCach
         return session.profile.section_mode if session.profile else 0
 
     def GetChatBgList():
-        return []
+        return list(state.backgrounds)
+
+    def RequestBackgroundList():
+        session.send(room.BACKGROUND_LIST_COMMAND, room.build_background_request(session.uin), room.BACKGROUND_ROUTE)
+
+    def RequestUseBackground(background):
+        session.send(room.USE_BACKGROUND_COMMAND, room.build_background_request(session.uin, int(background)), room.BACKGROUND_ROUTE)
 
     def room_changePlayer(index, team, role):
         """Client.exe 0x00458240: an unchanged team and role keeps the avatar;

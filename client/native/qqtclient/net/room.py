@@ -231,6 +231,28 @@ def _stamp(uin: int, now: int | None) -> bytes:
     return struct.pack(">II", uin, (int(time.time()) if now is None else now) & 0xFFFFFFFF)
 
 
+# Chat-room backgrounds (internal/protocol/game/chat_background.go), route 4.
+BACKGROUND_LIST_COMMAND = 0x00FF
+USE_BACKGROUND_COMMAND = 0x0100
+USE_BACKGROUND_NOTIFY_COMMAND = 0x0101
+BACKGROUND_ROUTE = 4
+
+
+def build_background_request(uin: int, value: int = 0, now: int | None = None) -> bytes:
+    """BackgroundList (value 0, reserved) and UseBackground (value = ID)."""
+    return _stamp(uin, now) + struct.pack(">I", value)
+
+
+def parse_background_list(payload: bytes) -> list[int]:
+    (count,) = struct.unpack_from(">I", payload, 8)
+    return list(struct.unpack_from(f">{count}I", payload, 12))
+
+
+def parse_background_notify(payload: bytes) -> tuple[int, int]:
+    uin, _time, background = struct.unpack_from(">III", payload, 0)
+    return uin, background
+
+
 def build_simple_request(uin: int, now: int | None = None) -> bytes:
     """LeaveRoom, Ready, CancelReady and StartGame carry only UIN and time."""
     return _stamp(uin, now)
