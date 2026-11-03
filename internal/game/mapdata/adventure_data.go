@@ -70,7 +70,7 @@ func adventureConfigSizes(clientRoot string) (map[string]int, error) {
 		if !ok || section == "" {
 			continue
 		}
-		if key = strings.TrimSpace(key); key == "mapCfgSize" || key == "pvedataCfgSize" {
+		if key = strings.TrimSpace(key); key == "mapCfgSize" || key == "pvedataCfgSize" || key == "propCfgSize" {
 			if n, err := strconv.Atoi(strings.TrimSpace(value)); err == nil {
 				sizes[section] = n
 			}
@@ -79,16 +79,24 @@ func adventureConfigSizes(clientRoot string) (map[string]int, error) {
 	return sizes, scanner.Err()
 }
 
-func readAdventureConfig(clientRoot, name string) ([]byte, error) {
+func readAdventureConfig(clientRoot, name string, section ...string) ([]byte, error) {
 	sizes, err := adventureConfigSizes(clientRoot)
 	if err != nil {
 		return nil, fmt.Errorf("read GameCFG.ini: %w", err)
 	}
-	size, ok := sizes[name]
+	key := name
+	if len(section) > 0 {
+		key = section[0]
+	}
+	size, ok := sizes[key]
 	if !ok {
 		return nil, fmt.Errorf("GameCFG.ini has no size for %s", name)
 	}
-	raw, err := os.ReadFile(filepath.Join(clientRoot, "config", name+".dat"))
+	file := name + ".dat"
+	if len(section) > 0 {
+		file = name + ".ini"
+	}
+	raw, err := os.ReadFile(filepath.Join(clientRoot, "config", file))
 	if err != nil {
 		return nil, err
 	}
@@ -238,4 +246,116 @@ func atoi(s string) int {
 func atof(s string) float64 {
 	f, _ := strconv.ParseFloat(strings.TrimSpace(s), 64)
 	return f
+}
+
+// AdventureProp is one <ID2xxxx> of config/errorPPP.ini's PropSet: the props
+// adventure NPCs cast as skills (docs/adventure-npc-ai-re.md §6).
+type AdventureProp struct {
+	ID              uint32
+	Name            string
+	Tier            int
+	InitialInterval uint32
+	PrepareTime     uint32
+	// Trap: present when the prop lies on the caster's cell for TrapTime.
+	HasTrap  bool
+	TrapTime uint32
+	// Move: a projectile of MaxMoveDistance cells at MoveSpeed px/s.
+	HasMove        bool
+	MoveDistance   int
+	MoveSpeed      int
+	HitPlayerPower int
+	IgniteBomb     bool
+	AffectTime     uint32
+	AffectCount    int
+	Delay          uint32
+	AffectShape    int
+	AffectFactor   int
+	AffectObject   int
+	AffectState    int
+	RestoreAttr    bool
+	Effects        map[string]float64 // TriggerState children, e.g. HP -1500
+}
+
+// adventurePropTiers is PropFireIntervalTable (ms by Tier).
+var adventurePropTiers = map[int]uint32{1: 5000, 2: 10000, 3: 15000, 4: 30000, 5: 60000, 6: 150000, 100: 2000, 101: 4000, 102: 1000,
+	103: 20000, 104: 8000, 105: 47000, 106: 47000, 107: 47000, 108: 47000, 109: 47000, 110: 47000, 111: 47000, 112: 47000, 113: 47000,
+	114: 2000, 115: 2000, 116: 9000, 117: 3000, 118: 3000, 900: 3600000}
+
+// FireInterval is the Tier's cooldown.
+func (prop AdventureProp) FireInterval() uint32 { return adventurePropTiers[prop.Tier] }
+
+// LoadAdventureProps reads config/errorPPP.ini. The client looks props up
+// with sscanf("%*2s %ld") and takes the first match (0x005EA2F6), so an ID
+// repeated later in the file is ignored.
+func LoadAdventureProps(clientRoot string) (map[uint32]AdventureProp, error) {
+	text, err := readAdventureConfig(clientRoot, "errorPPP", "prop")
+	if err != nil {
+		return nil, err
+	}
+	props := map[uint32]AdventureProp{}
+	var current *AdventureProp
+	inTrigger := false
+	decoder := xml.NewDecoder(bytes.NewReader(text))
+	for {
+		token, err := decoder.Token()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return nil, err
+		}
+		switch t := token.(type) {
+		case xml.StartElement:
+			attrs := map[string]string{}
+			for _, a := range t.Attr {
+				attrs[a.Name.Local] = a.Value
+			}
+			name := t.Name.Local
+			switch {
+			case strings.HasPrefix(name, "ID") && len(name) > 2:
+				id, convErr := strconv.Atoi(name[2:])
+				if convErr != nil {
+					current = nil
+					continue
+				}
+				if _, seen := props[uint32(id)]; seen {
+					current = nil
+					continue
+				}
+				current = &AdventureProp{ID: uint32(id), Name: attrs["Name"], Tier: atoi(attrs["Tier"]), Effects: map[string]float64{}, AffectState: 1}
+			case current == nil:
+			case name == "PickedUpState":
+				current.InitialInterval = uint32(atoi(attrs["InitialInterval"]))
+			case name == "PrepareState":
+				current.PrepareTime = uint32(atoi(attrs["PrepareTime"]))
+			case name == "TrapState":
+				current.HasTrap, current.TrapTime = true, uint32(atoi(attrs["AffectTime"]))
+			case name == "MoveState":
+				current.HasMove, current.MoveDistance, current.MoveSpeed = true, atoi(attrs["MaxMoveDistance"]), atoi(attrs["MoveSpeed"])
+				current.HitPlayerPower, current.IgniteBomb = atoi(attrs["HitPlayerPower"]), atoi(attrs["IsIgniteBomb"]) != 0
+			case name == "TriggerState":
+				inTrigger = true
+				current.AffectTime, current.AffectCount, current.Delay = uint32(atoi(attrs["AffectTime"])), atoi(attrs["AffectCount"]), uint32(atoi(attrs["Delay"]))
+				current.AffectShape, current.AffectFactor, current.AffectObject = atoi(attrs["PropAffectShap"]), atoi(attrs["AffectFactor"]), atoi(attrs["PropAffectObject"])
+				if state := atoi(attrs["PropAffectState"]); state != 0 {
+					current.AffectState = state
+				}
+				current.RestoreAttr = atoi(attrs["RestorePlayerAttr"]) != 0
+			case inTrigger:
+				var value string
+				if decoder.DecodeElement(&value, &t) == nil {
+					current.Effects[name] = atof(value)
+				}
+			}
+		case xml.EndElement:
+			switch {
+			case t.Name.Local == "TriggerState":
+				inTrigger = false
+			case current != nil && strings.HasPrefix(t.Name.Local, "ID") && t.Name.Local == fmt.Sprintf("ID%d", current.ID):
+				props[current.ID] = *current
+				current = nil
+			}
+		}
+	}
+	return props, nil
 }

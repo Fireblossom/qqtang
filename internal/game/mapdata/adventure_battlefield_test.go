@@ -76,3 +76,28 @@ func TestAdventureConfigsDecodeLikeTheOriginalReader(t *testing.T) {
 		t.Fatalf("stage 1606 skills %+v", six.NPCs)
 	}
 }
+
+func TestAdventurePropsKeepTheFirstOfEachID(t *testing.T) {
+	root := os.Getenv("QQT_TEST_CLIENT_ROOT")
+	if root == "" {
+		t.Skip("QQT_TEST_CLIENT_ROOT is not set")
+	}
+	props, err := LoadAdventureProps(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	scythe := props[21025]
+	if scythe.Tier != 101 || scythe.FireInterval() != 4000 || scythe.PrepareTime != 500 || !scythe.HasMove || scythe.MoveDistance != 10 ||
+		scythe.MoveSpeed != 300 || scythe.AffectObject != 4 || scythe.Effects["HP"] != -1500 {
+		t.Fatalf("21025 %+v", scythe)
+	}
+	if burn := props[21006]; !burn.HasTrap || burn.TrapTime != 60000 || burn.Effects["HP"] != -200 {
+		t.Fatalf("21006 %+v", burn)
+	}
+	if rage := props[21090]; rage.Tier != 5 {
+		t.Fatalf("21090 must be the first entry (Tier 5): %+v", rage)
+	}
+	if _, ok := props[21099]; ok {
+		t.Fatal("21099 is not in this client's PropSet")
+	}
+}
