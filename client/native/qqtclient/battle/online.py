@@ -113,8 +113,11 @@ class OnlineBattle:
             match.HELLO_COMMAND: lambda _packet: None,
         })
         session.on_disconnected.append(self.finish)
+        seat_uins = {member.seat: member.uin for member in context.members.values()}
         runtime.namespace.update({
             "LeaveGame": self.leave,
+            # The player list's buttons ask for the uin on a room seat.
+            "sc_game_getPlayerUin": lambda seat: seat_uins.get(int(seat), 0),
             # Explore-mode panels; empty lists make uiGame hide them.
             "GetPVEBossInfo": lambda: [],
             "GetPVEPlayerInfo": lambda: [],
