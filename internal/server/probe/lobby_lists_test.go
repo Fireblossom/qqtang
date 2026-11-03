@@ -335,3 +335,22 @@ func TestRoomListEntryUsesNativeVisibleCardStates(t *testing.T) {
 		t.Fatalf("full ROOM_INFO population = %d/%d, want 8/8", current, capacity)
 	}
 }
+
+func TestFindFriendStatusSeparatesRoomsAndMatches(t *testing.T) {
+	cases := []struct {
+		online bool
+		room   uint16
+		phase  lobbystate.RoomPhase
+		want   game.FindFriendStatus
+	}{
+		{false, 3, lobbystate.RoomPhaseInMatch, game.FindFriendStatusOffline},
+		{true, 0, 0, game.FindFriendStatusOnline},
+		{true, 3, lobbystate.RoomPhasePreparing, game.FindFriendStatusInRoom},
+		{true, 3, lobbystate.RoomPhaseInMatch, game.FindFriendStatusInGame},
+	}
+	for _, c := range cases {
+		if got := findFriendStatus(c.online, c.room, c.phase); got != c.want {
+			t.Errorf("%+v: %d", c, got)
+		}
+	}
+}

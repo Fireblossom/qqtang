@@ -50,6 +50,9 @@ NICKNAME_SLOT = 20
 EXT_ITEM_SLOTS = 30
 FRIEND_UPDATE_SIZE = 163
 FIND_STATUS_OFFLINE = 0
+FIND_STATUS_ONLINE = 1  # online, not in a room
+FIND_STATUS_IN_ROOM = 2  # inferred: the only status QQTSection 0x10010D83 sends into the room
+FIND_STATUS_IN_GAME = 3
 
 
 @dataclasses.dataclass

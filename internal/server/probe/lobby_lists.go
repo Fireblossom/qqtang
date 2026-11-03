@@ -292,20 +292,30 @@ func (server *Server) findFriendResponse(session *connectionSession, friendUIN u
 	}
 	roomName := ""
 	roomID := uint16(0)
+	var phase lobbystate.RoomPhase
 	if online && hasPresence && presence.RoomID != 0 {
 		roomID = presence.RoomID
 		for _, room := range snapshot.Rooms {
 			if room.RoomID == roomID {
-				roomName = room.Name
+				roomName, phase = room.Name, room.Phase
 				break
 			}
 		}
 	}
-	status := game.FindFriendStatusOffline
-	if online {
-		status = game.FindFriendStatusOnline
-	}
+	status := findFriendStatus(online, roomID, phase)
 	return findFriendResponseProjection(friendUIN, profile, status, roomID, roomName), nil
+}
+
+func findFriendStatus(online bool, roomID uint16, phase lobbystate.RoomPhase) game.FindFriendStatus {
+	switch {
+	case !online:
+		return game.FindFriendStatusOffline
+	case roomID == 0:
+		return game.FindFriendStatusOnline
+	case phase == lobbystate.RoomPhaseInMatch || phase == lobbystate.RoomPhaseSettling:
+		return game.FindFriendStatusInGame
+	}
+	return game.FindFriendStatusInRoom
 }
 
 func findFriendResponseProjection(friendUIN uint32, profile game.PlayerProfile, status game.FindFriendStatus, roomID uint16, roomName string) game.FindFriendResponse {

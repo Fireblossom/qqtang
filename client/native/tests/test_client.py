@@ -292,7 +292,7 @@ class FriendHostTest(unittest.TestCase):
             "fetch_PlayerInfoInPlayerList": lambda index, mode=0: types.SimpleNamespace(m_nPlayerStatus=1, m_PlayerInfo=lobby_players[index]),
             "Win_SetText": lambda path, text: self.calls.append(("Win_SetText", path, text)),
         }
-        for name in ("updatePlayer", "startGlint", "endGlint", "ui_msgBox", "ReceivedRequestAddFriend", "go2playerInfo", "ui_getPlayerDetail"):
+        for name in ("updatePlayer", "startGlint", "endGlint", "ui_msgBox", "ReceivedRequestAddFriend", "go2playerInfo", "ui_getPlayerDetail", "EnterRoom"):
             namespace[name] = lambda *args, name=name: self.calls.append((name, *args))
         runtime = types.SimpleNamespace(namespace=namespace, show_msgbox=lambda *args: self.boxes.append(args))
         self.session = types.SimpleNamespace(
@@ -347,6 +347,27 @@ class FriendHostTest(unittest.TestCase):
         self.assertEqual([box[0] for box in self.boxes], ["1000004玩家已经下线", "1000004[1000004]接受了您的添加好友的请求"])
         self.assertEqual([(box[2], box[4]) for box in self.boxes], [(11, -3), (3, 0)])
         self.assertIn(("ui_msgBox", 3), self.calls)
+
+    def found(self, uin: int, status: int, section: int = 1, room: int = 0) -> bytes:
+        payload = struct.pack(">HI", 0, uin) + "糖四".encode("gbk").ljust(20, b"\0")
+        payload += struct.pack(">HBBIIHHH", 4, 0, 0, 0, 1, 1, section, room) + bytes(20) + bytes([status])
+        payload += struct.pack(">6IHBI4I", 1, 2, 3, 0, 100, 0, 0, 1, 0, 0, 0, 0, 0) + struct.pack(">H", 0)
+        return payload + struct.pack(">IH", 0, 0) + b"\xff" * 8 + struct.pack(">I", 0) + b"\x00"
+
+    def test_pursuit_enters_the_friends_room(self) -> None:
+        self.session.section = types.SimpleNamespace(server_id=1, id=1)
+        self.natives["DoFriendTask"]("", 0, 1000004, 3)  # not a friend: nothing
+        self.assertEqual(self.sent, [])
+        roster = struct.pack(">HIHH", 0, 1000003, 200, 1) + struct.pack(">200I", 1000004, *([0] * 199))
+        self.deliver(friend.FRIEND_LIST_COMMAND, roster)
+        self.natives["DoFriendTask"]("", 0, 1000004, 3)
+        self.assertEqual(self.sent[-1][0], friend.FIND_FRIEND_COMMAND)
+        self.deliver(friend.FIND_FRIEND_COMMAND, self.found(1000004, friend.FIND_STATUS_IN_ROOM, room=5))
+        self.assertEqual(self.calls[-1], ("EnterRoom", 5))
+        self.natives["DoFriendTask"]("", 0, 1000004, 3)
+        self.deliver(friend.FIND_FRIEND_COMMAND, self.found(1000004, friend.FIND_STATUS_IN_GAME, room=5))
+        self.assertEqual(self.calls[-1], ("EnterRoom", 5))  # in a game: only the notice
+        self.assertNotIn(("go2playerInfo", 1000004, 0), self.calls)
 
     def test_find_friend_fills_the_detail(self) -> None:
         self.natives["FindFriend"](9999)

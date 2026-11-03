@@ -28,6 +28,7 @@ from typing import Any, Callable
 
 from . import lobby as lobby_module
 from . import pve
+from .chat import CHANNEL_ITEMTEXT, LOBBY_CHAT, ROOM_CHAT, SYSTEM_COLOR
 from .net import friend
 from .net import lobby as lobby_net
 from .net.player import GameInfo
@@ -50,6 +51,10 @@ ACCEPTED_TEXT = "{name}[{uin}]接受了您的添加好友的请求"
 REFUSED_TEXT = "{name}[{uin}]拒绝了您的添加好友的请求"
 OFFLINE_TEXT = "{uin}玩家已经下线"
 FIND_FAILED_TEXT = "查找好友失败, 请稍后再试"
+# QQTSection 0x1005FCFC / 0x1005FD18 / 0x1005FD40.
+PURSUIT_OFFLINE_TEXT = "你要追踪的玩家不在线"
+PURSUIT_NO_ROOM_TEXT = "该玩家和你在同一小区,且不在房间中"
+PURSUIT_IN_GAME_TEXT = "该玩家正在游戏中,请稍候再继续追踪"
 
 # Message box types (the script's ui_msgBox) and handles used by GetLeaveWord.
 MSGBOX_CLOSE = 3
@@ -86,6 +91,7 @@ class FriendState:
         self.leave_words: list[LeaveWord] = []
         self.detail: friend.FoundPlayer | None = None
         self.asked_names: dict[int, str] = {}
+        self.pursuing = 0  # FIND_FRIEND sent for 好友追踪 (QQTSection +0x154)
 
     def find(self, uin: int) -> Friend | None:
         return next((entry for entry in self.roster if entry.uin == uin), None)
@@ -211,6 +217,12 @@ def build_friend_natives(runtime: UIRuntime, session: Session) -> dict[str, Call
         elif task == TASK_REMOVE:
             if state.find(uin) is not None:
                 session.send(friend.REMOVE_FRIEND_COMMAND, friend.build_remove_friend(session.uin, uin))
+        elif task == TASK_PURSUIT:
+            # CFriendHandler::RequestPursuit 0x1000F7BF: friends only, a
+            # FIND_FRIEND whose answer goes to the pursuit handler.
+            if state.find(uin) is not None:
+                state.pursuing = uin
+                session.send(friend.FIND_FRIEND_COMMAND, friend.build_find_friend(session.uin, uin))
         elif task == TASK_ANSWER:
             # The original refuses with result 0x33; the server only accepts 0 or 1.
             result = friend.RESULT_SUCCESS if str(text) in ANSWER_YES else friend.RESULT_REJECTED
@@ -342,8 +354,37 @@ def build_friend_natives(runtime: UIRuntime, session: Session) -> dict[str, Call
         else:
             push(LeaveWord(REFUSED_TEXT.format(name=name, uin=answer.responder)))
 
+    def system_line(text: str) -> None:
+        # The pursuit notices go to the chat area as a system line.
+        lists = {"selRoom": LOBBY_CHAT, "room": ROOM_CHAT}
+        widget = lists.get(getattr(runtime, "current_screen", ""))
+        if widget is not None and runtime.find(widget) is not None:
+            runtime.namespace["Win_SetColorText"](widget, text, CHANNEL_ITEMTEXT, *SYSTEM_COLOR)
+        log(f"[friend] {text}")
+
+    def pursue(found: friend.FoundPlayer) -> None:
+        """0x10010D83 on the FIND_FRIEND answer: three notices, otherwise
+        go to the friend (CQQTLogic vtbl+600 with server, section, room)."""
+        here = getattr(session, "section", None)
+        same_section = here is not None and (here.server_id, here.id) == (found.server_id, found.section_id)
+        if found.status == friend.FIND_STATUS_OFFLINE:
+            system_line(PURSUIT_OFFLINE_TEXT)
+        elif found.status == friend.FIND_STATUS_ONLINE and same_section:
+            system_line(PURSUIT_NO_ROOM_TEXT)
+        elif found.status == friend.FIND_STATUS_IN_GAME:
+            system_line(PURSUIT_IN_GAME_TEXT)
+        elif same_section and found.room_id:
+            script("EnterRoom", found.room_id)
+        else:
+            # Moving to another section first is not done yet.
+            log(f"[friend] pursuit of {found.uin} needs section {found.server_id}/{found.section_id}, room {found.room_id}")
+
     def on_find(packet) -> None:
         found = friend.parse_find_friend(packet.payload)
+        if found.result == friend.RESULT_SUCCESS and found.uin == state.pursuing:
+            state.pursuing = 0
+            pursue(found)
+            return
         if found.result != friend.RESULT_SUCCESS:
             # QQTSection 0x1001D18A prints this as a coloured system line; this
             # server sends no reply at all when the lookup fails.
@@ -365,7 +406,7 @@ def build_friend_natives(runtime: UIRuntime, session: Session) -> dict[str, Call
     session.on_entered.append(state.reset)
     session.on_disconnected.append(state.reset)
 
-    excluded = ("script", "lobby_players", "lobby_player", "refresh", "message_box", "push", "request_list", "friend_info",
+    excluded = ("script", "system_line", "pursue", "lobby_players", "lobby_player", "refresh", "message_box", "push", "request_list", "friend_info",
                 "section_names", "detail")
     return {name: value for name, value in locals().items()
             if callable(value) and name not in excluded and not name.startswith("on_") and name[0] != "_"}

@@ -34,9 +34,16 @@ const (
 
 type FindFriendStatus byte
 
+// FindFriendStatus as QQTSection's pursuit handler 0x10010D83 reads it:
+// 0 "你要追踪的玩家不在线", 1 online outside a room ("该玩家和你在同一小区,且不在
+// 房间中" when the section matches), 3 "该玩家正在游戏中"; 2, the only value
+// left that leads into the friend's room, is a room still preparing
+// [inferred].
 const (
 	FindFriendStatusOffline FindFriendStatus = 0
 	FindFriendStatusOnline  FindFriendStatus = 1
+	FindFriendStatusInRoom  FindFriendStatus = 2
+	FindFriendStatusInGame  FindFriendStatus = 3
 )
 
 type RoomListOperation byte
