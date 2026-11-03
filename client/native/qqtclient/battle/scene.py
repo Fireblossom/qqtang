@@ -19,6 +19,7 @@ from ..resources import Resources
 from ..runtime import UIRuntime
 from ..script import call_script, log
 from . import mapfile
+from .effect import EffectPlayer
 from .sidecar import (ACTOR_ELIMINATED, ACTOR_TRAPPED, EVENT_ACTOR_ELIMINATED, EVENT_ACTOR_RESPAWNED, EVENT_BOMB_EXPLODED,
                       EVENT_CELL_DAMAGED, EVENT_CELL_DESTROYED, EVENT_MAP_ELEMENT_MOVED, MOVE_DOWN, MOVE_LEFT, MOVE_NONE, MOVE_RIGHT, MOVE_UP, TICK_MS, Sidecar)
 
@@ -258,13 +259,11 @@ def flight_position(flight: dict[str, Any], clock: int, width: int, height: int)
 SOLID_STONE = 17021  # CMESolidStone (docs/special-elements-re.md §3.2)
 EXPLODE_STONE = 17019
 PIG_BEDS = (9007, 9008)  # CMEPigBed, 2x1 (docs/special-elements-re.md §3.10)
-# Special-element effects drawn from their .eff image tracks: the eff
-# player is not written, so these are the main image only, not the full
-# keyframes. Original points are screen coordinates; the field's own
-# origin there is (8, 21).
-STONE_FX = ("object/magic/magic0131.img", 400, 1195)  # Totem_Flame.eff, fast-forwarded 400 ms
-TOTEM_FX = "object/magic/magic0132.img"  # Totem_Ice.eff
-DOOR_FX = "object/magic/magic0048.img"  # TransDoor_Enter/_Trans.eff's 27-frame track
+# Special-element effects (effect.py). Original points are screen
+# coordinates; the field's own origin there is (8, 21).
+STONE_FX, STONE_FX_SKIP_MS = "Totem_Flame.eff", 400  # 0x00619E96 fast-forwards it 400 ms
+TOTEM_FX = "Totem_Ice.eff"
+DOOR_FX = "TransDoor_Enter.eff"  # TransDoor_Trans.eff is byte-identical
 DOOR_FX_MS = 2000
 
 
@@ -666,6 +665,7 @@ class BattleScene:
                     self._draw_element(field, floor, row, col, "stand", self.clock // 100)
                 else:
                     self._draw_element(field, floor, row, col)
+        self._draw_door_glow(field)
         for pickup in self.state["pickups"] or ():
             image_id = pickup["scene"] + 800 if self.map.rule == 8 and pickup["scene"] in (1, 2, 7) else pickup["scene"]
             self._draw_frames(field, f"object/item/item{image_id}_stand.img", self.clock // ITEM_FRAME_MS,
@@ -919,32 +919,45 @@ class BattleScene:
         self._draw_frames(field, mapfile.element_image(element, "trigger") or "", frame,
                           ox + col * CELL - info.offset[0], oy + row * CELL - info.offset[1] - 8)
 
+    def _effects(self) -> EffectPlayer:
+        player = getattr(self, "effect_player", None)
+        if player is None:
+            player = self.effect_player = EffectPlayer(self.resources.read, self.sprites.get)
+        return player
+
+    def _draw_door_glow(self, field: pygame.Surface) -> None:
+        """CMETransDoor plays TransDoor.eff (a looping magic8 glow) at the
+        element effect point (col*40 - offset.x + 8, row*40 - offset.y + 21)."""
+        ox, oy = FIELD_ORIGIN
+        for door in (self.state.get("special") or {}).get("doors") or ():
+            info = self.elements.get(self.map.element(mapfile.LAYER_WALL, door["row"], door["col"]), mapfile.ElementInfo())
+            self._effects().draw(field, "TransDoor.eff", self.clock, ox + door["col"] * CELL - info.offset[0], oy + door["row"] * CELL - info.offset[1])
+
     def _draw_special(self, field: pygame.Surface) -> None:
         """Item-field map elements (docs/special-elements-re.md,
-        transdoor-strip-re.md): explode-stone blasts and active ice totems
-        at (col*40+26, row*40+40), teleporter light on players."""
+        transdoor-strip-re.md): explode-stone blasts (Totem_Flame.eff from
+        400 ms) and active ice totems (Totem_Ice.eff) at (col*40+26,
+        row*40+40); TransDoor_Enter.eff on teleporting players."""
         ox, oy = FIELD_ORIGIN[0] - 8, FIELD_ORIGIN[1] - 21
-        path, start, end = STONE_FX
         stone_fx = getattr(self, "stone_fx", {})
-        for (row, col), began in list(stone_fx.items()):
-            elapsed = self.clock - began + start
-            if elapsed >= end:
-                del stone_fx[(row, col)]
-                continue
-            self._draw_frames(field, path, elapsed // 100, ox + col * CELL + 26, oy + row * CELL + 40)
         special = self.state.get("special") or {}
+        if not stone_fx and not special:
+            return
+        effects = self._effects()
+        for (row, col), began in list(stone_fx.items()):
+            if not effects.draw(field, STONE_FX, self.clock - began + STONE_FX_SKIP_MS, ox + col * CELL + 26, oy + row * CELL + 40):
+                del stone_fx[(row, col)]
         for totem in special.get("totems") or ():
-            frame = max(0, self.clock - totem["since"]) // 100
-            self._draw_frames(field, TOTEM_FX, frame, ox + totem["col"] * CELL + 26, oy + totem["row"] * CELL + 40)
+            effects.draw(field, TOTEM_FX, self.clock - totem["since"], ox + totem["col"] * CELL + 26, oy + totem["row"] * CELL + 40)
         actors = {actor["id"]: actor for actor in self.state["actors"]}
         for effect in special.get("effects") or ():
             actor = actors.get(effect["player"])
             elapsed = self.clock - effect["since"]
             if actor is None or not 0 <= elapsed < DOOR_FX_MS:
-                continue
-            frames = self.sprites.get(DOOR_FX) or ()
-            if frames:
-                self._draw_frames(field, DOOR_FX, elapsed * len(frames) // 2890, FIELD_ORIGIN[0] + actor["x"], FIELD_ORIGIN[1] + actor["y"], additive=True)
+                continue  # the door frees the effect after 2000 ms
+            # Attached to the player's +0x34C point, taken as its sprite point
+            # (position + (10, 30) on the original screen) [inferred].
+            effects.draw(field, DOOR_FX, elapsed, ox + actor["x"] + 10, oy + actor["y"] + 30)
 
     def _draw_adventure_casts(self, field: pygame.Surface) -> None:
         """NPC skill traps (stage 3) and projectiles (stage 4). The props'
