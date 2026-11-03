@@ -323,7 +323,7 @@ func newOnlineMatch(init command) (*onlineMatch, beginView, error) {
 		if adventure != nil {
 			level, _ := mapdata.AdventureLevelFor(levels, info.ExtPoint)
 			participant = adventureParticipant(participant, level)
-			adventure.players[info.PlayerID] = &advPlayer{hp: int(level.HP), maxHP: int(level.HP), damage: int(level.BombPow)}
+			adventure.players[info.PlayerID] = &advPlayer{level: level.Level, hp: int(level.HP), maxHP: int(level.HP), damage: int(level.BombPow)}
 		}
 		participants = append(participants, participant)
 		entry := player{ID: info.PlayerID, Role: uint16(info.RoleID), Team: info.TeamID, ExtPoint: info.ExtPoint}

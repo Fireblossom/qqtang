@@ -337,8 +337,8 @@ type Rules struct {
 	// NativeAdventure is native rule 12 (探险): one cooperative team, flames
 	// never trap players (the caller turns bubble and contact damage into HP,
 	// docs/adventure-combat-re.md), every scene item is a rule pickup, and
-	// BombResumeMS refills bubbles. NPC identities 30001..30199 may own
-	// bubbles like a Boss's.
+	// BombResumeMS refills bubbles. NPC identities 30300..30399 (the
+	// battlefield loader numbers them 30300 + index, 0x005E7A33) are rule NPCs.
 	NativeAdventure bool
 	// NativeBossNPC permits the CREATE_NPC_BOSS objects of a rule-1/2 Boss
 	// overlay (IDs 30001..30008) to own bubbles as rule NPCs, and admits the

@@ -11,11 +11,11 @@ package main
 // After every NPC has spawned and died, the local player standing on the
 // door cell 10 s later asks for the next stage (0x1178).
 //
-// Not the original yet: the PVE NPC controller (MoveStrategy 1..5 at
-// 0x005BAE70, BattleStrategy, aggro, skills such as 21025) is a stand-in
-// that chases a player within View cells and otherwise wanders inside
-// NPCBounds; it never places bubbles. The battlefield lock flashes flame255
-// once when it locks; the flash on bumping its edge (0x005F38F9) is not played.
+// NPCs follow 0x005BAE70 (docs/adventure-npc-ai-re.md): enmity, the
+// battle switch, a random step (MoveStrategy 3) or a chase (4); they never
+// place bubbles. Their skills (props cast with 0x0FB0/0x10F7) are not
+// played yet. The battlefield lock flashes flame255 once when it locks; the
+// flash on bumping its edge (0x005F38F9) is not played.
 
 import (
 	"fmt"
@@ -30,15 +30,13 @@ import (
 )
 
 const (
-	adventureFirstNPCID     = 30001
-	adventureLastNPCID      = 30199
+	// 0x005E7A33 numbers a stage's NPCs 30300 + XML order.
+	adventureFirstNPCID     = 30300
+	adventureLastNPCID      = 30399
 	adventureProtectMS      = 3000 // 0x005B5202(3000) after a hit
 	adventureProduceFromMS  = 3000 // components run 3 s into the round
 	adventureDoorWaitMS     = 10_000
-	adventureNPCDecisionMS  = 500
 	adventureDropBoxRadius  = 2 // drops land in the 5x5 square around the death cell
-	adventureDyingMS        = 3000
-	adventureNPCDieMS       = 400
 	adventurePlayerMaxSpeed = 10
 )
 
@@ -47,6 +45,7 @@ const (
 var adventureDropRanges = [][2]uint32{{401, 1001}, {24000, 24500}, {30000, 32000}, {80, 99}, {25000, 29001}, {9000, 9011}}
 
 type advPlayer struct {
+	level          int // pvedata level (P+0x2b4), the bubble enmity factor
 	hp, maxHP      int
 	damage         int // pvedata bombpow
 	protectedUntil uint32
@@ -63,12 +62,22 @@ type advNPC struct {
 	view           int
 	bounds         mapdata.AdventureNPCBounds
 	protectedUntil uint32
+	// The controller (docs/adventure-npc-ai-re.md): enmity by player,
+	// battle state, move strategy (saved while fighting), target and the
+	// decision counter of the move command.
+	enmity                  map[uint16]int
+	battle                  bool
+	strategy, savedStrategy int
+	target                  uint16
+	counter                 int
+	route                   []battleengine.Cell // cells from here to the goal
 }
 
 type adventureRule struct {
 	stage   mapdata.AdventureStage
 	field   mapdata.AdventureBattlefield
 	players map[uint16]*advPlayer
+	bubbles map[uint32]bool // player bubbles already counted for enmity
 	npcs    map[uint16]*advNPC
 	// produced marks the stage NPCs (by XML index) already sent in 0x138C.
 	produced []bool
@@ -122,7 +131,7 @@ type adventureView struct {
 }
 
 func newAdventureRule(stage mapdata.AdventureStage, field mapdata.AdventureBattlefield, begin game.GameBeginData) *adventureRule {
-	rule := &adventureRule{stage: stage, field: field, players: map[uint16]*advPlayer{}, npcs: map[uint16]*advNPC{},
+	rule := &adventureRule{stage: stage, field: field, players: map[uint16]*advPlayer{}, npcs: map[uint16]*advNPC{}, bubbles: map[uint32]bool{},
 		produced: make([]bool, len(stage.NPCs)), drops: map[uint16][]game.BossItemInfo{}, seen: map[string]bool{},
 		rng:     rand.New(rand.NewSource(int64(begin.SpawnSeed)<<32 | int64(begin.ItemSeed))),
 		roundMS: begin.GameTimeMS * 1000}
@@ -245,7 +254,8 @@ func (match *onlineMatch) createAdventureNPCs(batch game.CreatePVENPCEvent, now 
 			rule.produced[index] = true
 		}
 		cell := battleengine.Cell{Row: int16(info.BornRow), Col: int16(info.BornCol)}
-		n := &advNPC{base: uint16(info.NPCBaseID), info: info, hp: int(info.HP), maxHP: int(info.HP), defense: int(info.Defense), harm: int(info.Harm), view: int(info.View), bounds: bounds}
+		n := &advNPC{base: uint16(info.NPCBaseID), info: info, hp: int(info.HP), maxHP: int(info.HP), defense: int(info.Defense), harm: int(info.Harm), view: int(info.View), bounds: bounds,
+			enmity: map[uint16]int{}, strategy: int(info.MoveStrategy)}
 		n.id, n.role, n.pos, n.facing, n.lastTick, n.speed, n.bossSpeed = id, uint16(info.ImageID), battleengine.PositionAtCellCenter(cell), 3, now, byte(min(info.Speed, 10)), true
 		rule.npcs[id] = n
 	}
@@ -347,6 +357,7 @@ func (match *onlineMatch) adventureTick(now uint32) {
 	match.advanceAdventureField(now)
 	if arbitrator {
 		match.produceAdventureNPCs(now)
+		match.adventureEnmity()
 	}
 	match.lockAdventureField(now)
 	// The local player's own damage: fire, then NPC contact (0x00615E6D).
@@ -385,7 +396,7 @@ func (match *onlineMatch) adventureTick(now uint32) {
 			match.adventureNPCDeath(n, now)
 			continue
 		}
-		match.adventureNPCMove(n, now)
+		match.adventureNPCTick(n, now)
 		match.publishNPCMove(&rule.outbox, &n.boxNPCActor, now, false)
 		n.lastTick = now
 	}
@@ -563,48 +574,238 @@ func (match *onlineMatch) adventureDrops(n *advNPC) []game.GameItem {
 	return items
 }
 
-// adventureNPCMove is the stand-in controller: chase the nearest living
-// player within View cells, otherwise wander inside NPCBounds.
-func (match *onlineMatch) adventureNPCMove(n *advNPC, now uint32) {
-	inside := func(c battleengine.Cell) bool {
-		b := n.bounds
-		return b.EndRow == 0 && b.EndCol == 0 || int(c.Row) >= b.BeginRow && int(c.Row) <= b.EndRow && int(c.Col) >= b.BeginCol && int(c.Col) <= b.EndCol
+// npcBoundsContain is 0x005BAD90: NPCBounds, both edges included.
+func (n *advNPC) boundsContain(c battleengine.Cell) bool {
+	b := n.bounds
+	if b.EndRow == 0 && b.EndCol == 0 {
+		return true
 	}
-	if len(n.path) == 0 && now >= n.nextDecision {
-		n.nextDecision = now + adventureNPCDecisionMS
-		here := n.pos.Cell()
-		var target *battleengine.Cell
-		best := 1 << 30
-		for _, a := range match.engine.Actors() {
-			if a.State != battleengine.ActorActive {
+	return int(c.Row) >= b.BeginRow && int(c.Row) <= b.EndRow && int(c.Col) >= b.BeginCol && int(c.Col) <= b.EndCol
+}
+
+func (match *onlineMatch) livingAdventurePlayers() []battleengine.Actor {
+	var out []battleengine.Actor
+	for _, a := range match.engine.Actors() {
+		if p := match.adventure.players[a.PlayerID]; p != nil && !p.dead && a.State != battleengine.ActorEliminated {
+			out = append(out, a)
+		}
+	}
+	return out
+}
+
+// addEnmity is 0x005BC67A.
+func (n *advNPC) addEnmity(player uint16, v int) {
+	old, exists := n.enmity[player]
+	switch {
+	case !exists:
+		n.enmity[player] = max(v, 0)
+	case v < 0 && -v > old:
+		n.enmity[player] = 0
+	default:
+		n.enmity[player] = old + v
+	}
+}
+
+// adventureEnmity runs the arbitrator's per-frame enmity sources: a player
+// entering an NPC's view with an existing zero entry gains 20 (0x00616143),
+// and a player bubble placed in the current battlefield gives every NPC in
+// battle 5 x the placer's level (0x00610BA0 / 0x0060857C).
+func (match *onlineMatch) adventureEnmity() {
+	rule := match.adventure
+	players := match.livingAdventurePlayers()
+	for _, n := range rule.orderedNPCs() {
+		if n.dead {
+			continue
+		}
+		for _, a := range players {
+			c, nc := a.Position.Cell(), n.pos.Cell()
+			if !n.boundsContain(c) || int(abs32(int32(c.Col-nc.Col))) > n.view || int(abs32(int32(c.Row-nc.Row))) > n.view {
 				continue
 			}
-			c := a.Position.Cell()
-			dr, dc := int(abs32(int32(c.Row-here.Row))), int(abs32(int32(c.Col-here.Col)))
-			if dr <= n.view && dc <= n.view && dr+dc < best {
-				best, target = dr+dc, &c
+			if v, exists := n.enmity[a.PlayerID]; exists && v == 0 {
+				n.addEnmity(a.PlayerID, 20)
 			}
-		}
-		var options []battleengine.Cell
-		for d := byte(0); d < 4; d++ {
-			next := boxStep(here, d)
-			if inside(next) && match.npcOpen(next, here) {
-				options = append(options, next)
-			}
-		}
-		if len(options) > 0 {
-			choice := options[match.adventure.rng.Intn(len(options))]
-			if target != nil {
-				for _, o := range options {
-					if abs32(int32(o.Row-target.Row))+abs32(int32(o.Col-target.Col)) < abs32(int32(choice.Row-target.Row))+abs32(int32(choice.Col-target.Col)) {
-						choice = o
-					}
-				}
-			}
-			n.path = []battleengine.Cell{choice}
 		}
 	}
+	f := rule.currentField()
+	live := map[uint32]bool{}
+	for _, bomb := range match.engine.Bombs() {
+		live[bomb.ID] = true
+		p := rule.players[bomb.OwnerID]
+		if p == nil || bomb.RuleOwned || rule.bubbles[bomb.ID] {
+			continue
+		}
+		rule.bubbles[bomb.ID] = true
+		if c := bomb.Cell; int(c.Col) < f.Col || int(c.Col) > f.Col+f.W-1 || int(c.Row) < f.Row || int(c.Row) > f.Row+f.H-1 {
+			continue
+		}
+		for _, n := range rule.npcs {
+			if !n.dead && n.battle {
+				n.addEnmity(bomb.OwnerID, 5*p.level)
+			}
+		}
+	}
+	for id := range rule.bubbles {
+		if !live[id] {
+			delete(rule.bubbles, id)
+		}
+	}
+}
+
+// adventureNPCTick is the move command 0x006112AF for a PVE NPC: decide
+// every 7th frame (at once again after a 9), then walk.
+func (match *onlineMatch) adventureNPCTick(n *advNPC, now uint32) {
+	if n.counter <= bossDecideFrames {
+		n.counter++
+	} else if d := match.adventureNPCDecide(n); d == bossDirStop {
+		n.path = nil
+	} else {
+		n.counter = 0
+		n.path = []battleengine.Cell{bossStep(n.pos.Cell(), d)}
+	}
 	match.bossMoveNPC(&n.boxNPCActor, now)
+}
+
+// adventureNPCDecide is vtbl+0x70 0x005BAE70: the battle switch, then the
+// move strategy (PVE NPCs never place bubbles; skills are not played yet).
+func (match *onlineMatch) adventureNPCDecide(n *advNPC) int {
+	players := match.livingAdventurePlayers()
+	// 0x005BADE5 with GEnmity 0x005BBBFF.
+	total := 0
+	for _, a := range players {
+		if n.boundsContain(a.Position.Cell()) {
+			if _, exists := n.enmity[a.PlayerID]; !exists {
+				n.enmity[a.PlayerID] = 0
+			}
+			total += n.enmity[a.PlayerID]
+		}
+	}
+	switch {
+	case n.battle && total == 0:
+		n.battle, n.strategy, n.route = false, n.savedStrategy, nil
+	case !n.battle && total >= 1:
+		n.battle, n.savedStrategy, n.strategy, n.route = true, n.strategy, 4, nil
+	}
+	here := n.pos.Cell()
+	if len(n.route) > 1 && match.adventureRouteValid(n, here) {
+		return directionBetween(here, n.route[1])
+	}
+	switch n.strategy {
+	case 4:
+		return match.adventureChase(n, here, players)
+	default:
+		// 3 (every stage NPC); 1/2 patrols are not in any stage file and
+		// fall back to 3 anyway when their path fails.
+		goal := here
+		switch match.adventure.rng.Intn(1000) & 3 {
+		case 0:
+			goal.Col--
+		case 1:
+			goal.Col++
+		case 2:
+			goal.Row--
+		case 3:
+			goal.Row++
+		}
+		n.route = match.adventureFindPath(n, here, goal)
+	}
+	if len(n.route) < 2 {
+		n.route = nil
+		return bossDirStop
+	}
+	return directionBetween(here, n.route[1])
+}
+
+// adventureChase is MoveStrategy 4 (0x005BB33A) with the target picked by
+// BattleStrategy (0x005BC134: 0 lowest enmity, 1 highest, 2 none).
+func (match *onlineMatch) adventureChase(n *advNPC, here battleengine.Cell, players []battleengine.Actor) int {
+	if p := match.adventure.players[n.target]; n.target != 0 && (p == nil || p.dead) {
+		n.addEnmity(n.target, -10_000_000)
+	}
+	n.target = 0
+	best := 0
+	for _, a := range players {
+		if !n.boundsContain(a.Position.Cell()) {
+			continue
+		}
+		v := n.enmity[a.PlayerID]
+		switch n.info.BattleStrategy {
+		case 0:
+			if n.target == 0 || v < best {
+				n.target, best = a.PlayerID, v
+			}
+		case 1:
+			if n.target == 0 || v > best {
+				n.target, best = a.PlayerID, v
+			}
+		}
+	}
+	if n.target == 0 {
+		n.route = nil
+		return bossDirStop
+	}
+	target, _ := actorByID(match.engine.Actors(), n.target)
+	n.route = match.adventureFindPath(n, here, target.Position.Cell())
+	if len(n.route) < 2 {
+		n.route = nil
+		return bossDirStop
+	}
+	return directionBetween(here, n.route[1])
+}
+
+// adventureRouteValid is 0x005BB7F6: in battle the target must still stand
+// on the goal; no cell may hold a bubble or a blocking element.
+func (match *onlineMatch) adventureRouteValid(n *advNPC, here battleengine.Cell) bool {
+	for len(n.route) > 0 && n.route[0] != here {
+		n.route = n.route[1:]
+	}
+	if len(n.route) < 2 {
+		return false
+	}
+	if n.battle {
+		target, ok := actorByID(match.engine.Actors(), n.target)
+		if !ok || target.Position.Cell() != n.route[len(n.route)-1] {
+			return false
+		}
+	}
+	for _, c := range n.route[1:] {
+		if !match.npcOpen(c, here) {
+			return false
+		}
+	}
+	return true
+}
+
+// adventureFindPath is the NPC pathfinder (0x005F10D3) kept inside
+// NPCBounds; bubbles and blocking elements are obstacles, players and NPCs
+// are not. Unit steps, so a breadth-first search finds the same lengths as
+// the original A*; ties may differ.
+func (match *onlineMatch) adventureFindPath(n *advNPC, from, goal battleengine.Cell) []battleengine.Cell {
+	if from == goal || !n.boundsContain(goal) || !match.npcOpen(goal, from) {
+		return nil
+	}
+	previous := map[battleengine.Cell]battleengine.Cell{from: from}
+	queue := []battleengine.Cell{from}
+	for pops := 0; len(queue) > 0 && pops < 500; pops++ {
+		c := queue[0]
+		queue = queue[1:]
+		if c == goal {
+			var path []battleengine.Cell
+			for ; c != from; c = previous[c] {
+				path = append([]battleengine.Cell{c}, path...)
+			}
+			return append([]battleengine.Cell{from}, path...)
+		}
+		for _, d := range [4]int{1, 3, 2, 0} { // up, down, left, right (0x005F1410)
+			next := bossStep(c, d)
+			if _, seen := previous[next]; seen || !n.boundsContain(next) || !match.npcOpen(next, from) {
+				continue
+			}
+			previous[next] = c
+			queue = append(queue, next)
+		}
+	}
+	return nil
 }
 
 // adventureDoor is 0x00615CAC.

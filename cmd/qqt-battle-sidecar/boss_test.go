@@ -1,6 +1,7 @@
 package main
 
 import (
+	"math/rand"
 	"os"
 	"testing"
 
@@ -611,5 +612,29 @@ func TestBossDeathLeavesTenSecondsOnTheTimer(t *testing.T) {
 	late.applyBossDeath(late.boss.actors[30001], 235_000, nil)
 	if late.boss.endsAt != 0 {
 		t.Fatal("a death in the last 10 s moved the timer")
+	}
+}
+
+func TestAdventureNPCEntersBattleAfterAPlayerEntersItsView(t *testing.T) {
+	m := bossMatch(t, 1)
+	m.boss = nil
+	m.adventure = &adventureRule{players: map[uint16]*advPlayer{1: {hp: 100, maxHP: 100}, 2: {hp: 100, maxHP: 100}}, npcs: map[uint16]*advNPC{},
+		bubbles: map[uint32]bool{}, seen: map[string]bool{}, rng: rand.New(rand.NewSource(1))}
+	n := &advNPC{view: 3, enmity: map[uint16]int{}, strategy: 3, info: game.PVENPC{BattleStrategy: 1}}
+	one, _ := actorByID(m.engine.Actors(), 1)
+	n.id, n.pos, n.speed, n.bossSpeed = 30300, battleengine.PositionAtCellCenter(battleengine.Cell{Row: one.Position.Cell().Row, Col: one.Position.Cell().Col - 3}), 3, true
+	m.adventure.npcs[n.id] = n
+	m.adventureNPCDecide(n) // the first decision creates the zero entries
+	m.adventureEnmity()     // in view with a zero entry: +20
+	if n.enmity[1] != 20 {
+		t.Fatalf("enmity %v", n.enmity)
+	}
+	if d := m.adventureNPCDecide(n); !n.battle || n.strategy != 4 || n.target != 1 || d != 0 {
+		t.Fatalf("battle %v strategy %d target %d dir %d", n.battle, n.strategy, n.target, d)
+	}
+	m.adventure.players[1].dead = true
+	m.adventureNPCDecide(n)
+	if n.battle && n.target == 1 {
+		t.Fatal("still chasing a dead player")
 	}
 }

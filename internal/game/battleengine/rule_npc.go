@@ -8,7 +8,7 @@ import "fmt"
 // bubbles can finish; the rule controller owns the active/dead lifecycle.
 func (engine *Engine) RegisterRuleNPCOwner(id uint16) error {
 	boxNPC := engine != nil && engine.rules.NativeBoxPhysics && id >= 20001 && id < 23000
-	boss := engine != nil && (engine.rules.NativeBossNPC && id >= 30001 && id <= 30008 || engine.rules.NativeAdventure && id >= 30001 && id <= 30199)
+	boss := engine != nil && (engine.rules.NativeBossNPC && id >= 30001 && id <= 30008 || engine.rules.NativeAdventure && id >= 30300 && id < 30400)
 	if !boxNPC && !boss {
 		return fmt.Errorf("rule NPC owner %d is not permitted", id)
 	}
