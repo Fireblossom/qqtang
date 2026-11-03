@@ -72,6 +72,7 @@ type bossGeneral struct {
 	gate   uint32
 	last   [4]uint32 // skills 1..3 by index
 	inited bool
+	pirate pirateState
 }
 
 // bossWorld is the per-frame view the original reads from the scene.
@@ -334,7 +335,9 @@ func (ai *bossGeneral) decide(w *bossWorld, b *bossActor) int {
 	if ai.collectItem(w, here) {
 		return ai.lastDir()
 	}
-	if r := b.role; r == 24 || r == 28 || r > 28 && r != 33 && r != 34 {
+	if r := b.role; r == pirateFirstMate || r == pirateCaptainHook {
+		ai.pirateSkills(w, b)
+	} else if r == 24 || r == 28 || r > 28 {
 		ai.genericSkills(w, b)
 	}
 	if ai.followPath(here) && !ai.bombNearestBox(w, here) {
@@ -748,6 +751,16 @@ func (match *onlineMatch) applyBossSkill(b *bossActor, skill game.NPCUseSkillEve
 		match.logf("Boss %d skill %d throws %d objects", b.id, skill.SkillID, len(skill.Items))
 	case 3:
 		match.logf("Boss %d skill 3 (transformation item %d) is not played yet", b.id, bossTransformItem)
+	case 5:
+		match.boss.bubbleLock++
+		match.logf("Boss %d locks the bubbles", b.id)
+	case 8:
+		match.boss.bubbleLock = 0
+		match.logf("Boss %d unlocks the bubbles", b.id)
+	case 6:
+		match.pirateWave(b, skill)
+	case 7, 9:
+		// No receiver branch (0x005FE05D).
 	default:
 		match.logf("Boss %d skill %d is not played yet", b.id, skill.SkillID)
 	}

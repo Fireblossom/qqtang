@@ -599,6 +599,7 @@ func (match *onlineMatch) step(step command) ([]battleengine.Event, error) {
 			}
 		}
 		match.boxInput(&action)
+		match.bossInput(&action)
 		match.launchMachine(&action)
 		events = append(events, match.throwMachine(&action)...)
 		var actions []battleengine.Action

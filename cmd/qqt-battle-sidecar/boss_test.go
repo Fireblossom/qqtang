@@ -354,3 +354,102 @@ func TestGriffinGreetsWhenBornButSailorDoesNot(t *testing.T) {
 		t.Fatalf("talk %+v %v", talk, err)
 	}
 }
+
+func pirateMatch(t *testing.T, local uint16, role uint16, hp int) (*onlineMatch, *bossActor, *bossGeneral) {
+	m := bossMatch(t, local)
+	b := m.boss.actors[30001]
+	b.role, b.hp = role, hp
+	return m, b, b.ai.(*bossGeneral)
+}
+
+func skillIDs(t *testing.T, m *onlineMatch) []uint16 {
+	var ids []uint16
+	for _, e := range mirrored(t, m, game.NotifyNPCUseSkill) {
+		s, _ := game.ParseNPCUseSkillEvent(e)
+		ids = append(ids, s.SkillID)
+	}
+	return ids
+}
+
+func TestCaptainHookRunsHisScriptsInOrder(t *testing.T) {
+	m, b, ai := pirateMatch(t, 1, pirateCaptainHook, 10)
+	w := m.bossWorld(4999)
+	ai.pirateSkills(w, b)
+	if len(skillIDs(t, m)) != 0 {
+		t.Fatal("skill before 5 s")
+	}
+	// Script 0: 9 (silent), 4 traps, 5 lock, 6 two waves, in one frame.
+	ai.pirateSkills(m.bossWorld(8000), b)
+	if got := skillIDs(t, m); len(got) != 4 || got[0] != 4 || got[1] != 5 || got[2] != 6 || got[3] != 6 {
+		t.Fatalf("script 0 sent %v", got)
+	}
+	if m.boss.bubbleLock != 1 || ai.pirate.script != 1 {
+		t.Fatalf("lock %d script %d", m.boss.bubbleLock, ai.pirate.script)
+	}
+	action := battleengine.Action{PlaceBomb: true}
+	m.bossInput(&action)
+	if action.PlaceBomb {
+		t.Fatal("locked player placed a bubble")
+	}
+	ai.pirateSkills(m.bossWorld(12999), b)
+	if len(skillIDs(t, m)) != 0 {
+		t.Fatal("no 5 s spacing")
+	}
+	for _, at := range []uint32{13000, 18000, 23000} { // scripts 1, 2 (waves), 3 (unlock)
+		ai.pirateSkills(m.bossWorld(at), b)
+	}
+	if m.boss.bubbleLock != 0 || ai.pirate.script != 4 {
+		t.Fatalf("after scripts 1..3 lock %d script %d", m.boss.bubbleLock, ai.pirate.script)
+	}
+	mirrored(t, m, game.NotifyNPCUseSkill)
+	ai.pirateSkills(m.bossWorld(28000), b) // script 4: skill 7, then a 15 s rest
+	ai.pirateSkills(m.bossWorld(38000), b)
+	if got := skillIDs(t, m); len(got) != 1 || got[0] != 7 {
+		t.Fatalf("skill 7 rest: %v", got)
+	}
+	ai.pirateSkills(m.bossWorld(43000), b)
+	if ai.pirate.script != 6 {
+		t.Fatalf("script 0 did not run again after the rest: %d", ai.pirate.script)
+	}
+}
+
+func TestFirstMateWaitsForHisHPGates(t *testing.T) {
+	m, b, ai := pirateMatch(t, 1, pirateFirstMate, 10)
+	ai.pirateSkills(m.bossWorld(8000), b)
+	if len(skillIDs(t, m)) != 0 || ai.pirate.script != 0 {
+		t.Fatal("first mate cast at HP 10")
+	}
+	b.hp = 6
+	ai.pirateSkills(m.bossWorld(13000), b)
+	if got := skillIDs(t, m); len(got) != 1 || got[0] != 4 || ai.pirate.script != 0 {
+		t.Fatalf("HP 6 sent %v, script %d", got, ai.pirate.script)
+	}
+	b.hp = 4
+	ai.pirateSkills(m.bossWorld(18000), b)
+	if got := skillIDs(t, m); len(got) != 3 || ai.pirate.script != 1 {
+		t.Fatalf("HP 4 sent %v, script %d", got, ai.pirate.script)
+	}
+}
+
+func TestPirateBubbleWavesLandOnPeers(t *testing.T) {
+	m, b, ai := pirateMatch(t, 1, pirateCaptainHook, 10)
+	ai.pirateSkills(m.bossWorld(8000), b)
+	peer := bossMatch(t, 2)
+	waves := 0
+	for _, e := range mirrored(t, m, game.NotifyNPCUseSkill) {
+		peer.applyRemote(30001, game.BattleMessageData{DataID: game.NotifyNPCUseSkill, Data: e.Body})
+		if s, _ := game.ParseNPCUseSkillEvent(e); s.SkillID == 6 {
+			waves++
+		}
+	}
+	k := min(8000/16000+5, 15)
+	owned := 0
+	for _, bomb := range peer.engine.Bombs() {
+		if bomb.OwnerID == 30001 {
+			owned++
+		}
+	}
+	if waves != 2 || owned != 3*k || peer.boss.bubbleLock != 1 {
+		t.Fatalf("waves %d, Boss bubbles %d (want %d), lock %d", waves, owned, 3*k, peer.boss.bubbleLock)
+	}
+}

@@ -22,7 +22,8 @@ func (engine *Engine) DropRuleBatch(ownerID uint16, placedAtMS uint32, bombs []R
 	if engine == nil {
 		return nil, fmt.Errorf("battle engine is nil")
 	}
-	if engine.actorIndex(ownerID) < 0 {
+	// A pirate Boss's falling bubbles (skill 6) are owned by the Boss.
+	if engine.actorIndex(ownerID) < 0 && !engine.HasRuleNPCOwner(ownerID) {
 		return nil, fmt.Errorf("rule batch owner %d is not a participant", ownerID)
 	}
 	for index, bomb := range bombs {

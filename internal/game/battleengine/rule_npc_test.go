@@ -130,3 +130,17 @@ func TestBossGlueSlowsPlayersOnly(t *testing.T) {
 		t.Fatalf("glue %v %+v", err, e.FieldObjects())
 	}
 }
+
+func TestRuleNPCOwnsDroppedBatch(t *testing.T) {
+	cfg := testConfig()
+	cfg.Rules.NativeBossNPC = true
+	e := mustEngine(t, cfg)
+	bombs := []RuleBomb{{Cell: Cell{Row: 1, Col: 2}, Power: 1, FromCol: 0}}
+	if _, err := e.DropRuleBatch(30001, 100, bombs, nil); err == nil {
+		t.Fatal("unregistered owner dropped bubbles")
+	}
+	e.RegisterRuleNPCOwner(30001)
+	if events, err := e.DropRuleBatch(30001, 100, bombs, nil); err != nil || len(events) != 1 || e.Bombs()[0].OwnerID != 30001 {
+		t.Fatalf("Boss batch %v %+v", err, events)
+	}
+}

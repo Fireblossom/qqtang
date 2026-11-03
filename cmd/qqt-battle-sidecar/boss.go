@@ -84,6 +84,11 @@ type bossRule struct {
 	seen    map[string]bool
 	events  []battleengine.Event // local outcomes for the next step's result
 	flights []bossFlight         // skill objects in the air
+	// Pirate skill 6's bubbles flying in along their rows, for drawing.
+	bombFlights map[uint32]kickFlight
+	// The local player's bubble lock: skill 5 adds one, skill 8 clears it,
+	// a Boss's death adds one (P+0x28c).
+	bubbleLock int
 }
 
 type bossActorView struct {
@@ -100,8 +105,10 @@ type bossActorView struct {
 }
 
 type bossView struct {
-	Actors  []bossActorView  `json:"actors"`
-	Flights []bossFlightView `json:"flights,omitempty"`
+	Actors      []bossActorView       `json:"actors"`
+	Flights     []bossFlightView      `json:"flights,omitempty"`
+	BombFlights map[uint32]kickFlight `json:"bomb_flights,omitempty"`
+	BubbleLock  bool                  `json:"bubble_lock,omitempty"`
 }
 
 // bossSpeedTable is 0x007F4988, the NPCs' speed per level in pixels per
@@ -118,7 +125,7 @@ func newBossRule(entry mapdata.CompetitiveMap, begin game.GameBeginData) *bossRu
 	if len(mapdata.LookupCompetitiveBossCandidates(entry.ID)) == 0 {
 		return nil
 	}
-	rule := &bossRule{actors: map[uint16]*bossActor{}, players: len(begin.Players), seen: map[string]bool{},
+	rule := &bossRule{actors: map[uint16]*bossActor{}, players: len(begin.Players), seen: map[string]bool{}, bombFlights: map[uint32]kickFlight{},
 		rng: rand.New(rand.NewSource(int64(begin.SpawnSeed)<<32 | int64(begin.ItemSeed)))}
 	a, b := entry.SpawnGroupA, entry.SpawnGroupB
 	cell := func(c mapdata.CompetitiveCell) battleengine.Cell {
@@ -481,6 +488,7 @@ func (match *onlineMatch) applyBossDeath(b *bossActor, now uint32, items []game.
 		return
 	}
 	b.dead, b.deadAt, b.hp, b.moving, b.path = true, now, 0, false, nil
+	match.boss.bubbleLock++
 	match.applyBossDrops(b, items, false)
 	match.logf("Boss %d died at %d", b.id, now)
 }
@@ -623,6 +631,16 @@ func (match *onlineMatch) bossView() *bossView {
 		view.Actors = append(view.Actors, bossActorView{ID: b.id, Role: b.role, X: b.pos.X, Y: b.pos.Y, Facing: byte(battleDirection(b.facing)),
 			Moving: b.moving, HP: b.hp, MaxHP: int(b.info.HP), Born: b.bornAt, ProtectedUntil: b.protectedUntil})
 	}
+	now := match.engine.ElapsedMS()
+	for id, f := range match.boss.bombFlights {
+		if f.Until <= now {
+			delete(match.boss.bombFlights, id)
+		}
+	}
+	if len(match.boss.bombFlights) > 0 {
+		view.BombFlights = match.boss.bombFlights
+	}
+	view.BubbleLock = match.boss.bubbleLock > 0
 	for _, f := range match.boss.flights {
 		view.Flights = append(view.Flights, bossFlightView{Scene: f.scene, FromRow: f.from.Row, FromCol: f.from.Col, Row: f.to.Row, Col: f.to.Col, Start: f.start, Lands: f.lands})
 	}

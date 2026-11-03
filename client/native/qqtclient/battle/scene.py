@@ -583,6 +583,7 @@ class BattleScene:
                               ox + aim["col"] * CELL, oy + aim["row"] * CELL)
         flights = dict(kick.get("flights") or {})
         flights.update((self.state.get("machine") or {}).get("flights") or {})
+        flights.update((self.state.get("boss") or {}).get("bomb_flights") or {})
         for bomb in self.state["bombs"] or ():
             if bomb.get("hidden"):
                 continue
