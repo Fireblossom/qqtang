@@ -81,6 +81,9 @@ func (engine *Engine) applyFlameHazards() []Event {
 
 func (engine *Engine) applyFlameHazardsMatching(accept func(*Actor) bool) []Event {
 	events := make([]Event, 0)
+	if engine.rules.NativeAdventure {
+		return events // rule 12 never traps; damage is HP (0x00607A23)
+	}
 	for actorIndex := range engine.actors {
 		actor := &engine.actors[actorIndex]
 		if actor.State != ActorActive || engine.actorHarmProtected(actor) || (accept != nil && !accept(actor)) {

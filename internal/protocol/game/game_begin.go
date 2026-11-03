@@ -17,7 +17,10 @@ const (
 	// accept the outer event but dispatch the inner payload to the wrong case.
 	NotifyGameBeginID = 0x0FA1
 
-	DefaultAdventureGameTimeMS = 10 * 60 * 1000
+	// DefaultAdventureGameTimeMS is in seconds despite the field's name: rule
+	// 12's slot 1 (Client.exe 0x00608F83) multiplies GAME_BEGIN's game time by
+	// 1000 for the round length and its countdown, so 600 is ten minutes.
+	DefaultAdventureGameTimeMS = 10 * 60
 	// DefaultCompetitiveGameTimeMS preserves the legacy GAME_BEGIN scalar.
 	// Client.exe renders competitive countdowns from the active native rule
 	// object's vtable instead, so this field must not be reused as the server's

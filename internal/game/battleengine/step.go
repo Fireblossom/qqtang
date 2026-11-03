@@ -216,6 +216,7 @@ movement:
 	engine.resolveActionProjectiles()
 	events = append(events, engine.expireMovementStatuses()...)
 	events = append(events, engine.expireTraps()...)
+	engine.adventureBombResume(events)
 	if event, ended := engine.evaluateTerminal(); ended {
 		events = append(events, event)
 	}

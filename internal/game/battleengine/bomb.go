@@ -45,7 +45,11 @@ func (engine *Engine) prospectiveBomb(actorIndex int, requireEmpty bool) (Bomb, 
 		return Bomb{}, false
 	}
 	capacity := engine.actorCapabilities(actor, actor.Facing).EffectiveBombCapacity
-	if engine.activeBombCount(actor.PlayerID) >= int(capacity) {
+	used := engine.activeBombCount(actor.PlayerID)
+	if engine.rules.NativeAdventure && actor.BombResumeMS != 0 {
+		used = actor.adventureUsed
+	}
+	if used >= int(capacity) {
 		return Bomb{}, false
 	}
 	return Bomb{

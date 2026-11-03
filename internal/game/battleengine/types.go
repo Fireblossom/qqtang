@@ -296,6 +296,11 @@ type Participant struct {
 	MaxBombCapacity byte
 	BombPower       byte
 	MaxBombPower    byte
+	// BombResumeMS is an adventure player's pvedata resspeed: with
+	// Rules.NativeAdventure one used bubble comes back after this long
+	// without placing one (0x005B9F1C), besides the usual return when a
+	// bubble explodes. Zero keeps the ordinary live-bubble count.
+	BombResumeMS uint32
 }
 
 // ParticipantFromNativeRole creates the exact initial combat attributes used
@@ -329,6 +334,12 @@ type Rules struct {
 	NativeDurabilityLayers byte
 	// NativeBoxPhysics permits explicit rule-8 dynamic element registration.
 	NativeBoxPhysics bool
+	// NativeAdventure is native rule 12 (探险): one cooperative team, flames
+	// never trap players (the caller turns bubble and contact damage into HP,
+	// docs/adventure-combat-re.md), every scene item is a rule pickup, and
+	// BombResumeMS refills bubbles. NPC identities 30001..30199 may own
+	// bubbles like a Boss's.
+	NativeAdventure bool
 	// NativeBossNPC permits the CREATE_NPC_BOSS objects of a rule-1/2 Boss
 	// overlay (IDs 30001..30008) to own bubbles as rule NPCs, and admits the
 	// overlay's single cooperative team. Only maps that can host a Boss set it.
@@ -531,6 +542,11 @@ func (rules Rules) pickupSupported(sceneID uint32) bool {
 }
 
 func (rules Rules) rulePickup(sceneID uint32) bool {
+	if rules.NativeAdventure {
+		if _, _, native := supportedPickupEffect(sceneID); !native && rules.objectiveIndex(sceneID) < 0 {
+			return true // materials and rewards: the server counts them
+		}
+	}
 	for _, id := range rules.RulePickupSceneIDs {
 		if id != 0 && id == sceneID {
 			return true
@@ -746,6 +762,11 @@ type Actor struct {
 	// Native 005ad322 retains the previous coordinate in actor +0x3a8/+0x3ac.
 	// 005f43b1 dispatches pickup/contact handlers only across that cell boundary.
 	nativePreviousPosition Position
+	// Adventure bubble refill (0x005B9F1C): the used count, the time since the
+	// last placement or refill, and the actor's live bubbles last tick.
+	adventureUsed    int
+	adventureResume  uint32
+	adventureBubbles map[uint32]struct{}
 	// A live FA5 has been produced, but its authoritative echo is pending.
 	// Keep the actor's outcome uncommitted while excluding local physics.
 	nativeHitPending  bool
