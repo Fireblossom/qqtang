@@ -187,9 +187,9 @@ func TestKinAuthorityTitleAndTopRankingCodecs(t *testing.T) {
 	topRequestPayload := make([]byte, 24)
 	binary.BigEndian.PutUint32(topRequestPayload[0:4], 1_000_001)
 	topPacket := makeLocalPacketForTest(t, append(buildInnerHeaderForTest(FetchKinTopCommand), topRequestPayload...))
-	topResponse, err := BuildLocalFetchKinTopResponse(topPacket, 0, 456, 1_000_001,
-		[]KinOrderInfo{{KinIndex: 9, Name: "糖家族", Value: 100, Order: 1, BeforeOrder: 1}},
-		[]KinOrderInfo{{KinIndex: 9, Name: "糖家族", Value: 200, Order: 1, BeforeOrder: 1}})
+	topResponse, err := BuildLocalFetchKinTopResponse(topPacket, 0, 456, 1_000_001, [4][]KinOrderInfo{
+		KinTopTelecomHonor:    {{KinIndex: 9, Name: "糖家族", Value: 100, Order: 1, BeforeOrder: 1}},
+		KinTopTelecomActivity: {{KinIndex: 9, Name: "糖家族", Value: 200, Order: 1, BeforeOrder: 1}}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -203,7 +203,9 @@ func TestKinAuthorityTitleAndTopRankingCodecs(t *testing.T) {
 	// Fixed twenty-entry honor and activity arrays must remain present even
 	// when only one actual family exists. Compact names keep the payload below
 	// the schema's 1278-byte decoded maximum.
-	if len(top.Payload) < 10+4+40*13+4 || len(top.Payload) >= 1278 {
+	// 42 records of at least 13 bytes, two of them named 糖家族 (6 GBK bytes);
+	// GroupMemberNum sits just before the two empty SameGroup records.
+	if len(top.Payload) != 14+42*13+2*6+4 || binary.BigEndian.Uint16(top.Payload[len(top.Payload)-2*13-2:]) != KinTopGroupSize {
 		t.Fatalf("kin top compact payload length = %d", len(top.Payload))
 	}
 }

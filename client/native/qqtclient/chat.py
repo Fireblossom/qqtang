@@ -67,6 +67,10 @@ def build_chat_natives(runtime: UIRuntime, session: Session) -> dict[str, Callab
             return
         if commands.handle(text):
             return
+        kin_state = getattr(session, "kin", None)
+        if int(mode) != 1 and kin_state is not None and kin_state.chat_name:
+            script("DoKinTask", "", text, len(text.encode("gbk", "replace")), 0, 12)  # /KINCHAT on
+            return
         if int(mode) == 1:
             if bugle_count() > 0 and session.send(chat.SECTION_CHAT_COMMAND, chat.build_section_chat(session.uin, text, bugle=True)):
                 use_bugle()
@@ -92,7 +96,8 @@ def build_chat_natives(runtime: UIRuntime, session: Session) -> dict[str, Callab
         1: the kin chat channel, not supported."""
         if int(kind) == 0:
             return whisper_target["name"] if whisper_target["uin"] else "0"
-        return ""
+        kin_state = getattr(session, "kin", None)
+        return kin_state.chat_name if kin_state is not None else ""
 
     def GetBugleNumber():
         return bugle_count()

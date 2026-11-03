@@ -124,8 +124,10 @@ func (server *Server) handleKinMessage(session *connectionSession, connectionID 
 		if operationErr == nil {
 			server.refreshLiveKinProfiles(session, request.DstUIN)
 			event := game.KinEventNotification{
+				// QQTSection 0x100167E2 clears the lobby kin of the player in
+				// Uin, so it names the removed member (docs/kin-re.md §8.8).
 				EventType: game.KinEventNotificationMemberRemoved, KinIndex: request.KinIndex,
-				UIN: request.UIN, Nickname: session.Profile.Nickname,
+				UIN: request.DstUIN, Nickname: targetNickname,
 				AttachUIN: request.DstUIN, AttachNickname: targetNickname,
 				Description: fmt.Sprintf("%s已被移出家族", targetNickname),
 			}
@@ -156,10 +158,29 @@ func (server *Server) handleKinMessage(session *connectionSession, connectionID 
 		if responseErr != nil {
 			return server.rejectedKin(connectionID, inspection.Command, responseErr)
 		}
+		result := protocolMessageResult{handled: true, response: response, result: kinDispatchResult("exit", operationErr)}
 		if operationErr == nil {
 			server.refreshLiveKinProfiles(session, request.UIN)
+			// The original reply only marks "leaving"; event 8 naming the
+			// leaver clears the leaver's own kin (AttachUin is the recipient)
+			// and removes the row for everyone else (docs/kin-re.md §8.6).
+			event := game.KinEventNotification{
+				EventType: game.KinEventNotificationMemberRemoved, KinIndex: request.KinIndex,
+				UIN: request.UIN, Nickname: session.Profile.Nickname, AttachUIN: request.UIN, AttachNickname: session.Profile.Nickname,
+				Description: fmt.Sprintf("%s离开了家族", session.Profile.Nickname),
+			}
+			result.followUp, responseErr = game.BuildLocalKinEventNotification(data, event)
+			if responseErr != nil {
+				return server.rejectedKin(connectionID, inspection.Command, responseErr)
+			}
+			result.followUpResult = "qqt_kin_exit_self_refresh"
+			result.postResponse = func() {
+				server.broadcastKinNotification(request.KinIndex, request.UIN, "qqt_kin_exit_peer_refresh", func(template []byte) ([]byte, error) {
+					return game.BuildLocalKinEventNotification(template, event)
+				})
+			}
 		}
-		return protocolMessageResult{handled: true, response: response, result: kinDispatchResult("exit", operationErr)}
+		return result
 
 	case game.DismissKinCommand:
 		request, decodeErr := game.DecodeLocalDismissKinRequest(data)
@@ -246,19 +267,22 @@ func (server *Server) handleKinMessage(session *connectionSession, connectionID 
 		if decodeErr != nil {
 			return server.rejectedKin(connectionID, inspection.Command, decodeErr)
 		}
-		honor, rankingErr := server.playerStore.ListKinRanking(context.Background(), false, 20)
-		if rankingErr != nil {
-			return server.rejectedKin(connectionID, inspection.Command, rankingErr)
+		var tabs [4][]game.KinOrderInfo
+		for tab, query := range [4]struct {
+			section uint32
+			active  bool
+		}{{1, false}, {1, true}, {2, false}, {2, true}} {
+			entries, rankingErr := server.playerStore.ListKinRanking(context.Background(), query.active, query.section, game.KinTopTabRecords)
+			if rankingErr != nil {
+				return server.rejectedKin(connectionID, inspection.Command, rankingErr)
+			}
+			tabs[tab] = protocolKinRanking(entries)
 		}
-		activity, rankingErr := server.playerStore.ListKinRanking(context.Background(), true, 20)
-		if rankingErr != nil {
-			return server.rejectedKin(connectionID, inspection.Command, rankingErr)
-		}
-		response, responseErr := game.BuildLocalFetchKinTopResponse(data, 0, uint32(time.Now().Unix()), request.UIN, protocolKinRanking(honor), protocolKinRanking(activity))
+		response, responseErr := game.BuildLocalFetchKinTopResponse(data, 0, uint32(time.Now().Unix()), request.UIN, tabs)
 		if responseErr != nil {
 			return server.rejectedKin(connectionID, inspection.Command, responseErr)
 		}
-		return protocolMessageResult{handled: true, response: response, result: fmt.Sprintf("qqt_kin_top_honor_%d_activity_%d", len(honor), len(activity))}
+		return protocolMessageResult{handled: true, response: response, result: fmt.Sprintf("qqt_kin_top_%d_%d_%d_%d", len(tabs[0]), len(tabs[1]), len(tabs[2]), len(tabs[3]))}
 
 	case game.OperateKinCommand:
 		request, decodeErr := game.DecodeLocalKinOperationRequest(data)
@@ -329,9 +353,10 @@ func (server *Server) handleKinMessage(session *connectionSession, connectionID 
 		if buildErr != nil {
 			return server.rejectedKin(connectionID, inspection.Command, buildErr)
 		}
+		// The 0x00BD is the answer's only reply: a follow-up without a
+		// response is never written (server.go sends follow-ups after one).
 		result := protocolMessageResult{
-			handled: true, result: kinDispatchResult("invitation_answer", operationErr),
-			followUp: followUp, followUpResult: "qqt_kin_invitation_answer_notify",
+			handled: true, response: followUp, result: kinDispatchResult("invitation_answer", operationErr),
 		}
 		if operationErr == nil && accepted {
 			server.refreshLiveKinProfiles(session, answer.ResponderUIN)

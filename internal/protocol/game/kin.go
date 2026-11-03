@@ -671,45 +671,55 @@ func BuildLocalKinBadgeResponse(packet []byte, result uint16, request KinBadgeRe
 	return buildKinResponse(packet, SetKinBadgeCommand, payload)
 }
 
-// BuildLocalFetchKinTopResponse follows the original TopKinInfo layout: the
-// first twenty KinOrderInfo records are honor rank and the next twenty are
-// activity rank. Both arrays are schema-fixed; unused records are encoded as
-// zero values rather than omitted.
-func BuildLocalFetchKinTopResponse(packet []byte, result uint16, orderTime, uin uint32, honor, activity []KinOrderInfo) ([]byte, error) {
-	if len(honor) > 20 || len(activity) > 20 {
-		return nil, fmt.Errorf("kin ranking sizes honor=%d activity=%d exceed 20", len(honor), len(activity))
-	}
+// KinTopTabs is the order of TopKinInfo's forty records that QQTSection
+// 0x100179C2 reads: telecom honor, telecom activity, netcom honor, netcom
+// activity, ten each.
+const (
+	KinTopTelecomHonor = iota
+	KinTopTelecomActivity
+	KinTopNetcomHonor
+	KinTopNetcomActivity
+	KinTopTabRecords = 10
+	// KinTopGroupSize is GroupMemberNum: the client divides orders by it
+	// with no zero check (0x10017926) and writes 100 for a remainder of 0,
+	// so a group is taken to be 100 families [inferred].
+	KinTopGroupSize = 100
+)
+
+// BuildLocalFetchKinTopResponse encodes TopKinInfo: the four ten-record tabs,
+// GroupNum, GroupMemberNum and the two fixed SameGroupKinInfo records
+// (schema cap 2 with no count; left zero, so the client shows the own row
+// from its KinBase).
+func BuildLocalFetchKinTopResponse(packet []byte, result uint16, orderTime, uin uint32, tabs [4][]KinOrderInfo) ([]byte, error) {
 	payload := binary.BigEndian.AppendUint16(nil, result)
 	payload = binary.BigEndian.AppendUint32(payload, orderTime)
 	payload = binary.BigEndian.AppendUint32(payload, uin)
 	payload = binary.BigEndian.AppendUint32(payload, orderTime)
-	for index := 0; index < 20; index++ {
-		entry := KinOrderInfo{}
-		if index < len(honor) {
-			entry = honor[index]
+	for _, tab := range tabs {
+		if len(tab) > KinTopTabRecords {
+			return nil, fmt.Errorf("kin ranking tab has %d records, maximum %d", len(tab), KinTopTabRecords)
 		}
+		for index := 0; index < KinTopTabRecords; index++ {
+			entry := KinOrderInfo{}
+			if index < len(tab) {
+				entry = tab[index]
+			}
+			var err error
+			payload, err = entry.appendNetworkBinary(payload)
+			if err != nil {
+				return nil, err
+			}
+		}
+	}
+	payload = binary.BigEndian.AppendUint16(payload, 1)
+	payload = binary.BigEndian.AppendUint16(payload, KinTopGroupSize)
+	for range 2 {
 		var err error
-		payload, err = entry.appendNetworkBinary(payload)
+		payload, err = KinOrderInfo{}.appendNetworkBinary(payload)
 		if err != nil {
 			return nil, err
 		}
 	}
-	for index := 0; index < 20; index++ {
-		entry := KinOrderInfo{}
-		if index < len(activity) {
-			entry = activity[index]
-		}
-		var err error
-		payload, err = entry.appendNetworkBinary(payload)
-		if err != nil {
-			return nil, err
-		}
-	}
-	// No same-group slice is authored until the client grouping semantics are
-	// proven. The two zero counts are authoritative and therefore no trailing
-	// KinOrderInfo records follow.
-	payload = binary.BigEndian.AppendUint16(payload, 0)
-	payload = binary.BigEndian.AppendUint16(payload, 0)
 	return buildKinResponse(packet, FetchKinTopCommand, payload)
 }
 

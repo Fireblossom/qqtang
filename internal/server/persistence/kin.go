@@ -294,7 +294,8 @@ func (store *PlayerStore) ListKinMembers(ctx context.Context, index uint32) ([]K
 // ListKinRanking returns a stable top-family projection. Historical order is
 // initialized to the current order until a periodic ranking snapshot exists;
 // this is preferable to fabricating movement on every fetch.
-func (store *PlayerStore) ListKinRanking(ctx context.Context, activePoint bool, limit int) ([]KinRankingEntry, error) {
+// A non-zero section (1 telecom, 2 netcom) keeps that section's families.
+func (store *PlayerStore) ListKinRanking(ctx context.Context, activePoint bool, section uint32, limit int) ([]KinRankingEntry, error) {
 	if limit <= 0 || limit > 20 {
 		return nil, fmt.Errorf("kin ranking limit %d is outside 1..20", limit)
 	}
@@ -303,7 +304,7 @@ func (store *PlayerStore) ListKinRanking(ctx context.Context, activePoint bool, 
 		column = "active_point"
 	}
 	rows, err := store.db.QueryContext(ctx, `SELECT kin_index, name, `+column+`
-		FROM kin_families ORDER BY `+column+` DESC, kin_index ASC LIMIT ?`, limit)
+		FROM kin_families WHERE ? = 0 OR kin_section = ? ORDER BY `+column+` DESC, kin_index ASC LIMIT ?`, section, section, limit)
 	if err != nil {
 		return nil, fmt.Errorf("list kin %s ranking: %w", column, err)
 	}
@@ -440,9 +441,14 @@ func (store *PlayerStore) AnswerKinInvitation(ctx context.Context, responderUIN,
 	if err != nil {
 		return Kin{}, err
 	}
+	// QQTSection 0x10015516 answers with the inviting kin's owner in the
+	// first field (its cached KinBase.m_dwUin), not the inviter, so an
+	// elder's invitation is found by target and kin; inviterUIN is only a
+	// hint (docs/kin-re.md §8.4).
 	var createdUnix uint32
-	if err := tx.QueryRowContext(ctx, `SELECT created_unix FROM kin_invitations
-		WHERE inviter_uin = ? AND target_uin = ? AND kin_index = ?`, inviterUIN, responderUIN, index).Scan(&createdUnix); errors.Is(err, sql.ErrNoRows) {
+	if err := tx.QueryRowContext(ctx, `SELECT inviter_uin, created_unix FROM kin_invitations
+		WHERE target_uin = ? AND kin_index = ? ORDER BY (inviter_uin = ?) DESC, created_unix DESC LIMIT 1`,
+		responderUIN, index, inviterUIN).Scan(&inviterUIN, &createdUnix); errors.Is(err, sql.ErrNoRows) {
 		return Kin{}, ErrKinInvitationMissing
 	} else if err != nil {
 		return Kin{}, fmt.Errorf("load kin invitation: %w", err)

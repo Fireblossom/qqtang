@@ -89,6 +89,7 @@ class Friend:
 class LeaveWord:
     text: str
     application: friend.FriendApplication | None = None
+    script: str = ""  # a queued script call, e.g. ShowkininviteDlg (QQTSection 0x10016084)
 
 
 class FriendState:
@@ -159,6 +160,8 @@ def build_friend_natives(runtime: UIRuntime, session: Session) -> dict[str, Call
     def push(word: LeaveWord) -> None:
         state.leave_words.append(word)
         script("startGlint")
+
+    session.push_script_word = lambda code: push(LeaveWord("", script=code))
 
     def request_list() -> None:
         session.send(friend.FRIEND_LIST_COMMAND, friend.build_friend_list(session.uin))
@@ -317,7 +320,9 @@ def build_friend_natives(runtime: UIRuntime, session: Session) -> dict[str, Call
             return
         word = state.leave_words.pop(0)
         remaining = len(state.leave_words)
-        if word.application is not None:
+        if word.script:
+            script(word.script)
+        elif word.application is not None:
             runtime.namespace["Win_SetText"](FRIEND_DIALOG + ".name", word.application.nickname)
             runtime.namespace["Win_SetText"](FRIEND_DIALOG + ".text", word.application.text)
             script("ReceivedRequestAddFriend", word.application.requester)

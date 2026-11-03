@@ -99,10 +99,10 @@ func TestKinInvitationUsesNativeServerOperationRoundTrip(t *testing.T) {
 	}
 
 	answerResult := server.handleKinMessage(responder, "kin-answer", answerPacket)
-	if !answerResult.handled || len(answerResult.response) != 0 || len(answerResult.followUp) == 0 {
+	if !answerResult.handled || len(answerResult.response) == 0 || len(answerResult.followUp) != 0 {
 		t.Fatalf("answer result = handled:%t response:%d follow:%d", answerResult.handled, len(answerResult.response), len(answerResult.followUp))
 	}
-	answerInspection, err := game.InspectLocalPacket(answerResult.followUp)
+	answerInspection, err := game.InspectLocalPacket(answerResult.response)
 	if err != nil {
 		t.Fatal(err)
 	}

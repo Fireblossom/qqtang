@@ -260,16 +260,29 @@ def build_slash(runtime: UIRuntime, session: Session, whisper_target: dict[str, 
                 return False
             script("C2CInviteNegotiate", number, 1)
             return True
-        if command == 0x1B:  # /KINCHAT on|off
+        kin_state = getattr(session, "kin", None)
+        if command == 0x1B:  # /KINCHAT on|off (FUN_1002DE18)
             if args and args[0].lower() == "off":
                 whisper_target.update(uin=0, name="")
+                if kin_state is not None:
+                    kin_state.chat_name = ""
                 script("UpdateUIWisper")
                 return True
             if args and args[0].lower() == "on":
-                line("你不在任何一个家族中,无法进入家族聊天")  # no kin yet
+                whisper_target.update(uin=0, name="")
+                if kin_state is None or kin_state.kin_index < 1:
+                    line("你不在任何一个家族中,无法进入家族聊天")
+                    return True
+                name = kin_state.base.m_szName
+                kin_state.chat_name = name if name and len(name.encode("gbk", "replace")) <= 0x27 else str(kin_state.kin_index)
+                script("UpdateUIKinChat")
                 return True
             return False
-        log(f"[slash] {word} is not done yet")  # /ki
+        if command == 0x1C:  # /ki uin
+            if len(args) not in (1, 2) or bad_uin(number):
+                return False
+            script("DoKinTask", "", "", 0, number, 4)
+            return True
         return False
 
     def handle(text: str) -> bool:
