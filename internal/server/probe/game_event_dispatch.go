@@ -353,21 +353,39 @@ func (server *Server) handleGameEventMessage(config ListenerConfig, session *con
 					// that follow-up can exist.
 					var harmed game.EntityHarmedEvent
 					harmed, relayErr = game.ParseEntityHarmedEvent(event)
-					var route competitiveHarmRoute
+					adventure := false
 					if relayErr == nil {
+						if category, categoryErr := server.activeSessionMatchCategory(session); categoryErr == nil && category == roomstate.CategoryAdventure {
+							// Rule 12 (client/native/docs/adventure-combat-re.md §3):
+							// the last field is the HP left, not the loss. Each client
+							// reports its own player; the arbitrator reports NPCs.
+							adventure = true
+							if harmed.ObjectID != session.Profile.PlayerID {
+								relayErr = server.requireMatchArbitrator(session, "adventure harm notify")
+							}
+							if relayErr == nil {
+								response, event, relayErr = game.BuildLocalGameEventRelay(data)
+							}
+							if relayErr == nil {
+								result = fmt.Sprintf("qqt_game_event_ack_adventure_%d_harmed_hp_left_%d", harmed.ObjectID, harmed.LossHP)
+							}
+						}
+					}
+					var route competitiveHarmRoute
+					if relayErr == nil && !adventure {
 						route, relayErr = server.requireCompetitiveHarmTarget(session, harmed.ObjectID, harmed.LossHP)
 					}
-					if relayErr == nil {
+					if relayErr == nil && !adventure {
 						response, event, relayErr = game.BuildLocalGameEventRelay(data)
 					}
 					fresh := true
 					remaining := byte(0)
-					if relayErr == nil && route.Kind == competitiveHarmParticipant {
+					if relayErr == nil && !adventure && route.Kind == competitiveHarmParticipant {
 						remaining, fresh, relayErr = route.Battle.RecordNativeHarm(
 							harmed.ObjectID, harmed.Time, harmed.PosX, harmed.PosY, harmed.IsAvatar, harmed.LossHP,
 						)
 					}
-					if relayErr == nil {
+					if relayErr == nil && !adventure {
 						result = fmt.Sprintf("qqt_game_event_ack_%s_%s_%d_harmed_%d_remaining_%d", route.Rule, route.Kind, harmed.ObjectID, harmed.LossHP, remaining)
 						if !fresh {
 							result += "_transport_duplicate"
