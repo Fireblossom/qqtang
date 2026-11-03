@@ -19,10 +19,13 @@ const (
 // NativeSpawnModeForMap selects the client placement consumer supported by
 // the map data. Older ordinary maps store every spawn in group A and leave
 // group B empty; the client uses its single-pool/free placement consumer for
-// those maps even when the room uses standard team rules. Maps with both
-// pools retain the native two-team consumer unless the room is free-rule.
+// those maps even when the room uses standard team rules. Rules 1 and 2
+// always do: their slot 1 (0x005F49DD, 0x0060BCEC) calls only 0x005B653F,
+// the interleaved table, team or not. Other maps with both pools keep the
+// two-team consumer (rule 3's is confirmed by Tutorial2) unless the room is
+// free-rule.
 func NativeSpawnModeForMap(entry mapdata.CompetitiveMap, usesFreeRule bool) NativeSpawnMode {
-	if usesFreeRule || len(entry.SpawnGroupB) == 0 {
+	if usesFreeRule || len(entry.SpawnGroupB) == 0 || entry.NativeRule == 1 || entry.NativeRule == 2 {
 		return NativeSpawnFree
 	}
 	return NativeSpawnTeams

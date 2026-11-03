@@ -335,6 +335,20 @@ func TestCompetitiveAIMovementPathChangeFlushesWithoutChangingHeldSequence(t *te
 		t.Fatal(err)
 	}
 	engine := runtime.runtime.EngineSnapshot()
+	observation, err := engine.Observation(20001)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Block the cell left of wherever the spawn table placed the AI.
+	var blocked battleengine.Cell
+	for _, actor := range observation.Actors {
+		if actor.PlayerID == 20001 {
+			blocked = battleengine.Cell{Row: actor.Cell.Row, Col: actor.Cell.Col - 1}
+		}
+	}
+	if blocked.Col < 0 {
+		t.Fatalf("AI spawned on the left edge: %+v", observation.Actors)
+	}
 	action := battleengine.Action{PlayerID: 20001, Move: battleengine.DirectionLeft}
 	if _, err = engine.Step([]battleengine.Action{action}); err != nil {
 		t.Fatal(err)
@@ -343,7 +357,7 @@ func TestCompetitiveAIMovementPathChangeFlushesWithoutChangingHeldSequence(t *te
 	if err != nil || !emitted {
 		t.Fatalf("initial sample: %+v/%v/%v", first, emitted, err)
 	}
-	if _, err = engine.ApplyVerifiedBombPlacementAt(1, battleengine.Cell{Row: 1, Col: 2}, 1, 0, engine.ElapsedMS()); err != nil {
+	if _, err = engine.ApplyVerifiedBombPlacementAt(1, blocked, 1, 0, engine.ElapsedMS()); err != nil {
 		t.Fatal(err)
 	}
 	if _, err = engine.Step([]battleengine.Action{action}); err != nil {

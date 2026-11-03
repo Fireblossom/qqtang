@@ -23,6 +23,16 @@ func TestNativeSpawnModeForMapUsesTheMapNativePoolLayout(t *testing.T) {
 	if got := NativeSpawnModeForMap(twoPools, true); got != NativeSpawnFree {
 		t.Fatalf("two-pool free-rule map mode = %d, want free placement", got)
 	}
+	for _, rule := range []uint32{1, 2} {
+		twoPools.NativeRule = rule
+		if got := NativeSpawnModeForMap(twoPools, false); got != NativeSpawnFree {
+			t.Fatalf("rule %d two-pool map mode = %d, want the interleaved table", rule, got)
+		}
+	}
+	twoPools.NativeRule = 3
+	if got := NativeSpawnModeForMap(twoPools, false); got != NativeSpawnTeams {
+		t.Fatalf("rule 3 two-pool map mode = %d, want team placement", got)
+	}
 }
 
 func TestNativeSpawnPlacementMatchesFreeAndTeamConsumers(t *testing.T) {
