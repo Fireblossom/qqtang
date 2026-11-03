@@ -38,6 +38,7 @@ class SpriteCache:
         self.resources = resources
         self.sprites: dict[str, list[tuple[pygame.Surface | None, int, int]] | None] = {}
         self.canvases: dict[str, tuple[int, int]] = {}
+        self.aliases: dict[str, str] = {}
 
     def get(self, path: str) -> list[tuple[pygame.Surface | None, int, int]] | None:
         key = path.lower()
@@ -52,6 +53,8 @@ class SpriteCache:
 
     def _load(self, path: str, key: str) -> list[tuple[pygame.Surface | None, int, int]] | None:
         data = self.resources.read(path)
+        if data is None and key in self.aliases:
+            data = self.resources.read(self.aliases[key])
         if data is None:
             log(f"[missing image] {path}")
             return None
