@@ -542,8 +542,9 @@ func (server *Server) handleGameEventMessage(config ListenerConfig, session *con
 					var item game.ProduceItem
 					item, relayErr = game.ParseProduceItem(event)
 					var battle *match.CompetitiveBattle
+					var rule mapdata.CompetitiveRuleKind
 					if relayErr == nil {
-						battle, relayErr = server.requireCompetitiveRule(session, mapdata.CompetitiveRuleKickBomb, 0)
+						battle, rule, relayErr = server.requireCompetitiveProduceItem(session, item)
 					}
 					if relayErr == nil && !battle.IsArbitrator(session.Profile.PlayerID) {
 						relayErr = fmt.Errorf("produce-item player %d is not the match arbitrator", session.Profile.PlayerID)
@@ -552,7 +553,7 @@ func (server *Server) handleGameEventMessage(config ListenerConfig, session *con
 						response, event, relayErr = game.BuildLocalGameEventRelay(data)
 					}
 					if relayErr == nil {
-						result = fmt.Sprintf("qqt_game_event_ack_kick_bomb_produce_item_%d", item.ItemID)
+						result = fmt.Sprintf("qqt_game_event_ack_%s_produce_item_%d", rule, item.ItemID)
 					}
 				case game.RequestGetBun, game.RequestPutBun:
 					var action game.BunActionEvent

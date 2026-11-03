@@ -283,6 +283,10 @@ type CompetitiveMap struct {
 	// by live scene objects; this immutable pool is the server-side starting
 	// point for rule overlays that author NOTIFY_DISPATCH_BOMB.
 	AirborneCells []CompetitiveCell
+	// MachineSupplyCells are floor-layer objects answering virtual type 6
+	// (canMove & 0x10). Rule 7 uses their native row-major order, excluding
+	// the middle three columns, rather than arbitrary walkable cells.
+	MachineSupplyCells []CompetitiveCell
 }
 
 // CompetitiveWallItemSource records why GAME_BEGIN contains (or deliberately
@@ -418,6 +422,7 @@ func LoadCatalogWithMapRules(clientRoot, mapRulesPath string) (*Catalog, error) 
 			WallItemSource: wallItemSource, HiddenItemCells: metadata.hiddenItemCells,
 			SpawnGroupA: metadata.spawnGroupA, SpawnGroupB: metadata.spawnGroupB, ObjectiveCells: metadata.objectiveCells,
 			AirborneCells: metadata.airborneCells, Battlefield: metadata.battlefield,
+			MachineSupplyCells: metadata.machineSupplyCells,
 		}
 	}
 	catalog.restoreCompetitiveWallItemRules()
@@ -462,15 +467,16 @@ func filterItemFieldWallItemRules(rules []CompetitiveWallItemRule) []Competitive
 }
 
 type competitiveMapMetadata struct {
-	mapHash         [32]byte
-	nativeRule      uint32
-	wallItemRules   []CompetitiveWallItemRule
-	hiddenItemCells []CompetitiveCell
-	spawnGroupA     []CompetitiveCell
-	spawnGroupB     []CompetitiveCell
-	objectiveCells  []CompetitiveCell
-	airborneCells   []CompetitiveCell
-	battlefield     CompetitiveBattlefield
+	mapHash            [32]byte
+	nativeRule         uint32
+	wallItemRules      []CompetitiveWallItemRule
+	hiddenItemCells    []CompetitiveCell
+	spawnGroupA        []CompetitiveCell
+	spawnGroupB        []CompetitiveCell
+	objectiveCells     []CompetitiveCell
+	airborneCells      []CompetitiveCell
+	machineSupplyCells []CompetitiveCell
+	battlefield        CompetitiveBattlefield
 }
 
 func loadCompetitiveMapMetadata(mapDirectory string, elements map[uint32]competitiveMapElement, mapID uint32, fileName string) (competitiveMapMetadata, error) {
@@ -533,6 +539,12 @@ func loadMapMetadata(mapDirectory string, elements map[uint32]competitiveMapElem
 	}
 	if !airborne {
 		return metadata, nil
+	}
+	if metadata.nativeRule == 7 {
+		metadata.machineSupplyCells, err = parseMachineSupplyCells(elements, mapBytes)
+		if err != nil {
+			return metadata, fmt.Errorf("competitive map %d %s: %w", mapID, fileName, err)
+		}
 	}
 	metadata.airborneCells, err = parseCompetitiveAirborneCells(metadata.battlefield)
 	if err != nil {
@@ -1087,6 +1099,7 @@ func cloneCompetitiveMap(entry CompetitiveMap) CompetitiveMap {
 	entry.SpawnGroupB = append([]CompetitiveCell(nil), entry.SpawnGroupB...)
 	entry.ObjectiveCells = append([]CompetitiveCell(nil), entry.ObjectiveCells...)
 	entry.AirborneCells = append([]CompetitiveCell(nil), entry.AirborneCells...)
+	entry.MachineSupplyCells = append([]CompetitiveCell(nil), entry.MachineSupplyCells...)
 	entry.Battlefield = entry.Battlefield.Clone()
 	return entry
 }

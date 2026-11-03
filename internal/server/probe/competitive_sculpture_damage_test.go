@@ -3,6 +3,7 @@ package probe
 import (
 	"encoding/hex"
 	"fmt"
+	"os"
 	"path/filepath"
 	"testing"
 
@@ -64,7 +65,14 @@ func TestSculptureDamageMap1218StatueGeometry(t *testing.T) {
 
 func newSculptureDamageTestServer(t *testing.T) (*Server, *connectionSession, *connectionSession, *match.CompetitiveBattle) {
 	t.Helper()
-	catalog, err := mapdata.LoadCatalog(filepath.Join("..", "..", "..", "runtime", "client-patched"))
+	root := os.Getenv("QQT_AI_TEST_CLIENT_ROOT")
+	if root == "" {
+		root = filepath.Join("..", "..", "..", "runtime", "client-patched")
+	}
+	catalog, err := mapdata.LoadCatalog(root)
+	if err != nil && os.Getenv("QQT_AI_TEST_CLIENT_ROOT") != "" {
+		t.Fatal(err)
+	}
 	if err != nil {
 		// The public source checkout keeps the same native fixtures under
 		// client/original; clean source-only clones may not have either copy.

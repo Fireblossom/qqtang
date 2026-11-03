@@ -517,6 +517,7 @@ func ruleOptions(entry mapdata.CompetitiveMap, local, arbitrator uint16) (battle
 		return rules, nil, nil
 	case mapdata.CompetitiveRuleMachine:
 		rules.NativeDurabilityLayers = 4
+		rules.NativeMachineSupply = true
 		rules.DisableBombPlacement = true
 		rules.ExternalConclusion = true
 		return rules, nil, nil
@@ -873,6 +874,16 @@ func (match *onlineMatch) applyRemote(sender uint16, message game.BattleMessageD
 	}
 	schema := uint16(message.DataID)
 	event := game.GameEvent{Schema: schema, Body: message.Data}
+	if schema == game.NotifyProduceItem && match.machine != nil {
+		if sender != match.arbitrator {
+			return nil
+		}
+		item, err := game.ParseProduceItem(event)
+		if err != nil {
+			return nil
+		}
+		return match.applyMachineSupply(item, message.Time)
+	}
 	if schema == game.NotifyUseEmotion {
 		if emotion, err := game.ParseUseEmotionEvent(event); err == nil && emotion.PlayerID == uint32(sender) {
 			match.applyEmotion(emotion)

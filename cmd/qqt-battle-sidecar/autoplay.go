@@ -128,6 +128,13 @@ func (bot *autoplayBot) act(engine *battleengine.Engine) battleengine.Action {
 			}
 		}
 	}
+	if bot.machine != nil {
+		// Keep the rule-7 test bot exercising floor supply. A continuously
+		// refilling throw otherwise interrupts every walk toward a pickup.
+		if path := world.nearest(here, safe, world.pickupAt); len(path) > 0 {
+			return bot.follow(action, actor, path)
+		}
+	}
 	if bot.machine != nil && bot.machine.charges[actor.PlayerID] != nil && bot.machine.charges[actor.PlayerID].count > 0 && engine.CanThrowMachineBomb(actor.PlayerID) {
 		// Walk to a firing line whose native cursor blast can reach an opponent.
 		// Otherwise two bots can throw safely past each other for a whole round.

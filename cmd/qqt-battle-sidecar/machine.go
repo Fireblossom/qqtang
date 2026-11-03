@@ -45,10 +45,21 @@ type machineRule struct {
 	flights     map[uint32]kickFlight
 	seen        map[[3]uint32]bool
 	requestedAt uint32
+	supplyCells [2][]battleengine.Cell
+	supplyLast  [2]uint32
 }
 
 func newMachineRule(entry mapdata.CompetitiveMap, begin game.GameBeginData) *machineRule {
 	rule := &machineRule{charges: map[uint16]*machineCharge{}, teams: firstTwoTeams(begin), rng: rand.New(rand.NewSource(int64(begin.ItemSeed))), flights: map[uint32]kickFlight{}, seen: map[[3]uint32]bool{}}
+	for _, cell := range entry.MachineSupplyCells {
+		side := 0
+		if cell.Col > 8 {
+			side = 1
+		} else if cell.Col >= 6 {
+			continue
+		}
+		rule.supplyCells[side] = append(rule.supplyCells[side], battleengine.Cell{Row: int16(cell.Row), Col: int16(cell.Col)})
+	}
 	n := len(entry.ObjectiveCells) / 2
 	for side := 0; side < 2; side++ {
 		for i := 0; i < n; i++ {
@@ -361,6 +372,7 @@ func (match *onlineMatch) machineTick() []battleengine.Event {
 		match.mirror(game.NotifyMachineMove, body)
 	}
 	rule.pending = kept
+	events = append(events, match.machineSupplyTick()...)
 	return events
 }
 

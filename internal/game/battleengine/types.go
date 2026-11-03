@@ -334,6 +334,8 @@ type Rules struct {
 	NativeDurabilityLayers byte
 	// NativeBoxPhysics permits explicit rule-8 dynamic element registration.
 	NativeBoxPhysics bool
+	// NativeMachineSupply enables rule-7's immediate 0x115A floor pickups.
+	NativeMachineSupply bool
 	// NativeAdventure is native rule 12 (探险): one cooperative team, flames
 	// never trap players (the caller turns bubble and contact damage into HP,
 	// docs/adventure-combat-re.md), every scene item is a rule pickup, and
