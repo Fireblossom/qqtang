@@ -22,7 +22,7 @@
 7. **技能就是道具**：SkiLLID 是 PropSet（`config/errorPPP.ini` 解密出的 XML）里的道具 ID。条件满足时仲裁方发 **0x0FB0**（NOTIFY_PLAYER_USE_ITEM，TCP+组播+本机），各端照道具状态机执行：准备（NPC 停住、不能再放技能）→ 陷阱 / 飞行 / 生效；生效时仲裁方算出受影响的角色发 **0x10F7**；伤害由**受害者本机**按效果 `HP=-v` 自发 0x10F4。冷却按道具的 **Tier** 查 `PropFireIntervalTable`，同一 NPC 同一 Tier 共用冷却。
 8. **PVE NPC 不发 0x1169**（只有竞技 AIType 5 的 `0x005B4947` 发）。**0x116A 台词**只给 ImageID 为 24/28/34 的 NPC（探险里只有 1601 的"新手训练员" 30033，ImageID 28）。
 9. **受伤保护**：NPC 的 `vtbl+0x58`（`0x0087C8FD`）HP>0 时同样调用 `0x005B5202(3000)`（[运行]，`N+0x330=1, N+0x334=3000`），所以 NPC 被打后也有 **3000 ms 免伤**，期间爆炸、火焰都不判定它（`0x005AD175` 为假）。
-10. **运行时 NPCID = 30300 + 序号**（序号是 CBattleFieldMgr 读 XML 时的全局计数，构造函数 `0x005E71AF` 清零，赋值在 `0x005E7A33`）[证实+运行]。sidecar 现在用 30001 起，与原版不同。
+10. **运行时 NPCID = 30300 + 序号**（序号是 CBattleFieldMgr 读 XML 时的全局计数，构造函数 `0x005E71AF` 清零，赋值在 `0x005E7A33`）[证实+运行]。sidecar 已改用 30300 起。
 
 ---
 
@@ -483,6 +483,17 @@ func (n *NPC) trySkill(now) {
 7. PropSet 缺 21092、21099～21107：可能原版服务端下发了更新的 errorPPP.ini，本地版本较旧 [推断]。若要让新关卡 NPC 放技能，需要别的数据来源。
 8. 0x0FB0 的 hasTarget 目标格只在释放瞬间取一次；目标走开后飞行/范围技能仍打在原格（按代码推断，未实测）。
 9. `0x005C6221`/`0x005C8CEF`（会改 AIType 的两处）在探险中是否可能被触发，未逐一排除。
+
+## 10. sidecar 移植状态（技能）
+
+`cmd/qqt-battle-sidecar/adventure_skill.go` 按 §6 实现，仲裁方是 sidecar：
+
+- 决策（§6.2）：只在战斗中，按 XML 顺序取第一个 Time/HP/GEnmity/Enmity 都成立、ID 在 20001～22999、道具存在、`InitialInterval ≤ 游戏时间`、Tier 冷却已过的技能；GEnmity/Enmity 在 49 关里全为空，只实现了"空 = 成立"。
+- 释放（§6.3）：0x0FB0 走 NPC 名义组播 + TCP 镜像；SkillTrigger 1/2 取 NPCBounds 内仇恨最高/最低的玩家格做目标。各端收到后把 NPC 吸到格心、停 PrepareTime；TCP 镜像与组播重复时按 (NPC, 时间) 去重。
+- 状态机（§6.4）：准备 → 陷阱（TrapTime 内有玩家踩到施法格即生效）/ 飞行（MoveSpeed 按 px/s，进入新格时命中玩家，命中数 ≥ HitPlayerPower 或撞到非空地格或到终点即生效）/ 直接生效。准备中 NPC 死亡则道具随之消失 [推断，原版此时道具仍挂在 NPC 名下]。
+- 生效（§6.5～§6.7）：Shape 0～4、Object 0～5 按表实现（State 只排除了死亡玩家，没有困泡状态）；Object 0 各端自己以施法者为目标、不发 0x10F7，其余由仲裁方发 0x10F7，其他端收到后才计时。效果按 `Delay + k·AffectTime/Count` 分次落地。
+- 已实现的效果：`HP`（v<0 只由受害者本机发 0x10F4，受 3 s 免伤限制；v>0 直接加血）、`SetTotalPercentHP`、`SetCurPercentHP`、`Defence/Defense`、`TouchHarmValue`、`Enmity`、`SpeedDel/BombPowerDel/BombCountDel`（引擎 `AdjustAdventureAttributes`，只在 `Rules.NativeAdventure` 下生效；速度和泡数下限 0，速度 0 档原地不动；泡威力下限取 1 [推断，原版下限 0，0 威力泡的爆炸形状没查]）、玩家和 NPC 的 `CanUseMoveKey=0`、玩家的 `CanUseBombKey=0`、`IsReversalControl`；`RestorePlayerAttr` 时到期反向恢复（HP 不恢复）。
+- 未实现：`SpecialAvatarType`（全体变猪等变身）、`CanUseItemKey`、`IsSlip`、`IsIgniteBomb`、`DestroyMapItem`、困泡状态筛选（PropAffectState 2/3）、道具 `.eff` 动画（画面上只用半透明圆点标出陷阱和飞行道具，不是原版外观）。
 
 ---
 
