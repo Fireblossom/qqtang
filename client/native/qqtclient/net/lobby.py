@@ -16,7 +16,10 @@ ROOM_LIST_COMMAND = 0x0066
 PLAYER_LIST_COMMAND = 0x006A
 ROOM_PUSH_COMMAND = 0x008C
 
-ROOM_LIST_REFRESH = 2  # operation the original client sends every five seconds
+# QQTSection 0x1003D04E: operation 1 lists every room ("所有房间"), 2 the
+# map filter at +0x514C (0 every map, the default refresh every five seconds).
+ROOM_LIST_ALL_ROOMS = 1
+ROOM_LIST_REFRESH = 2
 ROOM_FILTER_ALL_ROOMS = 0
 
 ROOM_FLAG_PREPARING = 1 << 0
@@ -54,9 +57,10 @@ class Player:
 
 
 def build_room_list_request(uin: int, start_room_id: int, number: int, game_type: int,
-                            game_mode: int = ROOM_FILTER_ALL_ROOMS, now: int | None = None) -> bytes:
+                            game_mode: int = ROOM_FILTER_ALL_ROOMS, now: int | None = None,
+                            operation: int = ROOM_LIST_REFRESH) -> bytes:
     stamp = int(time.time()) if now is None else now
-    return struct.pack(">IIBHHBB", uin, stamp & 0xFFFFFFFF, ROOM_LIST_REFRESH, start_room_id, number, game_mode, game_type)
+    return struct.pack(">IIBHHBB", uin, stamp & 0xFFFFFFFF, operation, start_room_id, number, game_mode, game_type)
 
 
 def build_player_list_request(uin: int, start_player_id: int = 0, number: int = 30) -> bytes:

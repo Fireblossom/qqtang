@@ -54,20 +54,21 @@ const (
 	RoomListOperationRefresh RoomListOperation = 2
 )
 
+// RoomListGameModeFilter is the lobby map filter (QQTSection 0x1003C880
+// stores request_UserSelGameModeList's value at +0x514C and 0x1003D04E
+// sends it unchanged): 0 every map, otherwise one native rule (1 normal,
+// 2 kick bomb, 3 bun, ... 13 tank), the uiSelRoom gameModeList numbers.
+// "所有房间" (-1) is sent as 0 with an odd operation instead.
 type RoomListGameModeFilter byte
 
 const (
-	RoomListFilterAllRooms      RoomListGameModeFilter = 0
-	RoomListFilterLegacyAllMaps RoomListGameModeFilter = 1
-	RoomListFilterAllMaps       RoomListGameModeFilter = 2
-	RoomListFilterNormal        RoomListGameModeFilter = 3
+	RoomListFilterAllMaps RoomListGameModeFilter = 0
+	RoomListFilterNormal  RoomListGameModeFilter = 1
 )
 
+// CompetitiveMode is the native rule a specific filter selects.
 func (filter RoomListGameModeFilter) CompetitiveMode() (byte, bool) {
-	if filter < RoomListFilterNormal {
-		return 0, false
-	}
-	return byte(filter - 2), true
+	return byte(filter), filter != RoomListFilterAllMaps
 }
 
 type RoomListFlag byte

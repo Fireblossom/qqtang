@@ -229,15 +229,10 @@ func roomMatchesListRequest(room lobbystate.RoomSummary, request game.RoomListRe
 	if room.GameType != request.GameType {
 		return false
 	}
-	switch request.GameMode {
-	case game.RoomListFilterAllRooms:
-		return true
-	case game.RoomListFilterLegacyAllMaps, game.RoomListFilterAllMaps:
-		return room.Phase == lobbystate.RoomPhasePreparing
-	default:
-		mode, specific := request.GameMode.CompetitiveMode()
-		return specific && room.Phase == lobbystate.RoomPhasePreparing && room.GameMode == mode
-	}
+	// Every map (the default refresh, operation 2 with mode 0) lists every
+	// room; one rule lists that rule's rooms still preparing.
+	mode, specific := request.GameMode.CompetitiveMode()
+	return !specific || room.Phase == lobbystate.RoomPhasePreparing && room.GameMode == mode
 }
 
 func (server *Server) findFriendResponse(session *connectionSession, friendUIN uint32) (game.FindFriendResponse, error) {

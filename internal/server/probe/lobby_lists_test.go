@@ -179,31 +179,25 @@ func TestRoomListFilterDimensions(t *testing.T) {
 		RoomID: 1, OwnerID: 1, GameType: byte(roomstate.GameTypeAdventure),
 		Players: 1, MaxPlayers: 4, Phase: lobbystate.RoomPhasePreparing,
 	}
-	if !roomMatchesListRequest(adventure, game.RoomListRequest{GameType: byte(roomstate.GameTypeAdventure), GameMode: game.RoomListFilterAllRooms}) {
-		t.Fatal("all-rooms filter hid preparing adventure room")
-	}
 	if !roomMatchesListRequest(adventure, game.RoomListRequest{GameType: byte(roomstate.GameTypeAdventure), GameMode: game.RoomListFilterAllMaps}) {
 		t.Fatal("all-maps filter hid preparing adventure room")
-	}
-	if !roomMatchesListRequest(adventure, game.RoomListRequest{GameType: byte(roomstate.GameTypeAdventure), GameMode: game.RoomListFilterLegacyAllMaps}) {
-		t.Fatal("legacy all-maps filter hid preparing adventure room")
 	}
 	if roomMatchesListRequest(adventure, game.RoomListRequest{GameType: byte(roomstate.GameTypeAdventure), GameMode: game.RoomListFilterNormal}) {
 		t.Fatal("competitive normal filter matched an adventure room")
 	}
 	playing := adventure
 	playing.Phase = lobbystate.RoomPhaseInMatch
-	if !roomMatchesListRequest(playing, game.RoomListRequest{GameType: byte(roomstate.GameTypeAdventure), GameMode: game.RoomListFilterAllRooms}) {
-		t.Fatal("all-rooms filter hid in-match room")
-	}
-	if roomMatchesListRequest(playing, game.RoomListRequest{GameType: byte(roomstate.GameTypeAdventure), GameMode: game.RoomListFilterAllMaps}) {
-		t.Fatal("all-maps filter exposed in-match room")
+	if !roomMatchesListRequest(playing, game.RoomListRequest{GameType: byte(roomstate.GameTypeAdventure), GameMode: game.RoomListFilterAllMaps}) {
+		t.Fatal("all-maps filter hid in-match room")
 	}
 	competitive := adventure
 	competitive.GameType = byte(roomstate.GameTypeCompetitiveNoItem)
-	competitive.GameMode = 1
-	if !roomMatchesListRequest(competitive, game.RoomListRequest{GameType: byte(roomstate.GameTypeCompetitiveNoItem), GameMode: game.RoomListFilterNormal}) {
-		t.Fatal("normal competitive filter hid matching normal room")
+	competitive.GameMode = 3
+	if !roomMatchesListRequest(competitive, game.RoomListRequest{GameType: byte(roomstate.GameTypeCompetitiveNoItem), GameMode: 3}) {
+		t.Fatal("bun filter (uiSelRoom mode 3) hid a bun room")
+	}
+	if roomMatchesListRequest(competitive, game.RoomListRequest{GameType: byte(roomstate.GameTypeCompetitiveNoItem), GameMode: game.RoomListFilterNormal}) {
+		t.Fatal("normal filter matched a bun room")
 	}
 }
 
@@ -249,7 +243,7 @@ func TestEverySelectableCompetitiveMapProjectsNativeRuleIntoSpecificRoomFilter(t
 		if len(snapshot.Rooms) != 1 || snapshot.Rooms[0].GameMode != byte(selected.NativeRule) {
 			t.Fatalf("map %d lobby native mode = %+v, want %d", selected.ID, snapshot.Rooms, selected.NativeRule)
 		}
-		filter := game.RoomListGameModeFilter(selected.NativeRule + 2)
+		filter := game.RoomListGameModeFilter(selected.NativeRule)
 		if decoded, specific := filter.CompetitiveMode(); !specific || decoded != byte(selected.NativeRule) {
 			t.Fatalf("map %d filter %d decodes to %d/%t, want %d/true", selected.ID, filter, decoded, specific, selected.NativeRule)
 		}

@@ -47,6 +47,8 @@ def native_player(player: lobby.Player) -> types.SimpleNamespace:
 class LobbyState:
     def __init__(self) -> None:
         self.page = 0
+        # request_UserSelGameModeList: -1 every room, 0 every map, or a rule.
+        self.game_mode = 0
         self.rooms: dict[int, lobby.Room] = {}
         self.players: list[lobby.Player] = []
 
@@ -68,7 +70,9 @@ def build_lobby_natives(runtime: UIRuntime, session: Session) -> dict[str, Calla
         return minimum + state.page * ROOMS_PER_PAGE
 
     def request_rooms() -> None:
-        session.send(lobby.ROOM_LIST_COMMAND, lobby.build_room_list_request(session.uin, first_room_id(), ROOMS_PER_PAGE, session.game_type))
+        operation = lobby.ROOM_LIST_ALL_ROOMS if state.game_mode < 0 else lobby.ROOM_LIST_REFRESH
+        session.send(lobby.ROOM_LIST_COMMAND, lobby.build_room_list_request(
+            session.uin, first_room_id(), ROOMS_PER_PAGE, session.game_type, max(state.game_mode, 0), operation=operation))
 
     def request_players() -> None:
         session.send(lobby.PLAYER_LIST_COMMAND, lobby.build_player_list_request(session.uin, 0, PLAYER_PAGE))
@@ -88,7 +92,9 @@ def build_lobby_natives(runtime: UIRuntime, session: Session) -> dict[str, Calla
             if room.capacity == 0:
                 # A dissolved room is pushed as an empty entry with no capacity.
                 state.rooms.pop(room.room_id, None)
-            else:
+            elif state.game_mode <= 0 or room.room_id in state.rooms:
+                # Under a map filter a new room waits for the filtered refresh
+                # (the push carries no rule to filter it by).
                 state.rooms[room.room_id] = room
                 session.room_names[room.room_id] = room.name
         script("updateRoom")
@@ -181,6 +187,14 @@ def build_lobby_natives(runtime: UIRuntime, session: Session) -> dict[str, Calla
         if session.profile and uin == session.uin:
             return session.profile.identity
         return next((player.identity for player in state.players if player.uin == uin), 0)
+
+    def request_UserSelGameModeList(mode):
+        """The lobby map filter (QQTSection 0x1003C880): keep the mode and
+        list again from the first page."""
+        if int(mode) != state.game_mode:
+            state.game_mode, state.page = int(mode), 0
+            state.rooms.clear()
+            request_rooms()
 
     def fetch_ValidGameModes():
         return list(VALID_GAME_MODES)
