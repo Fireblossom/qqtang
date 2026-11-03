@@ -49,8 +49,11 @@ func bossStep(cell battleengine.Cell, dir int) battleengine.Cell {
 }
 
 func newBossController(info game.CompetitiveBossInfo) bossController {
-	if info.AIType == 3 {
+	switch info.AIType {
+	case 3:
 		return &bossGeneral{}
+	case 5:
+		return &bossKick{}
 	}
 	return &bossWander{}
 }
@@ -761,6 +764,10 @@ func (match *onlineMatch) applyBossSkill(b *bossActor, skill game.NPCUseSkillEve
 		match.pirateWave(b, skill)
 	case 7, 9:
 		// No receiver branch (0x005FE05D).
+	case 11:
+		// 0x005B5202(10000) on the Boss's +0x318, flash2, on every client.
+		b.protectedUntil = max(b.protectedUntil, skill.Time+kickBossShieldMS)
+		match.logf("Boss %d shields itself", b.id)
 	default:
 		match.logf("Boss %d skill %d is not played yet", b.id, skill.SkillID)
 	}
@@ -790,7 +797,7 @@ func (match *onlineMatch) landBossFlights(now uint32) {
 	rule.flights = kept
 }
 
-// bossWander is the stand-in for controllers not ported yet (AIType 5): it
+// bossWander is the stand-in for AI types without a port (0, 1, 2, 4): it
 // escapes danger, otherwise walks to a random open neighbour every 500 ms.
 type bossWander struct {
 	next uint32

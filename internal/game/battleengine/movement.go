@@ -293,7 +293,8 @@ func (engine *Engine) ApplyVerifiedBombMovement(playerID uint16, bombID uint32, 
 	if engine == nil {
 		return Event{}, fmt.Errorf("battle engine is nil")
 	}
-	if engine.actorIndex(playerID) < 0 {
+	// A kick-bomb Boss kicks like a player (0x0060CF49 runs for every role).
+	if engine.actorIndex(playerID) < 0 && !engine.HasRuleNPCOwner(playerID) {
 		return Event{}, fmt.Errorf("verified bomb movement player %d is not a participant", playerID)
 	}
 	index := engine.bombIndexByID(bombID)

@@ -453,3 +453,77 @@ func TestPirateBubbleWavesLandOnPeers(t *testing.T) {
 		t.Fatalf("waves %d, Boss bubbles %d (want %d), lock %d", waves, owned, 3*k, peer.boss.bubbleLock)
 	}
 }
+
+func kickBossMatch(t *testing.T, local uint16, skills []uint32) (*onlineMatch, *bossActor, *bossKick) {
+	m := bossMatch(t, local)
+	m.kick = newKickRule(mapdata.CompetitiveMap{ID: 701, Rule: mapdata.CompetitiveRuleKickBomb}, 1)
+	b := m.boss.actors[30001]
+	b.info.AIType, b.info.Skills, b.role = 5, skills, 36
+	ai := &bossKick{}
+	b.ai = ai
+	return m, b, ai
+}
+
+func TestFootballPathNeverStepsUpIntoTheTopRows(t *testing.T) {
+	m, _, _ := kickBossMatch(t, 1, nil)
+	w := m.bossWorld(m.engine.ElapsedMS())
+	if _, ok := w.find5(battleengine.Cell{Row: 5, Col: 3}, battleengine.Cell{Row: 2, Col: 3}); ok {
+		t.Fatal("reached row 2 from below")
+	}
+	nodes, ok := w.find5(battleengine.Cell{Row: 1, Col: 3}, battleengine.Cell{Row: 6, Col: 3})
+	if !ok || len(nodes) != 6 || nodes[0].dir != 3 {
+		t.Fatalf("down from the top rows: %+v %v", nodes, ok)
+	}
+}
+
+func TestKickBossSkillCooldownCellsFollowTheListPosition(t *testing.T) {
+	for _, tc := range []struct {
+		skills []uint32
+		want   []uint16 // skills sent at 30 s and 31 s
+	}{
+		{[]uint32{10, 11, 12}, []uint16{10, 11}},
+		{[]uint32{0, 11, 12}, []uint16{11}},
+		// The broken compaction: 11 tests cell 0 (never set) and fires again.
+		{[]uint32{11, 12}, []uint16{11, 11}},
+	} {
+		m, b, ai := kickBossMatch(t, 1, tc.skills)
+		ai.skills(m.bossWorld(30000), b)
+		ai.skills(m.bossWorld(31000), b)
+		if got := skillIDs(t, m); len(got) != len(tc.want) || got[0] != tc.want[0] {
+			t.Fatalf("skills %v sent %v, want %v", tc.skills, got, tc.want)
+		}
+	}
+}
+
+func TestKickBossShieldAndKick(t *testing.T) {
+	m, b, ai := kickBossMatch(t, 1, []uint32{0, 11, 12})
+	ai.skills(m.bossWorld(30000), b)
+	if b.protectedUntil != 40000 || b.vulnerable(39990) {
+		t.Fatalf("skill 11 shield until %d", b.protectedUntil)
+	}
+	// A landed airdrop bubble right of the Boss is kicked as it walks in.
+	b.bornAt = 0
+	front := bossStep(b.pos.Cell(), 0)
+	events, err := m.engine.DropRuleBatch(1, m.engine.ElapsedMS()-500, []battleengine.RuleBomb{{Cell: front, Power: 1, FromCol: front.Col}}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m.bombs[events[0].BombID] = wireBomb{owner: 1, placedAt: m.engine.ElapsedMS() - 500, cell: front}
+	b.path = []battleengine.Cell{front}
+	m.bossKickAhead(b, m.engine.ElapsedMS())
+	kicks := mirrored(t, m, game.NotifyPlayerMoveBomb)
+	if len(kicks) != 1 {
+		t.Fatalf("kicks %d", len(kicks))
+	}
+	kick, _ := game.ParseMoveBombEvent(kicks[0])
+	if kick.PlayerID != 30001 || kick.FromCol != uint16(front.Col) || m.engine.Bombs()[0].Cell == front {
+		t.Fatalf("kick %+v, bubble at %+v", kick, m.engine.Bombs()[0].Cell)
+	}
+}
+
+func TestKickBossStandsStillBeforeTheFirstAirdrop(t *testing.T) {
+	m, b, ai := kickBossMatch(t, 1, nil)
+	if d := ai.decide(m.bossWorld(4000), b); d != bossDirStop {
+		t.Fatalf("moved %d before the first batch", d)
+	}
+}

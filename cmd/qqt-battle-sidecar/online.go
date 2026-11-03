@@ -271,6 +271,7 @@ func newOnlineMatch(init command) (*onlineMatch, beginView, error) {
 		return nil, beginView{}, err
 	}
 	boss := newBossRule(entry, begin)
+	spawnMode := battleengine.NativeSpawnModeForMap(entry, options.FreeRule)
 	if boss != nil {
 		rules.NativeBossNPC = true
 		// The server projects every player of a Boss round into team 1 and
@@ -279,7 +280,13 @@ func newOnlineMatch(init command) (*onlineMatch, beginView, error) {
 		for _, info := range begin.Players {
 			teams[info.TeamID] = true
 		}
-		rules.ExternalConclusion = rules.ExternalConclusion || len(teams) == 1
+		if len(teams) == 1 {
+			rules.ExternalConclusion = true
+			// Rule 1/2's slot 1 (0x005F49DD, 0x0060BCEC) always seats players
+			// on the interleaved table 0x005B653F builds, in GAME_BEGIN order;
+			// the two-team consumer cannot seat one team at all.
+			spawnMode = battleengine.NativeSpawnFree
+		}
 	}
 	participants := make([]battleengine.Participant, 0, len(begin.Players))
 	uins := make(map[uint16]uint32, len(begin.Players))
@@ -313,7 +320,7 @@ func newOnlineMatch(init command) (*onlineMatch, beginView, error) {
 	config, err := battleengine.ConfigFromCompetitiveMap(entry, battleengine.CompetitiveMapConfigOptions{
 		SimulationSeed: uint64(begin.SpawnSeed)<<32 | uint64(begin.ItemSeed),
 		SpawnSeed:      begin.SpawnSeed, ItemSeed: begin.ItemSeed,
-		SpawnMode:            battleengine.NativeSpawnModeForMap(entry, options.FreeRule),
+		SpawnMode:            spawnMode,
 		Rules:                rules,
 		Participants:         participants,
 		RecordedWallItems:    wallItems(begin.NewItems),

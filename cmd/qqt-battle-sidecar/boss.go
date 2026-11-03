@@ -602,8 +602,9 @@ func (match *onlineMatch) bossRemote(sender uint16, event game.GameEvent) ([]bat
 		if err == nil && death.PlayerID == b.id {
 			match.applyBossDeath(b, death.ClientTime, death.Items)
 		}
-	case game.NotifyPlayerKilled:
-		// The Boss killed a trapped player: the arbitrator's own outcome.
+	case game.NotifyPlayerKilled, game.NotifyPlayerMoveBomb:
+		// The Boss killed a trapped player or kicked a bubble: outcomes the
+		// arbitrator decided for it.
 		return match.applyRemote(match.arbitrator, game.BattleMessageData{DataID: uint32(event.Schema), Data: event.Body}), true
 	case game.NotifyPlayerGetItem:
 		q, err := game.ParsePlayerItemEvent(event)

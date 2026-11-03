@@ -144,3 +144,20 @@ func TestRuleNPCOwnsDroppedBatch(t *testing.T) {
 		t.Fatalf("Boss batch %v %+v", err, events)
 	}
 }
+
+func TestRuleNPCMayKickABubble(t *testing.T) {
+	cfg := testConfig()
+	cfg.Rules.NativeBossNPC = true
+	e := mustEngine(t, cfg)
+	e.RegisterRuleNPCOwner(30001)
+	bomb, err := e.PlaceRuleNPCBomb(30001, Cell{Row: 1, Col: 2}, 2, 0, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = e.ApplyVerifiedBombMovement(30002, bomb.BombID, Cell{Row: 1, Col: 2}, Cell{Row: 1, Col: 4}); err == nil {
+		t.Fatal("unregistered kicker accepted")
+	}
+	if moved, err := e.ApplyVerifiedBombMovement(30001, bomb.BombID, Cell{Row: 1, Col: 2}, Cell{Row: 1, Col: 4}); err != nil || moved.Cell != (Cell{Row: 1, Col: 4}) {
+		t.Fatalf("Boss kick %+v %v", moved, err)
+	}
+}

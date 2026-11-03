@@ -364,7 +364,7 @@ func (runtime *Runtime) AcceptNativeBombMovement(playerID uint16, bombID uint32,
 	if runtime == nil || runtime.engine == nil {
 		return Event{}, fmt.Errorf("battle runtime is nil")
 	}
-	if runtime.engine.actorIndex(playerID) < 0 {
+	if runtime.engine.actorIndex(playerID) < 0 && !runtime.engine.HasRuleNPCOwner(playerID) {
 		return Event{}, fmt.Errorf("battle runtime bomb-movement player %d is not a participant", playerID)
 	}
 	return runtime.engine.ApplyVerifiedBombMovement(playerID, bombID, source, target)
