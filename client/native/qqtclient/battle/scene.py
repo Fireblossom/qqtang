@@ -37,6 +37,7 @@ FLIGHT_PX_PER_MS = 0.4
 FLIGHT_STEPS = {0: (1, 0), 1: (0, -1), 2: (-1, 0), 3: (0, 1)}  # wire direction: right, up, left, down
 # Avatar canvas (100x100) point that sits on the actor's position.
 AVATAR_ANCHOR = (50, 64)
+BIG_BOMB_ANCHOR = (45, 70)
 # A named Boss plays its cloth's "birth" for 1000 ms (0x005ACBFC).
 BOSS_BIRTH_MS = 1000
 WALK_FRAME_MS = 100
@@ -594,7 +595,10 @@ class BattleScene:
             flight = flights.get(str(bomb["id"]))
             if flight is not None and flight["start"] <= self.clock < flight["until"]:
                 x, y = flight_position(flight, self.clock, self.map.width * CELL, self.map.height * CELL)
-            self._draw_frames(field, image, self.clock // 150, ox + x - BOMB_ANCHOR[0], oy + y - BOMB_ANCHOR[1])
+            # The 2x2 bubble (type 11) is anchored at (45, 70) on its
+            # bottom-right cell (0x005DF70A), covering the whole block.
+            anchor = BIG_BOMB_ANCHOR if bomb.get("style") == 11 else BOMB_ANCHOR
+            self._draw_frames(field, image, self.clock // 150, ox + x - anchor[0], oy + y - anchor[1])
         for flame in self.state["flames"] or ():
             self._draw_flame(field, flame)
         actors_by_row: dict[int, list[dict[str, Any]]] = {}

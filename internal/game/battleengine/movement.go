@@ -220,6 +220,10 @@ func (engine *Engine) kickBomb(playerID uint16, source Cell, direction Direction
 // kickable: under WrappingKick only a landed bubble (native state 1) can be
 // kicked.
 func (engine *Engine) kickable(bomb Bomb) bool {
+	// The 2x2 bubble (types 11/12) is never kicked (0x0060CF49).
+	if bomb.NativeStyle == NativeStyleBigBubble || bomb.NativeStyle == NativeStyleBigBubblePart {
+		return false
+	}
 	return !engine.rules.WrappingKick || bomb.FlightUntilMS <= engine.elapsedMS
 }
 

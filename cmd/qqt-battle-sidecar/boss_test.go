@@ -557,3 +557,43 @@ func TestGreatNianTransformsAndAHitOnlyRemovesIt(t *testing.T) {
 		t.Fatalf("peer after the avatar hit: %+v", peer.boss.actors[30001])
 	}
 }
+
+func TestRooneyPlacesTwoByTwoBubblesAtSixtySeconds(t *testing.T) {
+	m, b, ai := kickBossMatch(t, 1, []uint32{10, 11, 12})
+	ai.skills(m.bossWorld(30000), b)
+	if got := skillIDs(t, m); len(got) != 2 {
+		t.Fatalf("30 s skills %v", got)
+	}
+	ai.skills(m.bossWorld(60000), b)
+	var big game.GameEvent
+	for _, e := range mirrored(t, m, game.NotifyNPCUseSkill) {
+		if s, _ := game.ParseNPCUseSkillEvent(e); s.SkillID == 12 {
+			big = e
+		}
+	}
+	skill, err := game.ParseNPCUseSkillEvent(big)
+	if err != nil || len(skill.Items) < 1 || len(skill.Items) > 3 || skill.Items[0].SceneID != 11 {
+		t.Fatalf("skill 12 %+v %v", skill, err)
+	}
+	peer, _, _ := kickBossMatch(t, 2, []uint32{10, 11, 12})
+	peer.applyRemote(30001, game.BattleMessageData{DataID: game.NotifyNPCUseSkill, Data: big.Body})
+	for _, side := range []*onlineMatch{m, peer} {
+		count := 0
+		for _, bomb := range side.engine.Bombs() {
+			if bomb.NativeStyle == battleengine.NativeStyleBigBubble && bomb.Power == 7 && bomb.OwnerID == 30001 {
+				count++
+				if bomb.Cell.Row == 0 || bomb.Cell.Col == 0 {
+					t.Fatalf("anchor %+v is not a bottom-right cell", bomb.Cell)
+				}
+			}
+		}
+		if count != len(skill.Items) {
+			t.Fatalf("2x2 bubbles %d, want %d", count, len(skill.Items))
+		}
+	}
+	w := m.bossWorld(60000)
+	cell := battleengine.Cell{Row: int16(skill.Items[0].Row), Col: int16(skill.Items[0].Col)}
+	if w.passable5(cell) {
+		t.Fatal("the football path walks through a 2x2 bubble")
+	}
+}

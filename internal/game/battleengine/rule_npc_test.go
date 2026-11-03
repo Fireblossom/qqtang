@@ -161,3 +161,20 @@ func TestRuleNPCMayKickABubble(t *testing.T) {
 		t.Fatalf("Boss kick %+v %v", moved, err)
 	}
 }
+
+func TestBigBubbleIsAnOrdinaryCrossThatCannotBeKicked(t *testing.T) {
+	cfg := testConfig()
+	cfg.Rules.NativeBossNPC, cfg.Rules.UniversalKick = true, true
+	e := mustEngine(t, cfg)
+	e.RegisterRuleNPCOwner(30001)
+	placed, err := e.PlaceRuleNPCBigBomb(30001, Cell{Row: 1, Col: 2}, 8, 100)
+	if err != nil || e.Bombs()[0].NativeStyle != NativeStyleBigBubble {
+		t.Fatalf("big bubble %+v %v", placed, err)
+	}
+	if e.kickable(e.Bombs()[0]) {
+		t.Fatal("the 2x2 bubble can be kicked")
+	}
+	if area := e.machineBlastCells(NativeStyleBigBubble, Cell{Row: 1, Col: 2}); area != nil {
+		t.Fatal("the 2x2 bubble got an area blast")
+	}
+}

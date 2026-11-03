@@ -11,8 +11,8 @@ package main
 // A* that ignores danger, treats a single bubble as passable and never steps
 // up into rows 0..3.
 //
-// Not played: skill 12's 2x2 bubbles (scene 11; the engine has no such
-// bubble). Its 60 s cooldown still advances, so the cadence of 10/11 holds.
+// Skill 12 places 1..3 power-8 2x2 bubbles (type 11) on free 2x2 blocks,
+// each anchored on the block's bottom-right cell (docs/bubble-2x2-re.md).
 
 import (
 	"qqtang/internal/game/battleengine"
@@ -29,6 +29,8 @@ const (
 	kickBossKickWindow  = 2000
 	kickBossItemFrom    = 4500
 	kickBossItemUntil   = 7500
+	kickBossBigScene    = 11
+	kickBossBigPower    = 8 // 0x005FDF84 hard-codes it
 )
 
 type bossKick struct {
@@ -124,7 +126,65 @@ func (w *bossWorld) passable5(c battleengine.Cell) bool {
 	if !ok || tile.Kind != battleengine.CellOpen {
 		return false
 	}
-	return w.bubblesAt(c) <= 1
+	n := 0
+	for _, bomb := range w.match.engine.Bombs() {
+		if bomb.Cell == c {
+			if bigBubble(bomb) {
+				return false
+			}
+			n++
+		}
+	}
+	return n <= 1
+}
+
+func bigBubble(bomb battleengine.Bomb) bool {
+	return bomb.NativeStyle == battleengine.NativeStyleBigBubble || bomb.NativeStyle == battleengine.NativeStyleBigBubblePart
+}
+
+// bossBigCells is 0x005B8753 for skill 12: free cells in row order; each
+// pick starts at a random index and takes the first cell whose up, left and
+// up-left neighbours are free too, removing all four; then as many single
+// picks, which only cap the count (big may come up short).
+func (match *onlineMatch) bossBigCells(n int) []battleengine.Cell {
+	free := match.bossFreeCells()
+	index := func(c battleengine.Cell) int {
+		for i, f := range free {
+			if f == c {
+				return i
+			}
+		}
+		return -1
+	}
+	remove := func(i int) {
+		free[i] = free[len(free)-1]
+		free = free[:len(free)-1]
+	}
+	var big []battleengine.Cell
+	for pick := 0; pick < n && len(free) > 0; pick++ {
+		k := match.boss.rng.Intn(len(free))
+		for j := k; ; {
+			c := free[j]
+			up, left, corner := battleengine.Cell{Row: c.Row - 1, Col: c.Col}, battleengine.Cell{Row: c.Row, Col: c.Col - 1}, battleengine.Cell{Row: c.Row - 1, Col: c.Col - 1}
+			if c.Row > 0 && c.Col > 0 && index(up) >= 0 && index(left) >= 0 && index(corner) >= 0 {
+				big = append(big, c)
+				for _, cell := range []battleengine.Cell{c, left, up, corner} {
+					if i := index(cell); i >= 0 {
+						remove(i)
+					}
+				}
+				break
+			}
+			if j = (j + 1) % len(free); j == k {
+				break
+			}
+		}
+	}
+	single := 0
+	for ; single < n && len(free) > 0; single++ {
+		remove(match.boss.rng.Intn(len(free)))
+	}
+	return big[:min(len(big), single, n)]
 }
 
 func (w *bossWorld) bubblesAt(c battleengine.Cell) int {
@@ -279,7 +339,7 @@ func (ai *bossKick) wander(w *bossWorld, here battleengine.Cell) bool {
 func (w *bossWorld) landedBubble(c battleengine.Cell) (battleengine.Bomb, bool) {
 	for _, bomb := range w.match.engine.Bombs() {
 		if bomb.Cell == c {
-			return bomb, bomb.FlightUntilMS <= w.now
+			return bomb, bomb.FlightUntilMS <= w.now && !bigBubble(bomb)
 		}
 	}
 	return battleengine.Bomb{}, false
@@ -429,7 +489,11 @@ func (ai *bossKick) skills(w *bossWorld, b *bossActor) {
 			if now-ai.cd[2] < kickBossBigMS {
 				return
 			}
-			ai.cd[2] = now // the 2x2 bubbles themselves are not played
+			ai.cd[2] = now
+			// 0x005E18B0: RNG % 300 % 3 -> 3, 2, 1 bubbles.
+			n := [3]int{3, 2, 1}[match.boss.rng.Intn(300)%3]
+			body.Items = skillItems(kickBossBigScene, match.bossBigCells(n))
+			match.bossUseSkill(b, body)
 		}
 	}
 }
@@ -458,7 +522,7 @@ func (match *onlineMatch) bossKickAhead(b *bossActor, now uint32) {
 			bubble, count = bomb, count+1
 		}
 	}
-	if count != 1 || bubble.FlightUntilMS > now {
+	if count != 1 || bubble.FlightUntilMS > now || bigBubble(bubble) {
 		return
 	}
 	known, ok := match.bombs[bubble.ID]

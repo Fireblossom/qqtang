@@ -31,6 +31,24 @@ func (engine *Engine) HasRuleNPCOwner(id uint16) bool {
 // capacity and native AI safety checks belong to that controller; these
 // bubbles never consume a human's placement allowance.
 func (engine *Engine) PlaceRuleNPCBomb(owner uint16, cell Cell, wirePower uint16, property byte, at uint32) (Event, error) {
+	return engine.placeRuleNPCBomb(owner, cell, wirePower, property, 1, at)
+}
+
+// NativeStyleBigBubble is the 2x2 bubble (type 11): it occupies and blocks
+// only its anchor, the bottom-right cell, explodes as an ordinary cross and
+// is drawn over the whole block; type 12 is its three companions in rule 2's
+// airdrop (docs/bubble-2x2-re.md).
+const (
+	NativeStyleBigBubble     byte = 11
+	NativeStyleBigBubblePart byte = 12
+)
+
+// PlaceRuleNPCBigBomb places a Boss's type-11 bubble (skill 12, 0x005FDF84).
+func (engine *Engine) PlaceRuleNPCBigBomb(owner uint16, cell Cell, wirePower uint16, at uint32) (Event, error) {
+	return engine.placeRuleNPCBomb(owner, cell, wirePower, 0, NativeStyleBigBubble, at)
+}
+
+func (engine *Engine) placeRuleNPCBomb(owner uint16, cell Cell, wirePower uint16, property, style byte, at uint32) (Event, error) {
 	if !engine.HasRuleNPCOwner(owner) {
 		return Event{}, fmt.Errorf("unregistered rule NPC owner %d", owner)
 	}
@@ -38,7 +56,7 @@ func (engine *Engine) PlaceRuleNPCBomb(owner uint16, cell Cell, wirePower uint16
 		return Event{}, fmt.Errorf("invalid rule NPC bomb at %v with power %d", cell, wirePower)
 	}
 	bomb := Bomb{ID: engine.nextBombID, OwnerID: owner, Cell: cell, Power: byte(wirePower - 1),
-		RuleOwned: true, NativeStyle: 1, ExplodeAtMS: saturatingAdd(at, NativeBombFuseMS+1), SceneFourEffect: property != 0}
+		RuleOwned: true, NativeStyle: style, ExplodeAtMS: saturatingAdd(at, NativeBombFuseMS+1), SceneFourEffect: property != 0}
 	return engine.commitBomb(bomb), nil
 }
 

@@ -672,6 +672,15 @@ func skillItems(scene uint32, cells []battleengine.Cell) []game.NPCSkillItem {
 // bossSkillCells is 0x005B8574 as the skills use it: free cells without an
 // element, bubble, field object or item; players' cells are not excluded.
 func (match *onlineMatch) bossSkillCells(n int) []battleengine.Cell {
+	cells := match.bossFreeCells()
+	for len(cells) > n {
+		i := match.boss.rng.Intn(len(cells))
+		cells = append(cells[:i], cells[i+1:]...)
+	}
+	return cells
+}
+
+func (match *onlineMatch) bossFreeCells() []battleengine.Cell {
 	grid := match.engine.Grid()
 	taken := map[battleengine.Cell]bool{}
 	for _, bomb := range match.engine.Bombs() {
@@ -693,10 +702,6 @@ func (match *onlineMatch) bossSkillCells(n int) []battleengine.Cell {
 				cells = append(cells, c)
 			}
 		}
-	}
-	for len(cells) > n {
-		i := match.boss.rng.Intn(len(cells))
-		cells = append(cells[:i], cells[i+1:]...)
 	}
 	return cells
 }
@@ -774,6 +779,19 @@ func (match *onlineMatch) applyBossSkill(b *bossActor, skill game.NPCUseSkillEve
 		match.pirateWave(b, skill)
 	case 7, 9:
 		// No receiver branch (0x005FE05D).
+	case 12:
+		// 0x005FDF84: one power-8 type-11 bubble per item, in place.
+		for _, item := range skill.Items {
+			cell := battleengine.Cell{Row: int16(item.Row), Col: int16(item.Col)}
+			placed, err := match.engine.PlaceRuleNPCBigBomb(b.id, cell, kickBossBigPower, skill.Time)
+			if err != nil {
+				match.logf("Boss %d 2x2 bubble: %v", b.id, err)
+				continue
+			}
+			match.bombs[placed.BombID] = wireBomb{owner: b.id, placedAt: skill.Time, cell: cell}
+			match.boss.events = append(match.boss.events, placed)
+		}
+		match.logf("Boss %d places %d 2x2 bubbles", b.id, len(skill.Items))
 	case 11:
 		// 0x005B5202(10000) on the Boss's +0x318, flash2, on every client.
 		b.protectedUntil = max(b.protectedUntil, skill.Time+kickBossShieldMS)
