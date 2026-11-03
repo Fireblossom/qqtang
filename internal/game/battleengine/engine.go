@@ -2,6 +2,7 @@ package battleengine
 
 import (
 	"fmt"
+	"maps"
 	"sort"
 )
 
@@ -37,6 +38,8 @@ type Engine struct {
 	ruleNPCOwners           map[uint16]struct{}
 	elementChain            []Cell
 	stoneBlasts             []stoneBlast
+	conveyors               map[Cell]Direction
+	conveyedBombs           map[uint32][2]int64 // milli-pixel positions
 }
 
 type nativeContactRequestKey struct {
@@ -227,6 +230,8 @@ func (engine *Engine) Clone() *Engine {
 	clone.projectiles = append([]ActionProjectile(nil), engine.projectiles...)
 	clone.elementChain = append([]Cell(nil), engine.elementChain...)
 	clone.stoneBlasts = append([]stoneBlast(nil), engine.stoneBlasts...)
+	clone.conveyors = maps.Clone(engine.conveyors)
+	clone.conveyedBombs = maps.Clone(engine.conveyedBombs)
 	if engine.pendingMapRetirements != nil {
 		clone.pendingMapRetirements = make(map[Cell]pendingMapRetirement, len(engine.pendingMapRetirements))
 		for key, p := range engine.pendingMapRetirements {

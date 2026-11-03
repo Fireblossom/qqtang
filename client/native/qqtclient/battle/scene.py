@@ -656,7 +656,13 @@ class BattleScene:
         ox, oy = FIELD_ORIGIN
         for row in range(self.map.height):
             for col in range(self.map.width):
-                self._draw_element(field, self.map.element(mapfile.LAYER_FLOOR, row, col), row, col)
+                floor = self.map.element(mapfile.LAYER_FLOOR, row, col)
+                # Conveyor middles (17130..17133) loop 10 frames, 100 ms each
+                # (default_MapElement.eff); the end caps have one frame.
+                if 17130 <= floor <= 17133:
+                    self._draw_element(field, floor, row, col, "stand", self.clock // 100)
+                else:
+                    self._draw_element(field, floor, row, col)
         for pickup in self.state["pickups"] or ():
             image_id = pickup["scene"] + 800 if self.map.rule == 8 and pickup["scene"] in (1, 2, 7) else pickup["scene"]
             self._draw_frames(field, f"object/item/item{image_id}_stand.img", self.clock // ITEM_FRAME_MS,
@@ -701,6 +707,8 @@ class BattleScene:
             # the others (its size was not checked against a recording).
             image = f"object/bomb/bomb{bomb['style']}_stand.img" if bomb.get("style") else BOMB_IMAGE
             x, y = bomb["col"] * CELL, bomb["row"] * CELL
+            if "x" in bomb:  # carried by a conveyor (CMETransStrip)
+                x, y = bomb["x"] - CELL // 2, bomb["y"] - CELL // 2
             flight = flights.get(str(bomb["id"]))
             if flight is not None and flight["start"] <= self.clock < flight["until"]:
                 x, y = flight_position(flight, self.clock, self.map.width * CELL, self.map.height * CELL)

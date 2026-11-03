@@ -111,6 +111,9 @@ type bombView struct {
 	Power     byte   `json:"power"`
 	ExplodeAt uint32 `json:"explode_at"`
 	Style     byte   `json:"style,omitempty"` // bubble type: 9 for rule 6's held item 48, 2 for rule 2's power bubbles
+	// The pixel centre of a bubble a conveyor carries.
+	X *int32 `json:"x,omitempty"`
+	Y *int32 `json:"y,omitempty"`
 }
 
 type flameView struct {
@@ -442,9 +445,13 @@ func view(runtime *battleengine.Runtime, events []battleengine.Event) stateView 
 		state.Actors = append(state.Actors, next)
 	}
 	for _, bomb := range engine.Bombs() {
-		state.Bombs = append(state.Bombs, bombView{
+		view := bombView{
 			ID: bomb.ID, Owner: bomb.OwnerID, Row: bomb.Cell.Row, Col: bomb.Cell.Col, Power: bomb.Power, ExplodeAt: bomb.ExplodeAtMS, Style: bomb.NativeStyle, Hidden: bomb.Invisible,
-		})
+		}
+		if p, conveyed := engine.ConveyedBombPosition(bomb.ID); conveyed {
+			view.X, view.Y = &p.X, &p.Y
+		}
+		state.Bombs = append(state.Bombs, view)
 	}
 	for _, flame := range engine.Flames() {
 		state.Flames = append(state.Flames, flameView{

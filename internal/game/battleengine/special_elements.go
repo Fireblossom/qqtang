@@ -155,3 +155,127 @@ func abs16(v int16) int16 {
 	}
 	return v
 }
+
+// Conveyors (CMETransStrip, docs/transdoor-strip-re.md §2): every strip
+// moves the idle bubbles on its cell and, when asked, the local player at
+// 0.02 px/ms (0x3CA3D70A). Positions are kept in thousandths of a pixel.
+const conveyorMilliPixelsPerMS = 20
+
+// SetConveyor marks cell as a strip moving toward direction.
+func (engine *Engine) SetConveyor(cell Cell, direction Direction) error {
+	if engine == nil || !engine.rules.NativeSpecialElements {
+		return fmt.Errorf("conveyors require the special-element rule")
+	}
+	if _, inside := engine.grid.Cell(cell); !inside || direction == DirectionNone {
+		return fmt.Errorf("conveyor %v toward %d is invalid", cell, direction)
+	}
+	if engine.conveyors == nil {
+		engine.conveyors = map[Cell]Direction{}
+	}
+	engine.conveyors[cell] = direction
+	return nil
+}
+
+// conveyorStep is 0x00614CFF for the four straight strips: toward the
+// cell centre the move is free; past it only into an enterable cell (map
+// elements only, 0x00614CA1).
+func (engine *Engine) conveyorStep(x, y int64, at Cell, direction Direction, v int64) (int64, int64) {
+	cellOf := func(p int64) int16 { return int16(p / (CellSizePixels * 1000)) }
+	half := int64(CellSizePixels/2) * 1000
+	enter := func(c Cell) bool {
+		tile, inside := engine.grid.Cell(c)
+		return inside && tile.PlayerPassable(direction)
+	}
+	switch direction {
+	case DirectionRight:
+		if cellOf(x+half) == at.Col || enter(Cell{Row: at.Row, Col: at.Col + 1}) {
+			x += v
+		}
+	case DirectionUp:
+		if cellOf(y-half) == at.Row || enter(Cell{Row: at.Row - 1, Col: at.Col}) {
+			y -= v
+		}
+	case DirectionLeft:
+		if cellOf(x-half) == at.Col || enter(Cell{Row: at.Row, Col: at.Col - 1}) {
+			x -= v
+		}
+	case DirectionDown:
+		if cellOf(y+half) == at.Row || enter(Cell{Row: at.Row + 1, Col: at.Col}) {
+			y += v
+		}
+	}
+	return x, y
+}
+
+// conveyBombs is 0x00614B3F: bubbles lying on a strip (not flying) move
+// with it and change cells as they cross. No message: every client moves
+// its own copy.
+func (engine *Engine) conveyBombs() {
+	if len(engine.conveyors) == 0 {
+		return
+	}
+	v := int64(engine.rules.TickMS) * conveyorMilliPixelsPerMS
+	moved := false
+	for index := range engine.bombs {
+		bomb := &engine.bombs[index]
+		direction, on := engine.conveyors[bomb.Cell]
+		if !on || bomb.FlightUntilMS > engine.elapsedMS {
+			delete(engine.conveyedBombs, bomb.ID)
+			continue
+		}
+		p, tracked := engine.conveyedBombs[bomb.ID]
+		if !tracked {
+			center := PositionAtCellCenter(bomb.Cell)
+			p = [2]int64{int64(center.X) * 1000, int64(center.Y) * 1000}
+		}
+		p[0], p[1] = engine.conveyorStep(p[0], p[1], bomb.Cell, direction, v)
+		if engine.conveyedBombs == nil {
+			engine.conveyedBombs = map[uint32][2]int64{}
+		}
+		engine.conveyedBombs[bomb.ID] = p
+		if cell := (Cell{Row: int16(p[1] / (CellSizePixels * 1000)), Col: int16(p[0] / (CellSizePixels * 1000))}); cell != bomb.Cell {
+			if _, inside := engine.grid.Cell(cell); inside {
+				bomb.Cell, moved = cell, true
+			}
+		}
+	}
+	if moved {
+		engine.syncNativeBombLinks()
+	}
+}
+
+// ConveyedBombPosition is a strip-carried bubble's pixel position.
+func (engine *Engine) ConveyedBombPosition(bombID uint32) (Position, bool) {
+	p, ok := engine.conveyedBombs[bombID]
+	return Position{X: int32(p[0] / 1000), Y: int32(p[1] / 1000)}, ok
+}
+
+// Convey moves an actor standing on a strip by one tick (event 6 of
+// 0x00614C49): the original pushes only the players its own client runs,
+// whatever their state. It reports whether the actor moved.
+func (engine *Engine) Convey(playerID uint16) bool {
+	if engine == nil || len(engine.conveyors) == 0 {
+		return false
+	}
+	index := engine.actorIndex(playerID)
+	if index < 0 || engine.actors[index].State == ActorEliminated {
+		return false
+	}
+	actor := &engine.actors[index]
+	at := actor.Position.Cell()
+	direction, on := engine.conveyors[at]
+	if !on {
+		actor.conveyRemainder = [2]int64{}
+		return false
+	}
+	x := int64(actor.Position.X)*1000 + actor.conveyRemainder[0]
+	y := int64(actor.Position.Y)*1000 + actor.conveyRemainder[1]
+	x, y = engine.conveyorStep(x, y, at, direction, int64(engine.rules.TickMS)*conveyorMilliPixelsPerMS)
+	next := Position{X: int32(x / 1000), Y: int32(y / 1000)}
+	actor.conveyRemainder = [2]int64{x - int64(next.X)*1000, y - int64(next.Y)*1000}
+	if next == actor.Position {
+		return false
+	}
+	actor.nativePreviousPosition, actor.Position = actor.Position, next
+	return true
+}

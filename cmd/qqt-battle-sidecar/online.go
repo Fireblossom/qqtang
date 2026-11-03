@@ -406,6 +406,9 @@ func newOnlineMatch(init command) (*onlineMatch, beginView, error) {
 			engine.SetMachineGate(gate.anchor, gate.side == 0, false)
 		}
 	}
+	if special != nil {
+		special.installConveyors(engine)
+	}
 	runtime, err := battleengine.NewRuntime(engine, nil)
 	if err != nil {
 		return nil, beginView{}, err

@@ -95,6 +95,25 @@ type specialView struct {
 	Effects []specialEffectView `json:"effects,omitempty"`
 }
 
+// stripDirection is 0x005CB4B7's strip type per element ID.
+var stripDirection = map[int32]battleengine.Direction{
+	17121: battleengine.DirectionUp, 17122: battleengine.DirectionUp, 17131: battleengine.DirectionUp,
+	17123: battleengine.DirectionDown, 17124: battleengine.DirectionDown, 17130: battleengine.DirectionDown,
+	17125: battleengine.DirectionRight, 17126: battleengine.DirectionRight, 17132: battleengine.DirectionRight,
+	17127: battleengine.DirectionLeft, 17128: battleengine.DirectionLeft, 17133: battleengine.DirectionLeft,
+}
+
+// installConveyors hands the floor-layer strips to the engine.
+func (rule *specialRule) installConveyors(engine *battleengine.Engine) {
+	for row := 0; row < rule.layers.Height; row++ {
+		for col := 0; col < rule.layers.Width; col++ {
+			if d, strip := stripDirection[rule.layers.Element(2, row, col)]; strip {
+				_ = engine.SetConveyor(battleengine.Cell{Row: int16(row), Col: int16(col)}, d)
+			}
+		}
+	}
+}
+
 // newSpecialRule scans the map; nil when it has none of these elements.
 func newSpecialRule(layers mapdata.MapLayers, seed int64) *specialRule {
 	rule := &specialRule{layers: layers, shuffleAt: doorFirstMS, rng: rand.New(rand.NewSource(seed))}
@@ -112,6 +131,9 @@ func newSpecialRule(layers mapdata.MapLayers, seed int64) *specialRule {
 				// outer, columns inner), which the shuffle depends on.
 				rule.doors = append(rule.doors, doorState{cell: at, target: -1})
 			case battleengine.ElementExplodeStone, battleengine.ElementSolidStone:
+				found = true
+			}
+			if _, strip := stripDirection[layers.Element(2, row, col)]; strip {
 				found = true
 			}
 		}
@@ -222,6 +244,10 @@ func (match *onlineMatch) specialTick(before battleengine.Actor, moved bool) []b
 	alive := ok && local.State != battleengine.ActorEliminated
 	here := local.Position.Cell()
 
+	// Strips push the local player standing on them (event 6).
+	if ok {
+		match.engine.Convey(match.local)
+	}
 	// Explode stones (0x00619EE1): the local player inside a broken stone's
 	// 3x3 dies, trapped or not.
 	if alive && match.engine.ElementBlastCovers(here) {

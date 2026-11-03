@@ -781,6 +781,8 @@ type Actor struct {
 	adventureAttr [3]int
 	// elementBonus is the totem/halo speed, bubble and power bonus.
 	elementBonus [3]int
+	// conveyRemainder keeps the sub-pixel part of strip pushes.
+	conveyRemainder [2]int64
 	// A live FA5 has been produced, but its authoritative echo is pending.
 	// Keep the actor's outcome uncommitted while excluding local physics.
 	nativeHitPending  bool

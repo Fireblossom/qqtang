@@ -209,6 +209,7 @@ movement:
 		}
 	}
 	engine.releaseFieldObjectPassThrough()
+	engine.conveyBombs()
 
 	engine.elapsedMS = saturatingAdd(engine.elapsedMS, engine.rules.TickMS)
 	events = append(events, engine.expireMapRetirements()...)

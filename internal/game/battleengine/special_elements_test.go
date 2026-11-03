@@ -99,3 +99,49 @@ func TestElementBonusesStayInsideTheRoleCaps(t *testing.T) {
 		t.Fatalf("totem: speed %d count %d", c.EffectiveSpeedRate, c.EffectiveBombCapacity)
 	}
 }
+
+func TestConveyorCarriesIdleBubblesAndStopsAtAWall(t *testing.T) {
+	cfg := testConfig()
+	cfg.Grid = testOpenGrid(7, 5)
+	cfg.Rules.NativeSpecialElements, cfg.Rules.TickMS, cfg.Rules.BombFuseMS = true, 20, 60_000
+	cfg.Rules.RoundDurationMS = 120_000
+	cfg.Participants[0].Spawn = Cell{Row: 2, Col: 1}
+	cfg.Participants[1].Spawn = Cell{Row: 0, Col: 6}
+	cfg.Grid.Cells[2*7+4] = Tile{Kind: CellSolid}
+	e := mustEngine(t, cfg)
+	for col := int16(1); col <= 3; col++ {
+		if err := e.SetConveyor(Cell{Row: 2, Col: col}, DirectionRight); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := e.Step([]Action{{PlayerID: 1, PlaceBomb: true}}); err != nil {
+		t.Fatal(err)
+	}
+	// 20 px/s: one cell every 2 s; the wall at column 4 stops it at (2,3)'s centre.
+	for e.elapsedMS < 10_000 {
+		if _, err := e.Step(nil); err != nil {
+			t.Fatal(err)
+		}
+	}
+	bomb := e.bombs[0]
+	p, ok := e.ConveyedBombPosition(bomb.ID)
+	if bomb.Cell != (Cell{Row: 2, Col: 3}) || !ok || p != PositionAtCellCenter(Cell{Row: 2, Col: 3}) {
+		t.Fatalf("bomb at %v, %v", bomb.Cell, p)
+	}
+}
+
+func TestConveyorPushesTheActorItIsAskedFor(t *testing.T) {
+	cfg := testConfig()
+	cfg.Grid = testOpenGrid(7, 5)
+	cfg.Rules.NativeSpecialElements, cfg.Rules.TickMS = true, 20
+	cfg.Participants[0].Spawn = Cell{Row: 2, Col: 1}
+	e := mustEngine(t, cfg)
+	_ = e.SetConveyor(Cell{Row: 2, Col: 1}, DirectionUp)
+	start := e.actors[0].Position
+	for range 50 { // 1000 ms
+		e.Convey(1)
+	}
+	if got := e.actors[0].Position; got.X != start.X || start.Y-got.Y != 20 {
+		t.Fatalf("moved from %v to %v", start, got)
+	}
+}
