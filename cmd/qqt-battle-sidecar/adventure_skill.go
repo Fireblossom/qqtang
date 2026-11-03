@@ -59,6 +59,7 @@ type advCastView struct {
 	Stage   byte                       `json:"stage"`
 	Since   uint32                     `json:"since"`
 	Caster  uint16                     `json:"caster"`
+	Dir     int                        `json:"dir"` // 0 right, 1 up, 2 left, 3 down
 	Row     int16                      `json:"row"`
 	Col     int16                      `json:"col"`
 	X       int32                      `json:"x"`
@@ -611,7 +612,7 @@ func (match *onlineMatch) adventureCastView() []advCastView {
 	var out []advCastView
 	for _, c := range match.adventure.casts {
 		a := c.prop.Anims
-		view := advCastView{ID: c.prop.ID, Stage: byte(c.stage), Since: c.since, Caster: c.npc, Row: c.cell.Row, Col: c.cell.Col, X: c.pos.X, Y: c.pos.Y,
+		view := advCastView{ID: c.prop.ID, Stage: byte(c.stage), Since: c.since, Caster: c.npc, Dir: c.dir, Row: c.cell.Row, Col: c.cell.Col, X: c.pos.X, Y: c.pos.Y,
 			Anims: a, Offsets: [2][2]int{{a.PrepareX, a.PrepareY}, {a.AffectX, a.AffectY}}}
 		if c.stage == castTrigger && c.triggerSet {
 			center := c.pos.Cell()

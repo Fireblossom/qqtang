@@ -975,6 +975,9 @@ class BattleScene:
                 effects.draw(field, anims["prepare"], elapsed, ox + npc["x"] + prepare_x, oy + npc["y"] + prepare_y)
             elif stage in (1, 2):
                 anim = anims.get("trap") if stage == 1 else anims.get("move")
+                if anim and stage == 2 and effects.load(anim) is None:
+                    # Projectiles ship per direction: qiquan.eff -> qiquan_UP.eff.
+                    anim = anim[:-4] + "_" + ("RIGHT", "UP", "LEFT", "DOWN")[cast.get("dir", 3) & 3] + ".eff"
                 if not (anim and effects.draw(field, anim, elapsed, ox + cast["x"], oy + cast["y"])):
                     color = (200, 60, 200, 110) if stage == 1 else (255, 140, 40, 170)
                     mark = pygame.Surface((CELL, CELL), pygame.SRCALPHA)
