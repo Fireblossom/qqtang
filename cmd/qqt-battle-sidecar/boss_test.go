@@ -625,7 +625,7 @@ func TestAdventureNPCEntersBattleAfterAPlayerEntersItsView(t *testing.T) {
 	n.id, n.pos, n.speed, n.bossSpeed = 30300, battleengine.PositionAtCellCenter(battleengine.Cell{Row: one.Position.Cell().Row, Col: one.Position.Cell().Col - 3}), 3, true
 	m.adventure.npcs[n.id] = n
 	m.adventureNPCDecide(n, 0) // the first decision creates the zero entries
-	m.adventureEnmity()     // in view with a zero entry: +20
+	m.adventureEnmity()        // in view with a zero entry: +20
 	if n.enmity[1] != 20 {
 		t.Fatalf("enmity %v", n.enmity)
 	}

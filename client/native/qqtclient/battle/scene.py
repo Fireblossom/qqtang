@@ -751,6 +751,7 @@ class BattleScene:
         self._draw_field_lock(field)
         self._draw_adventure_casts(field)
         self._draw_special(field)
+        self._draw_prop_effects(field)
         charge = (self.state.get("machine") or {}).get("charge")
         actor = self._local_actor() if charge is not None else None
         if actor is not None and actor["state"] != ACTOR_ELIMINATED:
@@ -960,15 +961,55 @@ class BattleScene:
             effects.draw(field, DOOR_FX, elapsed, ox + actor["x"] + 10, oy + actor["y"] + 30)
 
     def _draw_adventure_casts(self, field: pygame.Surface) -> None:
-        """NPC skill traps (stage 3) and projectiles (stage 4). The props'
-        .eff animations are not decoded yet, so this is a placeholder mark,
-        not the original look."""
+        """NPC skills by prop stage (adventure_skill.go): PrepareAnim on the
+        caster, TrapEffect on the trap cell, MoveState.AnimID on the
+        projectile, then GridsAnim on every area cell and AffectAnim on each
+        target. Effect points are world positions (cell centres) plus the
+        prop's offsets [inferred anchors]; a trap or projectile without an
+        animation keeps a plain mark."""
+        casts = (self.state.get("adventure") or {}).get("casts") or ()
+        if not casts:
+            return
         ox, oy = FIELD_ORIGIN
-        for cast in (self.state.get("adventure") or {}).get("casts") or ():
-            color = (200, 60, 200, 110) if cast["stage"] == 1 else (255, 140, 40, 170)
-            mark = pygame.Surface((CELL, CELL), pygame.SRCALPHA)
-            pygame.draw.circle(mark, color, (CELL // 2, CELL // 2), CELL // 2 - 4 if cast["stage"] == 1 else CELL // 4)
-            field.blit(mark, (ox + cast["x"] - CELL // 2, oy + cast["y"] - CELL // 2))
+        effects = self._effects()
+        npcs = {npc["id"]: npc for npc in (self.state.get("adventure") or {}).get("npcs") or ()}
+        actors = {actor["id"]: actor for actor in self.state["actors"]}
+        for cast in casts:
+            anims, elapsed = cast.get("anims") or {}, self.clock - cast.get("since", self.clock)
+            (prepare_x, prepare_y), (affect_x, affect_y) = cast.get("offsets") or ((0, 0), (0, 0))
+            stage = cast["stage"]
+            if stage == 0 and anims.get("prepare") and cast.get("caster") in npcs:
+                npc = npcs[cast["caster"]]
+                effects.draw(field, anims["prepare"], elapsed, ox + npc["x"] + prepare_x, oy + npc["y"] + prepare_y)
+            elif stage in (1, 2):
+                anim = anims.get("trap") if stage == 1 else anims.get("move")
+                if not (anim and effects.draw(field, anim, elapsed, ox + cast["x"], oy + cast["y"])):
+                    color = (200, 60, 200, 110) if stage == 1 else (255, 140, 40, 170)
+                    mark = pygame.Surface((CELL, CELL), pygame.SRCALPHA)
+                    pygame.draw.circle(mark, color, (CELL // 2, CELL // 2), CELL // 2 - 4 if stage == 1 else CELL // 4)
+                    field.blit(mark, (ox + cast["x"] - CELL // 2, oy + cast["y"] - CELL // 2))
+            elif stage == 3:
+                if anims.get("grids"):
+                    for cell in cast.get("cells") or ():
+                        effects.draw(field, anims["grids"], elapsed, ox + cell["col"] * CELL + CELL // 2, oy + cell["row"] * CELL + CELL // 2)
+                if anims.get("affect"):
+                    for target in cast.get("targets") or ():
+                        who = actors.get(target) or npcs.get(target)
+                        if who is not None:
+                            effects.draw(field, anims["affect"], elapsed, ox + who["x"] + affect_x, oy + who["y"] + affect_y)
+
+    def _draw_prop_effects(self, field: pygame.Surface) -> None:
+        """Room props with a GridsAnim (the fireworks) play it on the user's
+        cell for the prop's AffectTime; the cell centre is the effect point
+        [inferred]."""
+        shown = self.state.get("prop_effects") or ()
+        if not shown:
+            return
+        ox, oy = FIELD_ORIGIN
+        for effect in shown:
+            if self.clock < effect["until"]:
+                self._effects().draw(field, effect["anim"], self.clock - effect["since"],
+                                     ox + effect["col"] * CELL + CELL // 2, oy + effect["row"] * CELL + CELL // 2)
 
     def _draw_adventure_npcs(self, field: pygame.Surface, row: int) -> None:
         """Rule 12's NPCs: the model of their ImageID (object/player/

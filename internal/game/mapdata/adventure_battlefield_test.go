@@ -91,8 +91,15 @@ func TestAdventurePropsKeepTheFirstOfEachID(t *testing.T) {
 		scythe.MoveSpeed != 300 || scythe.AffectObject != 4 || scythe.Effects["HP"] != -1500 {
 		t.Fatalf("21025 %+v", scythe)
 	}
-	if burn := props[21006]; !burn.HasTrap || burn.TrapTime != 60000 || burn.Effects["HP"] != -200 {
+	if burn := props[21006]; !burn.HasTrap || burn.TrapTime != 60000 || burn.Effects["HP"] != -200 || burn.Anims.Trap != "huoyanchongjibo_xianjin.eff" {
 		t.Fatalf("21006 %+v", burn)
+	}
+	if fist := props[21022].Anims; fist.Prepare != "xuli.eff" || fist.PrepareX != 10 || fist.PrepareY != 20 || fist.Move != "qiquan.eff" ||
+		fist.Affect != "kouzhadan.eff" || fist.AffectY != 20 || fist.Grids != "dadichandou2.eff" {
+		t.Fatalf("21022 anims %+v", fist)
+	}
+	if red := props[20058]; red.Anims.Grids != "honglihua.eff" || red.AffectTime != 10000 {
+		t.Fatalf("20058 %+v", red)
 	}
 	if rage := props[21090]; rage.Tier != 5 {
 		t.Fatalf("21090 must be the first entry (Tier 5): %+v", rage)

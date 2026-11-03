@@ -51,13 +51,22 @@ type advCast struct {
 	triggerSet bool
 }
 
+// advCastView is what the host draws: the prop's position by stage, when
+// the stage began, and in Trigger the area cells and targets for GridsAnim
+// and AffectAnim.
 type advCastView struct {
-	ID    uint32 `json:"id"`
-	Stage byte   `json:"stage"`
-	Row   int16  `json:"row"`
-	Col   int16  `json:"col"`
-	X     int32  `json:"x"`
-	Y     int32  `json:"y"`
+	ID      uint32                     `json:"id"`
+	Stage   byte                       `json:"stage"`
+	Since   uint32                     `json:"since"`
+	Caster  uint16                     `json:"caster"`
+	Row     int16                      `json:"row"`
+	Col     int16                      `json:"col"`
+	X       int32                      `json:"x"`
+	Y       int32                      `json:"y"`
+	Anims   mapdata.AdventurePropAnims `json:"anims"`
+	Offsets [2][2]int                  `json:"offsets"` // prepare, affect
+	Cells   []cell                     `json:"cells,omitempty"`
+	Targets []uint16                   `json:"targets,omitempty"`
 }
 
 func skillTriggerHolds(skill mapdata.AdventureNPCSkill, kind, lower, upper string, value int) bool {
@@ -601,9 +610,23 @@ func (match *onlineMatch) adventureSkillRemote(event game.GameEvent) bool {
 func (match *onlineMatch) adventureCastView() []advCastView {
 	var out []advCastView
 	for _, c := range match.adventure.casts {
-		if c.stage == castTrap || c.stage == castMove {
-			out = append(out, advCastView{ID: c.prop.ID, Stage: byte(c.stage), Row: c.cell.Row, Col: c.cell.Col, X: c.pos.X, Y: c.pos.Y})
+		a := c.prop.Anims
+		view := advCastView{ID: c.prop.ID, Stage: byte(c.stage), Since: c.since, Caster: c.npc, Row: c.cell.Row, Col: c.cell.Col, X: c.pos.X, Y: c.pos.Y,
+			Anims: a, Offsets: [2][2]int{{a.PrepareX, a.PrepareY}, {a.AffectX, a.AffectY}}}
+		if c.stage == castTrigger && c.triggerSet {
+			center := c.pos.Cell()
+			if c.hasTarget {
+				center = c.target
+			}
+			r0, r1, c0, c1 := affectArea(center, c.prop.AffectFactor, c.dir, c.prop.AffectShape)
+			for row := r0; row <= r1; row++ {
+				for col := c0; col <= c1; col++ {
+					view.Cells = append(view.Cells, cell{Row: row, Col: col})
+				}
+			}
+			view.Targets = c.targets
 		}
+		out = append(out, view)
 	}
 	return out
 }

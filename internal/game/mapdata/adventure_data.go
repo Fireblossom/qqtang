@@ -274,6 +274,21 @@ type AdventureProp struct {
 	AffectState    int
 	RestoreAttr    bool
 	Effects        map[string]float64 // TriggerState children, e.g. HP -1500
+	Anims          AdventurePropAnims
+}
+
+// AdventurePropAnims are the props' effect/*.eff names: PrepareAnim and
+// its offset, TrapState.TrapEffect, MoveState.AnimID, and TriggerState's
+// AffectAnim (on each target, with its offset) and GridsAnim (on each cell
+// of the area).
+type AdventurePropAnims struct {
+	Prepare            string `json:"prepare,omitempty"`
+	PrepareX, PrepareY int    `json:"-"`
+	Trap               string `json:"trap,omitempty"`
+	Move               string `json:"move,omitempty"`
+	Affect             string `json:"affect,omitempty"`
+	AffectX, AffectY   int    `json:"-"`
+	Grids              string `json:"grids,omitempty"`
 }
 
 // adventurePropTiers is PropFireIntervalTable (ms by Tier).
@@ -328,10 +343,13 @@ func LoadAdventureProps(clientRoot string) (map[uint32]AdventureProp, error) {
 				current.InitialInterval = uint32(atoi(attrs["InitialInterval"]))
 			case name == "PrepareState":
 				current.PrepareTime = uint32(atoi(attrs["PrepareTime"]))
+				current.Anims.Prepare, current.Anims.PrepareX, current.Anims.PrepareY = attrs["PrepareAnim"], atoi(attrs["OffsetX"]), atoi(attrs["OffsetY"])
 			case name == "TrapState":
 				current.HasTrap, current.TrapTime = true, uint32(atoi(attrs["AffectTime"]))
+				current.Anims.Trap = attrs["TrapEffect"]
 			case name == "MoveState":
 				current.HasMove, current.MoveDistance, current.MoveSpeed = true, atoi(attrs["MaxMoveDistance"]), atoi(attrs["MoveSpeed"])
+				current.Anims.Move = attrs["AnimID"]
 				current.HitPlayerPower, current.IgniteBomb = atoi(attrs["HitPlayerPower"]), atoi(attrs["IsIgniteBomb"]) != 0
 			case name == "TriggerState":
 				inTrigger = true
@@ -341,6 +359,8 @@ func LoadAdventureProps(clientRoot string) (map[uint32]AdventureProp, error) {
 					current.AffectState = state
 				}
 				current.RestoreAttr = atoi(attrs["RestorePlayerAttr"]) != 0
+				current.Anims.Affect, current.Anims.Grids = attrs["AffectAnim"], attrs["GridsAnim"]
+				current.Anims.AffectX, current.Anims.AffectY = atoi(attrs["AffectAnimOffsetX"]), atoi(attrs["AffectAnimOffsetY"])
 			case inTrigger:
 				var value string
 				if decoder.DecodeElement(&value, &t) == nil {

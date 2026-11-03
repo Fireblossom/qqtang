@@ -203,7 +203,9 @@ func (bot *autoplayBot) act(engine *battleengine.Engine) battleengine.Action {
 					return action
 				}
 			}
-			if path := world.nearest(here, safe, func(c battleengine.Cell) bool { return inThree(c, h.cell) && (c.Row == h.cell.Row || c.Col == h.cell.Col) && c != h.cell }); len(path) > 0 {
+			if path := world.nearest(here, safe, func(c battleengine.Cell) bool {
+				return inThree(c, h.cell) && (c.Row == h.cell.Row || c.Col == h.cell.Col) && c != h.cell
+			}); len(path) > 0 {
 				return bot.follow(action, actor, path)
 			}
 		}

@@ -169,7 +169,10 @@ type onlineMatch struct {
 	itemUses map[[3]uint32]bool
 	// The local player's room props (GAME_BEGIN NewItems) and the uses
 	// requested over TCP (0x1174) but not yet confirmed (0x1175).
-	prepared          []preparedView
+	prepared []preparedView
+	// Room props' scene effects (fireworks' GridsAnim), from errorPPP.ini.
+	propTable         map[uint32]mapdata.AdventureProp
+	propEffects       []propEffectView
 	preparedRequested map[uint32]uint32
 
 	// Non-arbitrator requests not answered yet: pickups by scene ID and cell,
@@ -200,14 +203,15 @@ type onlineMatch struct {
 	carryRequestKind uint16
 	carryRequestSent uint32
 	// Rule 6's style-9 bubbles (held item 48) by engine bomb ID.
-	styleNine map[uint32]bool
-	box       *boxRule
-	machine   *machineRule
-	tank      *tankRule
-	kick      *kickRule      // rule 2; nil otherwise
-	boss      *bossRule      // a map that can host a Boss overlay; nil otherwise
-	adventure *adventureRule // a rule-12 stage; nil otherwise
-	special   *specialRule   // stones, totems, halos and teleporters; nil otherwise
+	styleNine  map[uint32]bool
+	box        *boxRule
+	machine    *machineRule
+	tank       *tankRule
+	kick       *kickRule      // rule 2; nil otherwise
+	boss       *bossRule      // a map that can host a Boss overlay; nil otherwise
+	adventure  *adventureRule // a rule-12 stage; nil otherwise
+	special    *specialRule   // stones, totems, halos and teleporters; nil otherwise
+	clientRoot string
 }
 
 // respawnRule is a special rule's relive timing, from Client.exe's rule
@@ -435,7 +439,7 @@ func newOnlineMatch(init command) (*onlineMatch, beginView, error) {
 		fieldContacts: map[fieldContactKey]bool{}, itemUses: map[[3]uint32]bool{}, useRequested: map[uint8]uint32{},
 		preparedRequested: map[uint32]uint32{},
 		pickupRequests:    map[pickupKey]pickupRequest{}, sceneRequests: map[sceneRequestKey]uint32{},
-		box: box, machine: machine, tank: tank, boss: boss, adventure: adventure, special: special, respawn: respawn, eliminatedAt: map[uint16]uint32{}, departed: map[uint16]bool{},
+		box: box, machine: machine, tank: tank, boss: boss, adventure: adventure, special: special, respawn: respawn, clientRoot: init.ClientRoot, eliminatedAt: map[uint16]uint32{}, departed: map[uint16]bool{},
 		kills: map[uint16]int{}, streaks: map[uint16]int{},
 	}
 	if box != nil {
@@ -1648,6 +1652,41 @@ func (match *onlineMatch) applyPreparedUse(body []byte) {
 	if use.ItemID == curePropID {
 		match.engine.ClearHarmfulMovementStatus(use.PlayerID)
 	}
+	// A prop with a GridsAnim (the fireworks 20058..20064) plays it on the
+	// user's cell for its AffectTime (shape 0, factor 0, the user itself).
+	if match.propTable == nil && match.clientRoot != "" {
+		if table, err := mapdata.LoadAdventureProps(match.clientRoot); err == nil {
+			match.propTable = table
+		} else {
+			match.logf("prop table: %v", err)
+			match.clientRoot = ""
+		}
+	}
+	if prop, ok := match.propTable[use.ItemID]; ok && prop.Anims.Grids != "" {
+		now := match.engine.ElapsedMS()
+		at := battleengine.Position{X: int32(use.PosX), Y: int32(use.PosY)}.Cell()
+		match.propEffects = append(match.propEffects, propEffectView{Anim: prop.Anims.Grids, Row: at.Row, Col: at.Col, Since: now, Until: now + prop.AffectTime})
+	}
+}
+
+type propEffectView struct {
+	Anim  string `json:"anim"`
+	Row   int16  `json:"row"`
+	Col   int16  `json:"col"`
+	Since uint32 `json:"since"`
+	Until uint32 `json:"until"`
+}
+
+func (match *onlineMatch) propEffectView() []propEffectView {
+	now := match.engine.ElapsedMS()
+	kept := match.propEffects[:0]
+	for _, e := range match.propEffects {
+		if now < e.Until {
+			kept = append(kept, e)
+		}
+	}
+	match.propEffects = kept
+	return append([]propEffectView(nil), kept...)
 }
 
 func (match *onlineMatch) preparedCount(item uint32) int16 {
