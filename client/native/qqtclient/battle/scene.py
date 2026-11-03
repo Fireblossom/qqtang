@@ -18,7 +18,7 @@ from ..render import SpriteCache, cell_width
 from ..resources import Resources
 from ..runtime import UIRuntime
 from ..script import call_script, log
-from . import mapfile
+from . import mapfile, prepared
 from .effect import EffectPlayer
 from .sidecar import (ACTOR_ELIMINATED, ACTOR_TRAPPED, EVENT_ACTOR_ELIMINATED, EVENT_ACTOR_RESPAWNED, EVENT_BOMB_EXPLODED,
                       EVENT_CELL_DAMAGED, EVENT_CELL_DESTROYED, EVENT_MAP_ELEMENT_MOVED, MOVE_DOWN, MOVE_LEFT, MOVE_NONE, MOVE_RIGHT, MOVE_UP, TICK_MS, Sidecar)
@@ -381,6 +381,7 @@ class BattleScene:
         self.emotion_pressed = 0
         self.practice_emotion: dict[str, int] | None = None
         self.shown_slots: list[tuple[int, int]] | None = None
+        self.shown_masks: dict[int, tuple[float, float]] = {}
         self.accumulated_ms = 0.0
         self.names = {player["id"]: player.get("name") or f"玩家{player['id']}" for player in players}
         # Room seats 0..7 by PlayerID (online only).
@@ -502,8 +503,8 @@ class BattleScene:
         """The local player's seven item slots as (action or item, count).
         Room props keep the first slots in GAME_BEGIN order (an empty slot
         once used up) and the held-item slots follow them; the native
-        arrangement is inferred, its slot writer (0x005DAC82) is only reached
-        from protected code."""
+        arrangement is inferred: the merged-slot rebuild still needs tracing
+        through protected code. Cooldown fields are independently verified."""
         prepared = [(entry["item"], entry["count"]) if entry["count"] > 0 else (0, 0)
                     for entry in self.state.get("prepared") or ()][:7]
         actor = self._local_actor()
@@ -517,19 +518,35 @@ class BattleScene:
         actor = self._local_actor()
         trapped = actor is not None and actor["state"] == ACTOR_TRAPPED
         for action, _count in self._slots()[:CTRL_SLOTS]:
-            if action and trapped == (action == NEEDLE_ACTION):
+            cooldown = next((entry.get("cooldown") for entry in self.state.get("prepared") or () if entry["item"] == action), None)
+            usable = cooldown is None or prepared.ready(cooldown, self.clock)
+            if action and usable and trapped == (action == NEEDLE_ACTION):
                 return action
         return 0
 
     def _update_status_bar(self) -> None:
         slots = self._slots()
-        if slots == self.shown_slots or self.runtime is None:
+        if self.runtime is None:
+            return
+        self._update_prepared_masks(slots)
+        if slots == self.shown_slots:
             return
         self.shown_slots = slots
         for index, (action, count) in enumerate(slots):
             icon = {41: 21, 42: 23}.get(action, action)  # 0x005DAC82
             self.runtime.namespace["Win_SetImg"](f"{STATUS_BAR}.baseItemIcon{index}", f"res/uiRes/icon/item/item{icon}.img" if action else "")
             self.runtime.namespace["Win_SetText"](f"{STATUS_BAR}.itemNum{index}", str(count))
+
+    def _update_prepared_masks(self, slots: list[tuple[int, int]]) -> None:
+        cooldowns = {entry["item"]: entry.get("cooldown") for entry in self.state.get("prepared") or ()}
+        for index, (item, _count) in enumerate(slots):
+            value = prepared.mask(cooldowns.get(item), self.clock)
+            if self.shown_masks.get(index) == value:
+                continue
+            self.shown_masks[index] = value
+            angle, speed = value
+            self.runtime.namespace["ui_SetItemTimeSpeed"](index, speed)
+            self.runtime.namespace["ui_SetItemTimeCur"](index, angle)
 
     @property
     def clock(self) -> int:

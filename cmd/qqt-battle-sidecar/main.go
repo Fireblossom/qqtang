@@ -42,8 +42,16 @@ type player struct {
 }
 
 type preparedView struct {
-	Item  uint32 `json:"item"`
-	Count int16  `json:"count"`
+	Item     uint32                `json:"item"`
+	Count    int16                 `json:"count"`
+	Cooldown *preparedCooldownView `json:"cooldown,omitempty"`
+}
+
+type preparedCooldownView struct {
+	Initial  uint32 `json:"initial"`
+	Interval uint32 `json:"interval"`
+	LastUse  uint32 `json:"last_use"`
+	Allowed  bool   `json:"allowed"`
 }
 
 type command struct {

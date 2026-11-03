@@ -249,13 +249,16 @@ func atof(s string) float64 {
 }
 
 // AdventureProp is one <ID2xxxx> of config/errorPPP.ini's PropSet: the props
-// adventure NPCs cast as skills (docs/adventure-npc-ai-re.md §6).
+// adventure NPCs cast as skills and players bring from the room
+// (docs/adventure-npc-ai-re.md §6; prepared-cooldown-re.md).
 type AdventureProp struct {
 	ID              uint32
 	Name            string
 	Tier            int
 	InitialInterval uint32
-	PrepareTime     uint32
+	// PickedUpState.GameMode: 0 both, 1 competitive, 2 adventure (rule 12).
+	GameMode    int
+	PrepareTime uint32
 	// Trap: present when the prop lies on the caster's cell for TrapTime.
 	HasTrap  bool
 	TrapTime uint32
@@ -341,6 +344,7 @@ func LoadAdventureProps(clientRoot string) (map[uint32]AdventureProp, error) {
 			case current == nil:
 			case name == "PickedUpState":
 				current.InitialInterval = uint32(atoi(attrs["InitialInterval"]))
+				current.GameMode = atoi(attrs["GameMode"])
 			case name == "PrepareState":
 				current.PrepareTime = uint32(atoi(attrs["PrepareTime"]))
 				current.Anims.Prepare, current.Anims.PrepareX, current.Anims.PrepareY = attrs["PrepareAnim"], atoi(attrs["OffsetX"]), atoi(attrs["OffsetY"])

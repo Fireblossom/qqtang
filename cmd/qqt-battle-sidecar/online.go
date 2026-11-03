@@ -175,6 +175,7 @@ type onlineMatch struct {
 	propTable         map[uint32]mapdata.AdventureProp
 	propEffects       []propEffectView
 	preparedRequested map[uint32]uint32
+	preparedLastUse   map[int]uint32 // native cooldown is shared by Tier, per player
 
 	// Non-arbitrator requests not answered yet: pickups by scene ID and cell,
 	// pushes and kicks by what they move, with the scene clock of the last send.
@@ -1646,6 +1647,9 @@ func (match *onlineMatch) requestPreparedUse(item uint32) {
 		return
 	}
 	now := match.engine.ElapsedMS()
+	if cooldown := match.preparedCooldown(item); cooldown != nil && !cooldown.ready(now) {
+		return
+	}
 	if requested, pending := match.preparedRequested[item]; pending && now-requested < 1000 {
 		return
 	}
@@ -1667,6 +1671,13 @@ func (match *onlineMatch) applyPreparedUse(body []byte) {
 		return
 	}
 	if use.PlayerID == match.local {
+		match.loadPropTable()
+		if prop, ok := match.propTable[use.ItemID]; ok {
+			if match.preparedLastUse == nil {
+				match.preparedLastUse = map[int]uint32{}
+			}
+			match.preparedLastUse[prop.Tier] = match.engine.ElapsedMS()
+		}
 		delete(match.preparedRequested, use.ItemID)
 		for index := range match.prepared {
 			if match.prepared[index].Item == use.ItemID && match.prepared[index].Count > 0 {
@@ -1679,14 +1690,7 @@ func (match *onlineMatch) applyPreparedUse(body []byte) {
 	}
 	// A prop with a GridsAnim (the fireworks 20058..20064) plays it on the
 	// user's cell for its AffectTime (shape 0, factor 0, the user itself).
-	if match.propTable == nil && match.clientRoot != "" {
-		if table, err := mapdata.LoadAdventureProps(match.clientRoot); err == nil {
-			match.propTable = table
-		} else {
-			match.logf("prop table: %v", err)
-			match.clientRoot = ""
-		}
-	}
+	match.loadPropTable()
 	if prop, ok := match.propTable[use.ItemID]; ok && prop.Anims.Grids != "" {
 		now := match.engine.ElapsedMS()
 		at := battleengine.Position{X: int32(use.PosX), Y: int32(use.PosY)}.Cell()
@@ -1724,7 +1728,11 @@ func (match *onlineMatch) preparedCount(item uint32) int16 {
 }
 
 func (match *onlineMatch) preparedView() []preparedView {
-	return append([]preparedView(nil), match.prepared...)
+	view := append([]preparedView(nil), match.prepared...)
+	for i := range view {
+		view[i].Cooldown = match.preparedCooldown(view[i].Item)
+	}
+	return view
 }
 
 // Publishing ----------------------------------------------------------------

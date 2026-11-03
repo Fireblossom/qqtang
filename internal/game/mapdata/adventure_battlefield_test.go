@@ -101,6 +101,12 @@ func TestAdventurePropsKeepTheFirstOfEachID(t *testing.T) {
 	if red := props[20058]; red.Anims.Grids != "honglihua.eff" || red.AffectTime != 10000 {
 		t.Fatalf("20058 %+v", red)
 	}
+	if cure := props[20020]; cure.InitialInterval != 20000 || cure.Tier != 3 || cure.FireInterval() != 15000 || cure.GameMode != 0 {
+		t.Fatalf("native cure cooldown %+v", cure)
+	}
+	if medical := props[20050]; medical.GameMode != 2 || medical.InitialInterval != 0 || medical.FireInterval() != 5000 {
+		t.Fatalf("native medical mode/cooldown %+v", medical)
+	}
 	if rage := props[21090]; rage.Tier != 5 {
 		t.Fatalf("21090 must be the first entry (Tier 5): %+v", rage)
 	}
