@@ -9,6 +9,12 @@ type RuleBomb struct {
 	Cell    Cell
 	Power   byte
 	FromCol int16
+	// Style is the native bubble type; zero is an ordinary bubble. Rule 2's
+	// 2x2 airdrop (0x006019BA) pairs a type-11 bubble with three type-12
+	// companions that crawl in at 10 px/s, i.e. FlightMSPerCell 4000, so they
+	// only go off through the chain.
+	Style           byte
+	FlightMSPerCell uint32
 }
 
 // DropRuleBatch applies one airborne batch the way Client.exe's 0x10E1
@@ -45,10 +51,14 @@ func (engine *Engine) DropRuleBatch(ownerID uint16, placedAtMS uint32, bombs []R
 	events := make([]Event, 0, len(bombs)+len(items))
 	for _, drop := range bombs {
 		cols := drop.Cell.Col - drop.FromCol
+		perCell := drop.FlightMSPerCell
+		if perCell == 0 {
+			perCell = NativeBombFlightMSPerCell
+		}
 		bomb := Bomb{
-			ID: engine.nextBombID, OwnerID: ownerID, Cell: drop.Cell, Power: drop.Power, RuleOwned: true,
+			ID: engine.nextBombID, OwnerID: ownerID, Cell: drop.Cell, Power: drop.Power, RuleOwned: true, NativeStyle: drop.Style,
 			ExplodeAtMS:   saturatingAdd(saturatingAdd(placedAtMS, engine.rules.BombFuseMS), 1),
-			FlightUntilMS: saturatingAdd(placedAtMS, NativeBombFlightMSPerCell*uint32(max(cols, -cols))),
+			FlightUntilMS: saturatingAdd(placedAtMS, perCell*uint32(max(cols, -cols))),
 		}
 		engine.nextBombID++
 		engine.bombs = append(engine.bombs, bomb)

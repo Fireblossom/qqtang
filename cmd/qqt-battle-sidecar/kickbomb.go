@@ -24,8 +24,12 @@ package main
 // the pool 0x005E1AAD sets up, the last entry (81) only from 10 s on
 // (0x005E18E3). From 120 s on, one batch in 200 takes one of eight fixed
 // formations instead (0x005E1A2B), but the producer then leaves both counts at
-// zero, so the batch arrives empty; that is kept. Also from 120 s on, a few
-// batches would add 2x2 bubbles (object 11, 0x005E1856); those are not made.
+// zero, so the batch arrives empty; that is kept. Also from 120 s on,
+// 0x005E1856 adds 1..3 power-8 2x2 bubbles (type 11) to a few batches, ahead
+// of the others, on the bottom-right cell of free 2x2 blocks; each receiver
+// (0x006019BA) pairs every one with three type-12 bubbles on the other cells
+// of its block, crawling in at 10 px/s, so they only go off with the chain
+// and the blast is two cells wide (docs/bubble-2x2-re.md).
 // Each client applies a batch (0x006018A7) by flying every bubble in from a
 // random end of its row and dropping every item from the top of its column.
 
@@ -51,6 +55,9 @@ const (
 	kickFieldRows               = 13
 	kickFieldCols               = 15
 	kickMaxNormal, kickMaxPower = 15, 10
+	kickBigScene                = 11
+	kickBigWirePower            = 8
+	kickBigPartFlightMSPerCell  = 4000 // 0x006019BA flies them at 10 px/s
 )
 
 // kickItem is one entry of the airdrop's item pool (0x005E173E).
@@ -170,7 +177,22 @@ func (rule *kickRule) batch(engine *battleengine.Engine, now uint32) game.Dispat
 	if rule.poolLeft() {
 		items = 1
 	}
-	cells := rule.freeCells(engine, normal+power+items)
+	big := 0
+	if now >= kickFormationsFromMS {
+		// 0x005E1856: RNG % 1000 is 100 -> 3, 201..202 -> 2, 300..304 -> 1.
+		switch roll := rule.rng.Intn(1000); {
+		case roll == 100:
+			big = 3
+		case roll == 201 || roll == 202:
+			big = 2
+		case roll >= 300 && roll <= 304:
+			big = 1
+		}
+	}
+	blocks, cells := rule.freeCells(engine, big, normal+power+items)
+	for _, anchor := range blocks {
+		data.Bombs = append(data.Bombs, game.DispatchBomb{SceneID: kickBigScene, Prop: kickBigWirePower, Row: byte(min(anchor.Row, kickFieldRows-1)), Col: byte(min(anchor.Col, kickFieldCols-1))})
+	}
 	for index, free := range cells {
 		row, col := byte(min(free.Row, kickFieldRows-1)), byte(min(free.Col, kickFieldCols-1))
 		switch {
@@ -185,10 +207,13 @@ func (rule *kickRule) batch(engine *battleengine.Engine, now uint32) game.Dispat
 	return data
 }
 
-// freeCells picks count distinct random cells with no map element, bubble,
-// item or placed field object (0x005B8753 checks the two map-element layers,
-// the bubble layer and two object layers). Players do not block a cell.
-func (rule *kickRule) freeCells(engine *battleengine.Engine, count int) []battleengine.Cell {
+// freeCells is 0x005B8753: free cells have no map element, bubble, item or
+// placed field object (the two map-element layers, the bubble layer and two
+// object layers); players do not block a cell. It first takes up to big 2x2
+// blocks (each pick starts at a random free cell and takes the first one in
+// order whose up, left and up-left cells are free too), then count distinct
+// random cells from what is left.
+func (rule *kickRule) freeCells(engine *battleengine.Engine, big, count int) ([]battleengine.Cell, []battleengine.Cell) {
 	taken := map[battleengine.Cell]bool{}
 	for _, bomb := range engine.Bombs() {
 		taken[bomb.Cell] = true
@@ -215,6 +240,34 @@ func (rule *kickRule) freeCells(engine *battleengine.Engine, count int) []battle
 			}
 		}
 	}
+	index := func(c battleengine.Cell) int {
+		for i, f := range free {
+			if f == c {
+				return i
+			}
+		}
+		return -1
+	}
+	var blocks []battleengine.Cell
+	for pick := 0; pick < big && len(free) > 0; pick++ {
+		k := rule.rng.Intn(len(free))
+		for j := k; ; {
+			c := free[j]
+			block := []battleengine.Cell{c, {Row: c.Row, Col: c.Col - 1}, {Row: c.Row - 1, Col: c.Col}, {Row: c.Row - 1, Col: c.Col - 1}}
+			if c.Row > 0 && c.Col > 0 && index(block[1]) >= 0 && index(block[2]) >= 0 && index(block[3]) >= 0 {
+				blocks = append(blocks, c)
+				for _, cell := range block {
+					i := index(cell)
+					free[i] = free[len(free)-1]
+					free = free[:len(free)-1]
+				}
+				break
+			}
+			if j = (j + 1) % len(free); j == k {
+				break
+			}
+		}
+	}
 	chosen := make([]battleengine.Cell, 0, min(count, len(free)))
 	for len(chosen) < count && len(free) > 0 {
 		index := rule.rng.Intn(len(free))
@@ -222,19 +275,34 @@ func (rule *kickRule) freeCells(engine *battleengine.Engine, count int) []battle
 		free[index] = free[len(free)-1]
 		free = free[:len(free)-1]
 	}
-	return chosen
+	return blocks, chosen
 }
 
 // apply drops a batch into the engine as 0x006018A7 does; each bubble flies in
 // from a random end of its row, chosen by this client.
 func (rule *kickRule) apply(engine *battleengine.Engine, data game.DispatchBombData) ([]battleengine.Event, error) {
 	bombs := make([]battleengine.RuleBomb, 0, len(data.Bombs))
+	scenes := make([]uint32, 0, len(data.Bombs))
 	for _, bomb := range data.Bombs {
 		from := int16(0)
 		if rule.rng.Intn(2) == 0 {
 			from = kickFieldCols - 1
 		}
-		bombs = append(bombs, battleengine.RuleBomb{Cell: battleengine.Cell{Row: int16(bomb.Row), Col: int16(bomb.Col)}, Power: max(bomb.Prop, 2) - 1, FromCol: from})
+		at := battleengine.Cell{Row: int16(bomb.Row), Col: int16(bomb.Col)}
+		drop := battleengine.RuleBomb{Cell: at, Power: max(bomb.Prop, 2) - 1, FromCol: from}
+		if bomb.SceneID != kickBigScene {
+			bombs, scenes = append(bombs, drop), append(scenes, bomb.SceneID)
+			continue
+		}
+		drop.Style = battleengine.NativeStyleBigBubble
+		bombs, scenes = append(bombs, drop), append(scenes, kickBigScene)
+		for _, part := range []battleengine.Cell{{Row: at.Row - 1, Col: at.Col}, {Row: at.Row, Col: at.Col - 1}, {Row: at.Row - 1, Col: at.Col - 1}} {
+			if part.Row < 0 || part.Col < 0 {
+				continue
+			}
+			bombs = append(bombs, battleengine.RuleBomb{Cell: part, Power: drop.Power, FromCol: from, Style: battleengine.NativeStyleBigBubblePart, FlightMSPerCell: kickBigPartFlightMSPerCell})
+			scenes = append(scenes, uint32(battleengine.NativeStyleBigBubblePart))
+		}
 	}
 	items := make([]battleengine.Pickup, 0, len(data.Items))
 	for _, item := range data.Items {
@@ -248,16 +316,20 @@ func (rule *kickRule) apply(engine *battleengine.Engine, data game.DispatchBombD
 	for _, event := range events {
 		switch event.Kind {
 		case battleengine.EventBombPlaced:
-			drop, wire := bombs[index], data.Bombs[index]
+			drop, scene := bombs[index], scenes[index]
 			index++
-			rule.scenes[event.BombID] = wire.SceneID
+			rule.scenes[event.BombID] = scene
 			if distance := drop.Cell.Col - drop.FromCol; distance != 0 {
 				direction := byte(0)
 				if distance < 0 {
 					direction, distance = 2, -distance
 				}
+				perCell := drop.FlightMSPerCell
+				if perCell == 0 {
+					perCell = battleengine.NativeBombFlightMSPerCell
+				}
 				rule.flights[event.BombID] = kickFlight{From: cell{Row: drop.Cell.Row, Col: drop.FromCol}, Direction: direction, Cells: distance,
-					Start: data.Time, Until: data.Time + uint32(distance)*battleengine.NativeBombFlightMSPerCell}
+					Start: data.Time, Until: data.Time + uint32(distance)*perCell}
 			}
 		case battleengine.EventPickupDispatched:
 			rule.falls = append(rule.falls, kickFall{Scene: event.SceneID, Row: event.Cell.Row, Col: event.Cell.Col,

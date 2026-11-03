@@ -193,3 +193,29 @@ func TestWrappingKickRequestKeepsTheKickersDirection(t *testing.T) {
 		t.Fatalf("kick %+v, %v", kick, err)
 	}
 }
+
+func TestTwoByTwoAirdropAddsThreeCrawlingCompanions(t *testing.T) {
+	match := kickMatch(t, 2)
+	now := match.engine.ElapsedMS()
+	data := game.DispatchBombData{PlayerID: 1, Time: now, Bombs: []game.DispatchBomb{{SceneID: kickBigScene, Prop: kickBigWirePower, Row: 5, Col: 7}}}
+	if _, err := match.kick.apply(match.engine, data); err != nil {
+		t.Fatal(err)
+	}
+	bombs := match.engine.Bombs()
+	if len(bombs) != 4 {
+		t.Fatalf("bubbles %d", len(bombs))
+	}
+	styles := map[battleengine.Cell]byte{}
+	for _, b := range bombs {
+		styles[b.Cell] = b.NativeStyle
+		if b.Power != 7 {
+			t.Fatalf("bubble %+v power", b)
+		}
+		if b.NativeStyle == battleengine.NativeStyleBigBubblePart && b.FlightUntilMS-now < 4000 {
+			t.Fatalf("companion %+v flies too fast", b)
+		}
+	}
+	if styles[battleengine.Cell{Row: 5, Col: 7}] != 11 || styles[battleengine.Cell{Row: 4, Col: 7}] != 12 || styles[battleengine.Cell{Row: 5, Col: 6}] != 12 || styles[battleengine.Cell{Row: 4, Col: 6}] != 12 {
+		t.Fatalf("styles %v", styles)
+	}
+}

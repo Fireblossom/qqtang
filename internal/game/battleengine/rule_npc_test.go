@@ -178,3 +178,33 @@ func TestBigBubbleIsAnOrdinaryCrossThatCannotBeKicked(t *testing.T) {
 		t.Fatal("the 2x2 bubble got an area blast")
 	}
 }
+
+func TestCrawlingCompanionsGoOffWithTheChain(t *testing.T) {
+	cfg := testConfig()
+	e := mustEngine(t, cfg)
+	main := Cell{Row: 2, Col: 3}
+	bombs := []RuleBomb{
+		{Cell: main, Power: 7, FromCol: 0, Style: NativeStyleBigBubble},
+		{Cell: Cell{Row: 1, Col: 3}, Power: 7, FromCol: 0, Style: NativeStyleBigBubblePart, FlightMSPerCell: 4000},
+		{Cell: Cell{Row: 2, Col: 2}, Power: 7, FromCol: 0, Style: NativeStyleBigBubblePart, FlightMSPerCell: 4000},
+		{Cell: Cell{Row: 1, Col: 2}, Power: 7, FromCol: 0, Style: NativeStyleBigBubblePart, FlightMSPerCell: 4000},
+	}
+	if _, err := e.DropRuleBatch(1, e.ElapsedMS(), bombs, nil); err != nil {
+		t.Fatal(err)
+	}
+	exploded := 0
+	for i := 0; i < 200 && len(e.Bombs()) > 0; i++ {
+		events, err := e.Step(nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, ev := range events {
+			if ev.Kind == EventBombExploded {
+				exploded++
+			}
+		}
+	}
+	if exploded != 4 || len(e.Bombs()) != 0 {
+		t.Fatalf("exploded %d, left %d", exploded, len(e.Bombs()))
+	}
+}
