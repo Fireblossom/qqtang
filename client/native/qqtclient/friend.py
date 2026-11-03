@@ -52,6 +52,13 @@ REFUSED_TEXT = "{name}[{uin}]拒绝了您的添加好友的请求"
 OFFLINE_TEXT = "{uin}玩家已经下线"
 FIND_FAILED_TEXT = "查找好友失败, 请稍后再试"
 # QQTSection 0x1005FCFC / 0x1005FD18 / 0x1005FD40.
+# Slash commands 0x11 / 0x12 (QQTSection 0x10025027, texts 0x10061CD4,
+# 0x10061CB4, 0x10061C90, 0x10061B64); 0x10025016 wants a uin above 10000.
+MIN_SHIELD_UIN = 10000
+SHIELD_BAD_UIN_TEXT = "输入的玩家帐号不正确"
+SHIELD_SELF_TEXT = "拒绝和自己说悄悄话无意义"
+SHIELD_TEXT = "你已经屏蔽了玩家[{uin}]的悄悄话"
+UNSHIELD_TEXT = "你已经取消了对[{uin}]玩家密聊屏蔽"
 PURSUIT_CLOSED_TEXT = "抱歉，好友追踪已关闭!"  # 0x10062798
 PURSUIT_ENABLED = False
 PURSUIT_OFFLINE_TEXT = "你要追踪的玩家不在线"
@@ -229,6 +236,10 @@ def build_friend_natives(runtime: UIRuntime, session: Session) -> dict[str, Call
             elif state.find(uin) is not None:
                 state.pursuing = uin
                 session.send(friend.FIND_FRIEND_COMMAND, friend.build_find_friend(session.uin, uin))
+        elif task in (TASK_SHIELD, TASK_UNSHIELD):
+            # SC_DoFriendTask sends "/m <uin>" or "/u <uin>" through the
+            # slash commands 0x11 / 0x12 (QQTSection 0x10025027).
+            shield(uin, task == TASK_SHIELD)
         elif task == TASK_ANSWER:
             # The original refuses with result 0x33; the server only accepts 0 or 1.
             result = friend.RESULT_SUCCESS if str(text) in ANSWER_YES else friend.RESULT_REJECTED
@@ -243,6 +254,8 @@ def build_friend_natives(runtime: UIRuntime, session: Session) -> dict[str, Call
         kind = int(kind)
         if kind == ATTRIBUTE_FRIEND:
             return int(state.find(int(uin)) is not None)
+        if kind == ATTRIBUTE_SHIELDED:
+            return int(int(uin) in session.shielded)  # 0x1002CA01
         if kind == ATTRIBUTE_SELF_IDENTITY:
             return int(bool(session.profile and session.profile.identity & SELF_IDENTITY_BIT))
         return 0
@@ -368,6 +381,18 @@ def build_friend_natives(runtime: UIRuntime, session: Session) -> dict[str, Call
             runtime.namespace["Win_SetColorText"](widget, text, CHANNEL_ITEMTEXT, *SYSTEM_COLOR)
         log(f"[friend] {text}")
 
+    def shield(uin: int, on: bool) -> None:
+        if uin <= MIN_SHIELD_UIN:
+            system_line(SHIELD_BAD_UIN_TEXT)
+        elif uin == session.uin:
+            system_line(SHIELD_SELF_TEXT)
+        elif on:
+            system_line(SHIELD_TEXT.format(uin=uin))
+            session.shielded.add(uin)
+        else:
+            system_line(UNSHIELD_TEXT.format(uin=uin))
+            session.shielded.discard(uin)
+
     def pursue(found: friend.FoundPlayer) -> None:
         """0x10010D83 on the FIND_FRIEND answer: three notices, otherwise
         go to the friend (CQQTLogic vtbl+600 with server, section, room)."""
@@ -412,7 +437,7 @@ def build_friend_natives(runtime: UIRuntime, session: Session) -> dict[str, Call
     session.on_entered.append(state.reset)
     session.on_disconnected.append(state.reset)
 
-    excluded = ("script", "system_line", "pursue", "lobby_players", "lobby_player", "refresh", "message_box", "push", "request_list", "friend_info",
+    excluded = ("script", "system_line", "shield", "pursue", "lobby_players", "lobby_player", "refresh", "message_box", "push", "request_list", "friend_info",
                 "section_names", "detail")
     return {name: value for name, value in locals().items()
             if callable(value) and name not in excluded and not name.startswith("on_") and name[0] != "_"}

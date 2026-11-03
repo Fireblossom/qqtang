@@ -35,6 +35,9 @@ class Session:
         # Online matches play the local player with the sidecar's test bot
         # (--autoplay) instead of the keyboard.
         self.autoplay = False
+        # Players whose whispers are shielded (/M, QQTSection +0xC7B4): a
+        # client-side list kept for the session, never sent to the server.
+        self.shielded: set[int] = set()
         self.uin = 0
         self.nickname = ""
         self.gender = 0

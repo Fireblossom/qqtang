@@ -297,7 +297,7 @@ class FriendHostTest(unittest.TestCase):
             namespace[name] = lambda *args, name=name: self.calls.append((name, *args))
         runtime = types.SimpleNamespace(namespace=namespace, show_msgbox=lambda *args: self.boxes.append(args))
         self.session = types.SimpleNamespace(
-            uin=1000003, nickname="糖三", profile=types.SimpleNamespace(identity=0x2000), hall=None, handlers={},
+            uin=1000003, nickname="糖三", profile=types.SimpleNamespace(identity=0x2000), hall=None, handlers={}, shielded=set(),
             on_entered=[], on_disconnected=[], send=lambda command, payload: self.sent.append((command, payload)) or True)
         self.natives = build_friend_natives(runtime, self.session)
 
@@ -354,6 +354,14 @@ class FriendHostTest(unittest.TestCase):
         payload += struct.pack(">HBBIIHHH", 4, 0, 0, 0, 1, 1, section, room) + bytes(20) + bytes([status])
         payload += struct.pack(">6IHBI4I", 1, 2, 3, 0, 100, 0, 0, 1, 0, 0, 0, 0, 0) + struct.pack(">H", 0)
         return payload + struct.pack(">IH", 0, 0) + b"\xff" * 8 + struct.pack(">I", 0) + b"\x00"
+
+    def test_shield_is_a_local_list(self) -> None:
+        self.natives["DoFriendTask"]("", 0, 1000004, 5)
+        self.natives["DoFriendTask"]("", 0, 1000003, 5)  # oneself: refused
+        self.natives["DoFriendTask"]("", 0, 9999, 5)  # not a uin
+        self.assertEqual((self.natives["GetAttribute"](1000004, 1), self.natives["GetAttribute"](1000003, 1), self.sent), (1, 0, []))
+        self.natives["DoFriendTask"]("", 0, 1000004, 7)
+        self.assertEqual(self.natives["GetAttribute"](1000004, 1), 0)
 
     def test_pursuit_is_switched_off(self) -> None:
         self.natives["DoFriendTask"]("", 0, 1000004, 3)

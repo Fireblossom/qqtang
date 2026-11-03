@@ -60,14 +60,18 @@ def build_chat_natives(runtime: UIRuntime, session: Session) -> dict[str, Callab
 
     def SectionChat(mode, text):
         """mode 0: lobby chat (or a whisper when a target is set), 1: bugle.
-        Slash commands other than "/w off" (kin chat, invitations, ...) are
-        not supported yet."""
+        Slash commands other than "/w off", "/m <uin>" and "/u <uin>" (kin
+        chat, invitations, ...) are not supported yet."""
         text = str(text).strip()
         if not text:
             return
         if text.startswith("/"):
+            words = text.split()
             if text.lower() == "/w off":
                 whisper_target.update(uin=0, name="")
+            elif len(words) == 2 and words[0].lower() in ("/m", "/u") and words[1].isdigit():
+                # Slash commands 0x11 / 0x12: shield or unshield whispers.
+                script("DoFriendTask", "", 0, int(words[1]), 5 if words[0].lower() == "/m" else 7)
             else:
                 log(f"[chat] unsupported chat command {text!r}")
             return
@@ -120,6 +124,11 @@ def build_chat_natives(runtime: UIRuntime, session: Session) -> dict[str, Callab
 
     def on_whisper(packet) -> None:
         whisper = chat.parse_whisper(packet.payload)
+        if whisper.source_uin in getattr(session, "shielded", ()):
+            # The shield list is client-side, so the receiver drops them
+            # (where exactly the original filters was not traced).
+            log(f"[chat] whisper from shielded {whisper.source_uin} dropped")
+            return
         show_whisper(f"{whisper.nickname}悄悄对你说:{whisper.text}")
 
     session.handlers.update({
