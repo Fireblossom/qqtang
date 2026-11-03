@@ -22,7 +22,7 @@ from qqtclient.avatar import tint  # noqa: E402
 from qqtclient.friend import build_friend_natives  # noqa: E402
 from qqtclient.net import friend  # noqa: E402
 from qqtclient.natives import build_natives  # noqa: E402
-from qqtclient.render import Renderer, cell_width  # noqa: E402
+from qqtclient.render import Renderer, cell_width, remaining_angle_image  # noqa: E402
 from qqtclient.props import place_saved, settle_storage  # noqa: E402
 from qqtclient.runtime import UIRuntime  # noqa: E402
 from qqtclient.script import MissingNative, MissingReport, call_script, new_namespace, py2_div, py2_len, script_key  # noqa: E402
@@ -218,6 +218,40 @@ class TextLayoutTest(unittest.TestCase):
         self.assertEqual(Renderer._wrap("1000 糖块", 12, 48), ["1000 糖", "块"])
         self.assertEqual(Renderer._wrap("ab\ncd", 12, 0), ["ab", "cd"])
         self.assertEqual(Renderer._wrap("糖", 12, 11), [])
+
+
+class DynamicMaskTest(unittest.TestCase):
+    def test_cardinal_sectors_match_native_triangle_fans(self):
+        image = pygame.Surface((20, 20), pygame.SRCALPHA)
+        image.fill((240, 30, 20, 200))
+        points = [(15, 5), (15, 15), (5, 15), (5, 5)]
+        for angle, visible in ((0, [1, 1, 1, 1]), (90, [0, 1, 1, 1]),
+                               (180, [0, 0, 1, 1]), (270, [0, 0, 0, 1]), (360, [0, 0, 0, 0])):
+            with self.subTest(angle=angle):
+                drawn = remaining_angle_image(image, angle)
+                self.assertEqual([drawn.get_at(p).a for p in points], [200 * v for v in visible])
+        self.assertEqual(image.get_at((15, 5)), (240, 30, 20, 200))
+
+    def test_non_square_image_uses_normalized_angles(self):
+        image = pygame.Surface((40, 20), pygame.SRCALPHA)
+        image.fill((255, 255, 255, 255))
+        drawn = remaining_angle_image(image, 45)
+        self.assertEqual(drawn.get_at((30, 1)).a, 0)
+        self.assertEqual(drawn.get_at((37, 3)).a, 255)
+
+    def test_angle_approaches_destination_without_overshooting(self):
+        runtime = UIRuntime(types.SimpleNamespace(namespace={}))
+        mask = Widget("mask", type("Mask", (), {"type": "DYMASK", "destangle": 360, "stepangle": 180}), None, 0)
+        runtime.widgets = {"mask": mask}
+        runtime.tick(500)
+        self.assertEqual(mask.angle_cur, 90)
+        runtime.tick(5000)
+        self.assertEqual(mask.angle_cur, 360)
+        mask.angle_dest = 0
+        runtime.tick(1000)
+        self.assertEqual(mask.angle_cur, 180)
+        runtime.tick(5000)
+        self.assertEqual(mask.angle_cur, 0)
 
 
 class DialogKeyboardTest(unittest.TestCase):

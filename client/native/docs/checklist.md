@@ -9,7 +9,7 @@
 - [x] 双击、拖放、悬停提示框、弹窗自动关闭、快捷键（`accel`）、剪贴板
 - [x] 未选中的标签页不画子控件；Static 容器不挡点击
 - [x] 对话框输入焦点：修正原脚本先选输入框、再聚焦父对话框时覆盖焦点的问题；保留已明确选定的输入框，Tab 限于捕获对话框，Enter/Escape 沿父控件处理。加好友对话框打开后直接中文输入、退格实测通过（`docs/ui-keyboard-re.md`）；这是修原脚本的行为，不声称原版会自动转发
-- [~] 旋转、分段条控件：`Win_SetAngle*` 已接通，DYMASK 仅在 `0 <= angle_cur < 360` 时绘制；`Win_SetStrip*` 和 LIFESTRIP / DYLIFESTRIP 已用于糖客基地血条。
+- [x] 动态遮罩与分段条控件：DYMASK 按原版从十二点顺时针擦除、度/秒向目标推进（`docs/ui-dymask-re.md`），Unicorn 顶点核对和离线界面截图通过；`Win_SetStrip*` 和 LIFESTRIP / DYLIFESTRIP 已用于糖客基地血条。带入道具何时触发冷却仍是独立待办。
 - [ ] 在真窗口里试玩一遍全部流程（目前都是无界面自动化测的）
 - [x] 测试机器人 `--autoplay`：两个客户端无人操作也能互相对打，用于联调各种玩法
 

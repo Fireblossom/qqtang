@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import pathlib
 import time
+import math
 from typing import Callable
 
 import pygame
@@ -24,6 +25,34 @@ DEFAULT_FRAME_MS = 100
 NUMBER_GLYPHS = "0123456789/:-+."
 TEXT_CACHE_LIMIT = 4096
 WRAPPED_TYPES = ("LABEL", "DYLABEL", "MESSAGEBOX")
+
+
+def remaining_angle_image(source: pygame.Surface, angle: float) -> pygame.Surface:
+    """DYMASK: erase clockwise from twelve o'clock (gameUI 0x100120E7).
+
+    The native triangle fans reach the rectangle's corners at 45/135/225/315
+    degrees, so calculate the ray in normalized image coordinates.
+    """
+    picture = source.copy()
+    if not 0 <= angle < 360:
+        picture.fill((0, 0, 0, 0))
+        return picture
+    if angle == 0:
+        return picture
+    width, height = picture.get_size()
+    cx, cy = width / 2, height / 2
+    radians = math.radians(angle)
+    dx, dy = math.sin(radians), -math.cos(radians)
+    distance = 1 / max(abs(dx), abs(dy))
+    points = [(cx, cy), (cx + cx * dx * distance, cy + cy * dy * distance)]
+    points += [point for corner, point in ((45, (width, 0)), (135, (width, height)),
+                                          (225, (0, height)), (315, (0, 0))) if corner > angle]
+    points.append((cx, 0))
+    mask = pygame.Surface((width, height), pygame.SRCALPHA)
+    mask.fill((255, 255, 255, 0))
+    pygame.draw.polygon(mask, (255, 255, 255, 255), points)
+    picture.blit(mask, (0, 0), special_flags=pygame.BLEND_RGBA_MULT)
+    return picture
 
 
 def cell_width(text: str, size: int) -> int:
@@ -154,11 +183,8 @@ class Renderer:
                 self._draw_tip_box(widget, x, y, alpha)
                 self._draw_text(widget, x, y, alpha, False)
         elif widget.type == "DYMASK":
-            # A cooldown mask draws nothing outside 0 <= angle < 360
-            # (0x100120E7). Within it the original draws only a sector of the
-            # image; the whole image stands in for it here.
             if 0 <= widget.angle_cur < 360 and widget.image:
-                self._draw_image(widget, x, y, alpha)
+                self._draw_image(widget, x, y, alpha, angle=widget.angle_cur)
         else:
             if widget.image:
                 self._draw_image(widget, x, y, alpha)
@@ -268,7 +294,7 @@ class Renderer:
                 self.screen.blit(strip, (x + index * advance, y), pygame.Rect(glyph * width, 0, width, height))
         strip.set_alpha(255)
 
-    def _draw_image(self, widget: Widget, x: int, y: int, alpha: float) -> None:
+    def _draw_image(self, widget: Widget, x: int, y: int, alpha: float, *, angle: float | None = None) -> None:
         frames = self.sprites.get(widget.image)
         if not frames:
             return
@@ -284,6 +310,8 @@ class Renderer:
         surface, offset_x, offset_y = frames[index]
         if surface is None:
             return
+        if angle is not None:
+            surface = remaining_angle_image(surface, angle)
         draw_x = x + offset_x + widget.image_offset[0]
         draw_y = y + offset_y + widget.image_offset[1]
         # gameUI.dll 0x10029A37: only bkImgFlag & 7 of 1 and 5 move the image,

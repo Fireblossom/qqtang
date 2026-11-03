@@ -183,6 +183,13 @@ class UIRuntime:
                 self.call(widget, "OnTimer")
         frames = elapsed_ms / (1000 / 60)
         for widget in list(self.widgets.values()):
+            if widget.type == "DYMASK":
+                # 0x10012057: degrees per second, approach destination.
+                delta = widget.angle_step * elapsed_ms / 1000
+                if widget.angle_cur < widget.angle_dest:
+                    widget.angle_cur = min(widget.angle_dest, widget.angle_cur + delta)
+                elif widget.angle_cur > widget.angle_dest:
+                    widget.angle_cur = max(widget.angle_dest, widget.angle_cur - delta)
             if widget.type == "DYLIFESTRIP":
                 # 10011D9A: approach destination at stepnum units/second.
                 delta = widget.strip_step * elapsed_ms / 1000
