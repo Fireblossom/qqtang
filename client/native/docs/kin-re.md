@@ -370,6 +370,13 @@ KINBASE 的偏移（schema `KinBase`；Client.exe `0x4D0380` 给 boost.python �
    - `ShowkinInfoDlg` 写 `uiKinInfoDlg + 'Proclaim'`，少了点，`Win_SetText` 写到不存在的控件上必须是空操作；
    - `canceldismissBtn` 用的是全局 `uin`。
 
+## 9b. 宿主修正的原版 bug（用户决定修掉明显的 bug）
+
+- mode 11 落到 mode 12 的多余 `Y`/`N` 家族聊天不发。
+- 回复邀请不再读会被"查看别家族"覆盖的 +0x3542，而是收到 0xBC 时单独记下邀请家族。
+- 排行榜本家族行按"是否电信"比较，网通家族也能显示。
+- 职位名找不到时"降职"不再给出 grade 10，直接不发。
+
 ## 10. 未查
 
 - 定时器周期。

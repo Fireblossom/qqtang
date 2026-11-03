@@ -47,6 +47,7 @@ class KinState:
         self.top: dict | None = None
         self.order_time = 0
         self.chat_name = ""  # /KINCHAT on
+        self.invitation = kin.empty_base()  # the inviting kin, kept apart from other (K+0x3542)
 
 
 def build_kin_natives(runtime: UIRuntime, session: Session) -> dict[str, Callable[..., Any]]:
@@ -122,6 +123,8 @@ def build_kin_natives(runtime: UIRuntime, session: Session) -> dict[str, Callabl
         elif mode == 2:  # promote ('Y') or demote, 0x10015021
             target = member(n)
             index = next((k for k in range(len(state.titles) - 1, 0, -1) if state.titles[k][1] == p2), 0)
+            if index == 0 and p1 not in ("Y", "y"):
+                return  # 原版 bug，已修正: an unknown title used to demote to grade 10
             if p1 in ("Y", "y"):
                 if index == 0:
                     return
@@ -173,7 +176,9 @@ def build_kin_natives(runtime: UIRuntime, session: Session) -> dict[str, Callabl
             # The first field is the inviting kin's owner (K+0x3546), not the
             # inviter. The original then falls into mode 12 and sends "Y"/"N"
             # as kin chat with no kin; the server refuses it, so it is skipped.
-            send(kin.SERVER_OPERATE_COMMAND, kin.build_words(state.other.m_dwUin, now(), state.other.m_dwKinIndex, session.uin, para, 0))
+            # 原版 bug，已修正: the answer read K+0x3542, which viewing another
+            # kin overwrites; the inviting kin is kept apart.
+            send(kin.SERVER_OPERATE_COMMAND, kin.build_words(state.invitation.m_dwUin, now(), state.invitation.m_dwKinIndex, session.uin, para, 0))
         elif mode == 12:
             send(kin.CHAT_COMMAND, kin.build_chat(session.uin, state.kin_index, p2))
         elif mode == 13:  # declaration, 0x100171FF
@@ -273,7 +278,9 @@ def build_kin_natives(runtime: UIRuntime, session: Session) -> dict[str, Callabl
             record = records[i + {(1, 1): 0, (1, 0): 10, (0, 1): 20, (0, 0): 30}[(int(tel == 1), int(rep == 1))]]
             return types.SimpleNamespace(m_dwKinIndex=record["kin"], m_szName=record["name"], m_iValue=record["value"],
                                          m_nOrder=order_text(record["order"]), m_nAscend=ascend(record["order"], record["before"]))
-        if not state.kin_index or tel != state.base.m_iKinSection:
+        # 原版 bug，已修正: 0x100179C2 compares tel (1/0) with the section
+        # (1/2), so a netcom kin never matched; compare like with like.
+        if not state.kin_index or (tel == 1) != (state.base.m_iKinSection == 1):
             return empty
         if i == 10:
             same = records[40 if rep else 41] if len(records) > 41 else None
@@ -348,6 +355,7 @@ def build_kin_natives(runtime: UIRuntime, session: Session) -> dict[str, Callabl
         for _ in range(6):
             r.u32()
         state.other = kin.read_base(r)
+        state.invitation = state.other
         if state.base.m_dwKinIndex == 0:
             push = getattr(session, "push_script_word", None)
             if push is not None:

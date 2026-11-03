@@ -37,7 +37,9 @@ class CommandTest(unittest.TestCase):
         self.commands.handle("/w 1000005")
         self.assertEqual(self.lines[-2:], ["不能和自己说悄悄话", slash.INVALID])
         self.commands.handle("/go 2")
-        self.assertEqual(self.calls[-1], ("EnterRoom", 3, ""))  # the password never goes out
+        self.assertEqual(self.calls[-1], ("EnterRoom", 3, ""))
+        self.commands.handle("/join 1 pw")
+        self.assertEqual(self.calls[-1], ("EnterRoom", 1, "pw"))  # the original's lost password, fixed
         self.commands.handle("/kick 1000006")
         self.assertEqual(self.lines[-1], slash.INVALID)
         self.assertFalse(self.commands.handle("/xin 你好"))  # an emote, so chat

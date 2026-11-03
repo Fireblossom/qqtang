@@ -18,7 +18,6 @@ import numpy as np  # noqa: E402
 
 from qqtclient import dimg  # noqa: E402
 from qqtclient.avatar import tint  # noqa: E402
-from qqtclient import friend as friend_host  # noqa: E402
 from qqtclient.friend import build_friend_natives  # noqa: E402
 from qqtclient.net import friend  # noqa: E402
 from qqtclient.natives import build_natives  # noqa: E402
@@ -363,14 +362,12 @@ class FriendHostTest(unittest.TestCase):
         self.natives["DoFriendTask"]("", 0, 1000004, 7)
         self.assertEqual(self.natives["GetAttribute"](1000004, 1), 0)
 
-    def test_pursuit_is_switched_off(self) -> None:
-        self.natives["DoFriendTask"]("", 0, 1000004, 3)
+    def test_pursuit_is_for_friends_only(self) -> None:
+        self.natives["DoFriendTask"]("", 0, 1000004, 3)  # not on the roster
         self.assertEqual(self.sent, [])
 
     def test_the_unused_pursuit_enters_the_friends_room(self) -> None:
         self.session.section = types.SimpleNamespace(server_id=1, id=1)
-        self.addCleanup(setattr, friend_host, "PURSUIT_ENABLED", False)
-        friend_host.PURSUIT_ENABLED = True
         self.natives["DoFriendTask"]("", 0, 1000004, 3)  # not a friend: nothing
         self.assertEqual(self.sent, [])
         roster = struct.pack(">HIHH", 0, 1000003, 200, 1) + struct.pack(">200I", 1000004, *([0] * 199))

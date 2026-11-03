@@ -61,7 +61,9 @@ SHIELD_SELF_TEXT = "拒绝和自己说悄悄话无意义"
 SHIELD_TEXT = "你已经屏蔽了玩家[{uin}]的悄悄话"
 UNSHIELD_TEXT = "你已经取消了对[{uin}]玩家密聊屏蔽"
 PURSUIT_CLOSED_TEXT = "抱歉，好友追踪已关闭!"  # 0x10062798
-PURSUIT_ENABLED = False
+# The final client answers 抱歉，好友追踪已关闭! (0x1002C68D); the user chose to
+# turn the unwired original handler back on.
+PURSUIT_ENABLED = True
 PURSUIT_OFFLINE_TEXT = "你要追踪的玩家不在线"
 PURSUIT_NO_ROOM_TEXT = "该玩家和你在同一小区,且不在房间中"
 PURSUIT_IN_GAME_TEXT = "该玩家正在游戏中,请稍候再继续追踪"

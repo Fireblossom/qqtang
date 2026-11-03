@@ -214,9 +214,9 @@ def build_slash(runtime: UIRuntime, session: Session, whisper_target: dict[str, 
             rooms = sorted(session.room_names)
             if session.room_view() is not None or not args or number == 0 or number > len(rooms):
                 return False
-            # The original copies the password in only after sending
-            # (0x10025EB5 -> 0x10025ECC), so it never reaches the server.
-            script("EnterRoom", rooms[number - 1], "")
+            # 原版 bug，已修正: the original copies the password in only after
+            # sending (0x10025EB5 -> 0x10025ECC), so it never went out.
+            script("EnterRoom", rooms[number - 1], " ".join(args[1:]))
             return True
         if command == 4:  # /AUTOJOIN
             if session.room_view() is not None:
