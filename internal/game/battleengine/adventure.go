@@ -166,3 +166,17 @@ func (engine *Engine) IgniteBombAt(cell Cell) bool {
 	}
 	return lit
 }
+
+// ApplyAdventureSlip is a rule-12 prop's IsSlip (0x005FA37A ->
+// 0x005DB31D(actor, 2)): the actor's movement becomes the forced slide.
+func (engine *Engine) ApplyAdventureSlip(playerID uint16) bool {
+	if engine == nil || !engine.rules.NativeAdventure {
+		return false
+	}
+	index := engine.actorIndex(playerID)
+	if index < 0 || engine.actors[index].State != ActorActive {
+		return false
+	}
+	engine.installMovementStatus(&engine.actors[index], MovementStatusForcedSlide)
+	return true
+}

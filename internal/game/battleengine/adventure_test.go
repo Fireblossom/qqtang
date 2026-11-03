@@ -145,3 +145,18 @@ func TestAdventureSkillAttributesAddAndRestore(t *testing.T) {
 		t.Fatalf("restored speed %d count %d power %d", c.EffectiveSpeedRate, c.EffectiveBombCapacity, e.adventureBombPower(a))
 	}
 }
+
+func TestAdventureSlipIsTheForcedSlide(t *testing.T) {
+	cfg := testConfig()
+	if mustEngine(t, cfg).ApplyAdventureSlip(1) {
+		t.Fatal("slip outside the adventure rule")
+	}
+	cfg.Rules.NativeAdventure, cfg.Rules.ExternalConclusion = true, true
+	for i := range cfg.Participants {
+		cfg.Participants[i].TeamID = 1
+	}
+	e := mustEngine(t, cfg)
+	if !e.ApplyAdventureSlip(1) || e.actors[0].MovementStatus != MovementStatusForcedSlide {
+		t.Fatalf("status %v", e.actors[0].MovementStatus)
+	}
+}

@@ -12,9 +12,9 @@ package main
 // Played effects (with RestorePlayerAttr): HP, SetTotalPercentHP,
 // SetCurPercentHP, Defence/Defense, TouchHarmValue, Enmity; SpeedDel,
 // BombPowerDel, BombCountDel, CanUseMoveKey, CanUseBombKey, CanUseItemKey,
-// IsReversalControl and the projectiles' IsIgniteBomb; SpecialAvatarType
+// IsReversalControl, IsSlip and the projectiles' IsIgniteBomb; SpecialAvatarType
 // changes only the look. Not played yet: the avatars' own movement/bubble
-// slots, IsSlip (21050, stage 1610 only) and the props' .eff animations.
+// slots.
 
 import (
 	"strconv"
@@ -485,6 +485,10 @@ func (match *onlineMatch) applyAdventureEffects(c *advCast, now uint32) {
 				if p != nil && v == 0 {
 					p.itemLocks++
 					c.remember(id, name, 1)
+				}
+			case "IsSlip":
+				if p != nil && v != 0 {
+					match.engine.ApplyAdventureSlip(id) // only switched on; restore does nothing
 				}
 			case "IsReversalControl":
 				if p != nil && v != 0 {

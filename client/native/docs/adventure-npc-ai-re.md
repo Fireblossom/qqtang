@@ -495,7 +495,8 @@ func (n *NPC) trySkill(now) {
 - 已实现的效果：`HP`（v<0 只由受害者本机发 0x10F4，受 3 s 免伤限制；v>0 直接加血）、`SetTotalPercentHP`、`SetCurPercentHP`、`Defence/Defense`、`TouchHarmValue`、`Enmity`、`SpeedDel/BombPowerDel/BombCountDel`（引擎 `AdjustAdventureAttributes`，只在 `Rules.NativeAdventure` 下生效；速度和泡数下限 0，速度 0 档原地不动；泡威力下限取 1 [推断，原版下限 0，0 威力泡的爆炸形状没查]）、玩家和 NPC 的 `CanUseMoveKey=0`、玩家的 `CanUseBombKey=0`、`IsReversalControl`；`RestorePlayerAttr` 时到期反向恢复（HP 不恢复）。
 - `SpecialAvatarType`（全体变猪 57、燃影 79、奥冰 77、电法 81、NPC 狂暴 76）：`0x005FA37A` 走通用变身路径 `0x005F767D(…,0x38)`→`0x005ADF5A`，再把 Trigger 状态 +8（AffectTime）传给新外形的 `vtbl+0x44` 作寿命、`vtbl+0x60(v)` 设外形 [证实]；反向值 < 1 直接返回，所以 RestorePlayerAttr 不撤销，外形按自己的寿命结束。sidecar 只换外观（玩家视图 `avatar`、NPC 视图 role），外形自身的移动/放泡槽位没查、没做 [未知]。
 - `CanUseItemKey=0`：本机玩家不能用捡到的和带入的道具；`IsIgniteBomb`（49 关里 20 处）：飞行道具进入新格时格内静止的泡立即爆（引擎 `IgniteBombAt`，只在规则 12 生效），道具在该格生效。`DestroyMapItemPower` 只有玩家道具 20023 用，NPC 技能不涉及。
-- 未实现：`IsSlip`（只有 1610 的 21050）、困泡状态筛选（PropAffectState 2/3）、道具 `.eff` 动画（画面上只用半透明圆点标出陷阱和飞行道具，不是原版外观）。
+- `IsSlip`（只有 1610 的 21050）：引擎 `ApplyAdventureSlip` 换成强制滑行（原版 `0x005DB31D(角色, 2)`），恢复时不处理。
+- 未实现：困泡状态筛选（PropAffectState 2/3）、道具 `.eff` 动画（画面上只用半透明圆点标出陷阱和飞行道具，不是原版外观）。
 
 ---
 
