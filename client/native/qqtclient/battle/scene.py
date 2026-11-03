@@ -257,6 +257,7 @@ def flight_position(flight: dict[str, Any], clock: int, width: int, height: int)
 
 SOLID_STONE = 17021  # CMESolidStone (docs/special-elements-re.md §3.2)
 EXPLODE_STONE = 17019
+PIG_BEDS = (9007, 9008)  # CMEPigBed, 2x1 (docs/special-elements-re.md §3.10)
 # Special-element effects drawn from their .eff image tracks: the eff
 # player is not written, so these are the main image only, not the full
 # keyframes. Original points are screen coordinates; the field's own
@@ -369,6 +370,7 @@ class BattleScene:
         self.dying: dict[tuple[int, int, int], tuple[int, int]] = {}  # (layer, row, col) -> (element, clock)
         self.wall_hits: dict[tuple[int, int], int] = {}  # multi-hit walls: hits taken so far
         self.stone_fx: dict[tuple[int, int], int] = {}  # broken explode stones -> clock
+        self.pig_fear: dict[tuple[int, int], int] = {}  # scared pig beds -> clock
         self.held: list[int] = []
         self.bomb_pressed = False
         self.use_pressed = 0  # held-item action to use on the next step
@@ -578,6 +580,7 @@ class BattleScene:
         self._update_status_bar()
         self._update_tank_bases()
         self._update_adventure()
+        self._update_pig_beds()
         if self.outcome["ended"] and not self.end_logged:
             self.end_logged = True
             log(f"[battle] ended: {self.outcome}")
@@ -724,7 +727,11 @@ class BattleScene:
         for row in range(self.map.height):
             for layer in (mapfile.LAYER_WALL, mapfile.LAYER_TOP):
                 for col in range(self.map.width):
-                    self._draw_element(field, self.map.element(layer, row, col), row, col)
+                    element = self.map.element(layer, row, col)
+                    if element in PIG_BEDS and (row, col) in getattr(self, "pig_fear", {}):
+                        self._draw_pig_fear(field, element, row, col)
+                    else:
+                        self._draw_element(field, element, row, col)
                     dying = self.dying.get((layer, row, col))
                     if dying is not None:
                         self._draw_dying(field, dying, row, col)
@@ -881,6 +888,36 @@ class BattleScene:
         for row in range(f["Row"], f["Row"] + f["H"]):
             for col in range(f["Col"], f["Col"] + f["W"]):
                 self._draw_frames(field, "object/flame/flame255_stand.img", frame, ox + col * CELL, oy + row * CELL)
+
+    def _update_pig_beds(self) -> None:
+        """0x0061A845: a flame in the column left or right of a pig bed, or
+        in the row above or below it, plays pig_fear.eff (its trigger image)
+        once; it is only a look."""
+        fear = getattr(self, "pig_fear", None)
+        if fear is None:
+            return
+        burning = {(flame["row"], flame["col"]) for flame in self.state["flames"] or () if flame["impact"] <= self.clock < flame["expires"]}
+        for key, began in list(fear.items()):
+            frames = self.sprites.get(mapfile.element_image(self.map.element(mapfile.LAYER_WALL, *key), "trigger") or "") or ()
+            if self.clock - began >= len(frames) * 100:
+                del fear[key]
+        if not burning:
+            return
+        for row in range(self.map.height):
+            for col in range(self.map.width):
+                if self.map.element(mapfile.LAYER_WALL, row, col) not in PIG_BEDS or (row, col) in fear:
+                    continue
+                around = {(row, col - 1), (row, col + 2)} | {(row + d, col + c) for d in (-1, 1) for c in (0, 1)}
+                if around & burning:
+                    fear[(row, col)] = self.clock
+
+    def _draw_pig_fear(self, field: pygame.Surface, element: int, row: int, col: int) -> None:
+        # State 7 draws the effect at (col*40 - offset.x + 8, row*40 - offset.y + 13).
+        info = self.elements.get(element, mapfile.ElementInfo())
+        ox, oy = FIELD_ORIGIN
+        frame = (self.clock - self.pig_fear[(row, col)]) // 100
+        self._draw_frames(field, mapfile.element_image(element, "trigger") or "", frame,
+                          ox + col * CELL - info.offset[0], oy + row * CELL - info.offset[1] - 8)
 
     def _draw_special(self, field: pygame.Surface) -> None:
         """Item-field map elements (docs/special-elements-re.md,
