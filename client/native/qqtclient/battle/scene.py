@@ -79,13 +79,16 @@ DESTROY_MS = 300
 # Engine direction -> avatar sprite direction (0 right, 1 up, 2 left, 3 down).
 SPRITE_DIRECTION = {MOVE_UP: 1, MOVE_RIGHT: 0, MOVE_DOWN: 3, MOVE_LEFT: 2, MOVE_NONE: 3}
 KEY_MOVES = {pygame.K_UP: MOVE_UP, pygame.K_RIGHT: MOVE_RIGHT, pygame.K_DOWN: MOVE_DOWN, pygame.K_LEFT: MOVE_LEFT}
-# Client.exe's default key layout (0x0048AE40, Windows VK codes): space puts
-# a bubble, 1..7 use held-item slot 0..6, Ctrl uses the selected slot and Tab
-# switches it.
+# The battle key table (0x005A4B6E, DirectInput scan codes, read through
+# 0x005A5391): space puts a bubble; 1..7 and Z X C V B N M use held-item
+# slot 0..6; left Ctrl uses the first usable item of slots 0..5
+# (0x006102D9 -> 0x00610516 with -1). Nothing in the battle reads its Tab
+# entry, so Tab does not switch items.
 BOMB_KEYS = (pygame.K_SPACE,)
-SLOT_KEYS = {pygame.K_1 + index: index for index in range(7)}
-USE_KEYS = (pygame.K_LCTRL, pygame.K_RCTRL)
-SWITCH_KEYS = (pygame.K_TAB,)
+SLOT_KEYS = {**{pygame.K_1 + index: index for index in range(7)},
+             **{key: index for index, key in enumerate((pygame.K_z, pygame.K_x, pygame.K_c, pygame.K_v, pygame.K_b, pygame.K_n, pygame.K_m))}}
+USE_KEYS = (pygame.K_LCTRL, pygame.K_RCTRL)  # Mac: the host also maps Cmd to Ctrl elsewhere
+CTRL_SLOTS = 6
 NEEDLE_ACTION = 63  # self-rescue from a bubble
 STATUS_BAR = "UI.game.statusBar"
 # Held-item slot icons (baseItemIcon<i>) on the status bar at y 540.
@@ -374,7 +377,6 @@ class BattleScene:
         self.bomb_pressed = False
         self.use_pressed = 0  # held-item action to use on the next step
         self.prop_pressed = 0  # room prop (item ID) to use on the next step
-        self.selected_slot = 0
         self.shown_slots: list[tuple[int, int]] | None = None
         self.accumulated_ms = 0.0
         self.names = {player["id"]: player.get("name") or f"玩家{player['id']}" for player in players}
@@ -472,8 +474,6 @@ class BattleScene:
                 self._press_use(self._slots()[SLOT_KEYS[event.key]][0])
             elif event.key in USE_KEYS:
                 self._press_use(self._smart_use())
-            elif event.key in SWITCH_KEYS:
-                self._switch_slot()
         elif event.type == pygame.KEYUP and event.key in KEY_MOVES:
             move = KEY_MOVES[event.key]
             if move in self.held:
@@ -502,29 +502,21 @@ class BattleScene:
         return (prepared + held + [(0, 0)] * 7)[:7]
 
     def _smart_use(self) -> int:
-        """Ctrl: the needle when trapped, otherwise the selected slot. Inferred
-        from the key names; the native chooser was not traced."""
-        slots = self._slots()
+        """Ctrl: the first item of slots 0..5 that can be used now. The
+        native test (0x0087F9A8) is VM-protected; this uses the sidecar's
+        own rule: only the needle while trapped, never the needle otherwise."""
         actor = self._local_actor()
-        if actor is not None and actor["state"] == ACTOR_TRAPPED:
-            return NEEDLE_ACTION if any(action == NEEDLE_ACTION for action, _ in slots) else 0
-        return slots[self.selected_slot][0]
-
-    def _switch_slot(self) -> None:
-        slots = self._slots()
-        for step in range(1, 8):
-            index = (self.selected_slot + step) % 7
-            if slots[index][0]:
-                self.selected_slot = index
-                return
+        trapped = actor is not None and actor["state"] == ACTOR_TRAPPED
+        for action, _count in self._slots()[:CTRL_SLOTS]:
+            if action and trapped == (action == NEEDLE_ACTION):
+                return action
+        return 0
 
     def _update_status_bar(self) -> None:
         slots = self._slots()
         if slots == self.shown_slots or self.runtime is None:
             return
         self.shown_slots = slots
-        if not slots[self.selected_slot][0]:
-            self._switch_slot()
         for index, (action, count) in enumerate(slots):
             icon = {41: 21, 42: 23}.get(action, action)  # 0x005DAC82
             self.runtime.namespace["Win_SetImg"](f"{STATUS_BAR}.baseItemIcon{index}", f"res/uiRes/icon/item/item{icon}.img" if action else "")
@@ -1406,13 +1398,10 @@ class BattleScene:
                         screen.blit(icon[0][0], (columns[4] - 20, y - 8))
 
     def draw_overlay(self, screen: pygame.Surface) -> None:
-        """Host-drawn parts above UI.game: the selected item slot, the player
-        list and the result banner."""
+        """Host-drawn parts above UI.game: the player list and the result
+        banner."""
         if self.font is None:
             return
-        if self._slots()[self.selected_slot][0]:
-            slot = pygame.Rect(SLOT_ORIGIN[0] + self.selected_slot * SLOT_STEP, SLOT_ORIGIN[1], SLOT_SIZE, SLOT_SIZE)
-            pygame.draw.rect(screen, (255, 230, 80), slot, 2)
         if self.rule != "adventure":  # ui_SetGameMode(1) hides the player list
             self._draw_player_list(screen)
         if self.rule in ("treasure", "wrestle"):

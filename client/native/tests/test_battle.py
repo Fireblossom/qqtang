@@ -83,18 +83,16 @@ class HeldItemTest(unittest.TestCase):
     @staticmethod
     def scene(held: list[list[int]], state: int = 0) -> BattleScene:
         scene = BattleScene.__new__(BattleScene)
-        scene.local_id, scene.selected_slot = 1, 0
+        scene.local_id = 1
         scene.state = {"actors": [{"id": 1, "state": state, "held": held}]}
         return scene
 
-    def test_slots_and_switch(self) -> None:
-        scene = self.scene([[41, 2], [64, 1], [0, 0], [44, 0]])
-        self.assertEqual(scene._slots(), [(41, 2), (64, 1)] + [(0, 0)] * 5)
-        self.assertEqual(scene._smart_use(), 41)
-        scene._switch_slot()
-        self.assertEqual((scene.selected_slot, scene._smart_use()), (1, 64))
-        scene._switch_slot()  # wraps around past the empty slots
-        self.assertEqual(scene.selected_slot, 0)
+    def test_ctrl_takes_the_first_usable_slot(self) -> None:
+        scene = self.scene([[NEEDLE_ACTION, 1], [64, 1], [0, 0], [44, 0]])
+        self.assertEqual(scene._slots(), [(NEEDLE_ACTION, 1), (64, 1)] + [(0, 0)] * 5)
+        self.assertEqual(scene._smart_use(), 64)  # the needle is no use outside a bubble
+        seventh = self.scene([[0, 0]] * 6 + [[41, 1]])
+        self.assertEqual(seventh._smart_use(), 0)  # Ctrl looks at slots 0..5 only
 
     def test_trapped_ctrl_uses_needle(self) -> None:
         self.assertEqual(self.scene([[41, 1], [NEEDLE_ACTION, 1]], ACTOR_TRAPPED)._smart_use(), NEEDLE_ACTION)
