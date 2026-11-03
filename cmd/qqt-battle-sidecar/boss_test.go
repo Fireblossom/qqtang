@@ -597,3 +597,19 @@ func TestRooneyPlacesTwoByTwoBubblesAtSixtySeconds(t *testing.T) {
 		t.Fatal("the football path walks through a 2x2 bubble")
 	}
 }
+
+func TestBossDeathLeavesTenSecondsOnTheTimer(t *testing.T) {
+	m := bossMatch(t, 1)
+	m.boss.roundMS = 240_000
+	b := m.boss.actors[30001]
+	m.applyBossDeath(b, 50_000, nil)
+	if m.boss.endsAt != 60_000 || m.bossView().EndsAt != 60_000 {
+		t.Fatalf("ends at %d", m.boss.endsAt)
+	}
+	late := bossMatch(t, 1)
+	late.boss.roundMS = 240_000
+	late.applyBossDeath(late.boss.actors[30001], 235_000, nil)
+	if late.boss.endsAt != 0 {
+		t.Fatal("a death in the last 10 s moved the timer")
+	}
+}

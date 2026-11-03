@@ -384,7 +384,10 @@ class BattleScene:
         return call_script(function, *args) if callable(function) else None
 
     def _update_timer(self) -> None:
-        seconds = max(0, self.round_end_ms - self.clock) // 1000
+        end = self.round_end_ms
+        if ends_at := (self.state.get("boss") or {}).get("ends_at"):
+            end = min(end, ends_at)  # 10 s left once a Boss dies (0x005B9390)
+        seconds = max(0, end - self.clock) // 1000
         if seconds != self.shown_seconds and self.runtime is not None:
             self.shown_seconds = seconds
             self.runtime.namespace["Win_SetText"](PLAYER_LIST + ".time", f"{seconds // 60:02d}:{seconds % 60:02d}")

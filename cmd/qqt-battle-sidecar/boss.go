@@ -93,6 +93,17 @@ type bossRule struct {
 	// The local player's bubble lock: skill 5 adds one, skill 8 clears it,
 	// a Boss's death adds one (P+0x28c).
 	bubbleLock int
+	// 0x005B9390 jumps the game clock to 10 s before the end when a Boss dies
+	// (recordings show the timer at 00:09 right after); only the shown end
+	// moves here, the scene clock stays shared with the server.
+	roundMS, endsAt, lastDeathAt uint32
+}
+
+func competitiveRoundMS(entry mapdata.CompetitiveMap) uint32 {
+	if spec, ok := mapdata.LookupCompetitiveRuleByNativeID(entry.NativeRule); ok {
+		return spec.RoundDurationMS
+	}
+	return 0
 }
 
 type bossActorView struct {
@@ -114,6 +125,7 @@ type bossView struct {
 	Flights     []bossFlightView      `json:"flights,omitempty"`
 	BombFlights map[uint32]kickFlight `json:"bomb_flights,omitempty"`
 	BubbleLock  bool                  `json:"bubble_lock,omitempty"`
+	EndsAt      uint32                `json:"ends_at,omitempty"`
 }
 
 // bossSpeedTable is 0x007F4988, the NPCs' speed per level in pixels per
@@ -131,7 +143,8 @@ func newBossRule(entry mapdata.CompetitiveMap, begin game.GameBeginData) *bossRu
 		return nil
 	}
 	rule := &bossRule{actors: map[uint16]*bossActor{}, players: len(begin.Players), seen: map[string]bool{}, bombFlights: map[uint32]kickFlight{},
-		rng: rand.New(rand.NewSource(int64(begin.SpawnSeed)<<32 | int64(begin.ItemSeed)))}
+		roundMS: competitiveRoundMS(entry),
+		rng:     rand.New(rand.NewSource(int64(begin.SpawnSeed)<<32 | int64(begin.ItemSeed)))}
 	a, b := entry.SpawnGroupA, entry.SpawnGroupB
 	cell := func(c mapdata.CompetitiveCell) battleengine.Cell {
 		return battleengine.Cell{Row: int16(c.Row), Col: int16(c.Col)}
@@ -548,6 +561,10 @@ func (match *onlineMatch) applyBossDeath(b *bossActor, now uint32, items []game.
 	}
 	b.dead, b.deadAt, b.hp, b.moving, b.path = true, now, 0, false, nil
 	match.boss.bubbleLock++
+	if rule := match.boss; rule.roundMS > now && rule.roundMS-max(now, rule.lastDeathAt) > 10_000 {
+		rule.endsAt = now + 10_000
+		rule.lastDeathAt = now
+	}
 	match.applyBossDrops(b, items, false)
 	match.logf("Boss %d died at %d", b.id, now)
 }
@@ -708,7 +725,7 @@ func (match *onlineMatch) bossView() *bossView {
 	if len(match.boss.bombFlights) > 0 {
 		view.BombFlights = match.boss.bombFlights
 	}
-	view.BubbleLock = match.boss.bubbleLock > 0
+	view.BubbleLock, view.EndsAt = match.boss.bubbleLock > 0, match.boss.endsAt
 	for _, f := range match.boss.flights {
 		view.Flights = append(view.Flights, bossFlightView{Scene: f.scene, FromRow: f.from.Row, FromCol: f.from.Col, Row: f.to.Row, Col: f.to.Col, Start: f.start, Lands: f.lands})
 	}
