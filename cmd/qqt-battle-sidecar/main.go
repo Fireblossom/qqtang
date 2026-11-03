@@ -73,7 +73,8 @@ type action struct {
 	Bomb bool   `json:"bomb"`
 	Use  uint8  `json:"use"`
 	// A prop brought from the room (item ID 20001..22999) to use.
-	Prop uint32 `json:"prop"`
+	Prop    uint32 `json:"prop"`
+	Emotion uint32 `json:"emotion,omitempty"`
 }
 
 type cell struct {
@@ -189,6 +190,7 @@ type stateView struct {
 	// Room-prop scene effects (fireworks).
 	PropEffects []propEffectView `json:"prop_effects,omitempty"`
 	Machine     *machineView     `json:"machine,omitempty"`
+	Emotions    []emotionView    `json:"emotions,omitempty"`
 }
 
 func main() {
@@ -274,6 +276,7 @@ func runOnline(init command, lines *bufio.Scanner, out *json.Encoder) error {
 	state.Adventure = match.adventureView()
 	state.Special = match.specialView()
 	state.PropEffects = match.propEffectView()
+	state.Emotions = match.emotionView()
 	if err := out.Encode(state); err != nil {
 		return err
 	}
@@ -316,6 +319,7 @@ func runOnline(init command, lines *bufio.Scanner, out *json.Encoder) error {
 		state.Adventure = match.adventureView()
 		state.Special = match.specialView()
 		state.PropEffects = match.propEffectView()
+		state.Emotions = match.emotionView()
 		if err := out.Encode(state); err != nil {
 			return err
 		}

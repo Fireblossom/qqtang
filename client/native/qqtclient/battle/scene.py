@@ -89,6 +89,7 @@ SLOT_KEYS = {**{pygame.K_1 + index: index for index in range(7)},
              **{key: index for index, key in enumerate((pygame.K_z, pygame.K_x, pygame.K_c, pygame.K_v, pygame.K_b, pygame.K_n, pygame.K_m))}}
 USE_KEYS = (pygame.K_LCTRL, pygame.K_RCTRL)  # Mac: the host also maps Cmd to Ctrl elsewhere
 CTRL_SLOTS = 6
+EMOTION_KEYS = {key: i + 1 for i, key in enumerate((pygame.K_t, pygame.K_y, pygame.K_u, pygame.K_i, pygame.K_o, pygame.K_p))}
 NEEDLE_ACTION = 63  # self-rescue from a bubble
 STATUS_BAR = "UI.game.statusBar"
 # Held-item slot icons (baseItemIcon<i>) on the status bar at y 540.
@@ -377,6 +378,8 @@ class BattleScene:
         self.bomb_pressed = False
         self.use_pressed = 0  # held-item action to use on the next step
         self.prop_pressed = 0  # room prop (item ID) to use on the next step
+        self.emotion_pressed = 0
+        self.practice_emotion: dict[str, int] | None = None
         self.shown_slots: list[tuple[int, int]] | None = None
         self.accumulated_ms = 0.0
         self.names = {player["id"]: player.get("name") or f"玩家{player['id']}" for player in players}
@@ -463,7 +466,13 @@ class BattleScene:
 
     def handle(self, event: pygame.event.Event) -> None:
         if event.type == pygame.KEYDOWN:
-            if event.key in KEY_MOVES:
+            if event.key in EMOTION_KEYS:
+                chat_open = self.runtime is not None and self.runtime.namespace["Win_IsVisible"]("UI.game.chat")
+                if not chat_open and not self.over:
+                    self.emotion_pressed = EMOTION_KEYS[event.key]
+                    if not self.realtime and self.clock >= 2000 and (self.practice_emotion is None or self.clock - self.practice_emotion["since"] >= 2000):
+                        self.practice_emotion = {"player": self.local_id, "id": self.emotion_pressed, "since": self.clock}
+            elif event.key in KEY_MOVES:
                 move = KEY_MOVES[event.key]
                 if move in self.held:
                     self.held.remove(move)
@@ -542,8 +551,9 @@ class BattleScene:
             return
         self.accumulated_ms -= ticks * TICK_MS
         action = {"id": self.local_id, "move": self.held[-1] if self.held else MOVE_NONE, "bomb": self.bomb_pressed,
-                  "use": self.use_pressed, "prop": self.prop_pressed}
+                  "use": self.use_pressed, "prop": self.prop_pressed, "emotion": self.emotion_pressed}
         self.bomb_pressed, self.use_pressed, self.prop_pressed = False, 0, 0
+        self.emotion_pressed = 0
         previous = {actor["id"]: (actor["x"], actor["y"]) for actor in self.state["actors"]}
         previous_clock = self.clock
         tcp, self.pending_tcp = self.pending_tcp, []
@@ -1278,6 +1288,12 @@ class BattleScene:
         if actor["state"] == ACTOR_TRAPPED:
             self._draw_syrup(surface, trapped_for, x - AVATAR_ANCHOR[0], y - AVATAR_ANCHOR[1])
         self._draw_flash(surface, actor, x, y)
+        emotions = self.state.get("emotions") or ([self.practice_emotion] if self.practice_emotion else [])
+        for emotion in emotions:
+            if emotion["player"] == actor["id"] and 0 <= self.clock - emotion["since"] <= 3000:
+                # 0x005D1FFF places the element at raw actor position-(0,85).
+                # SetPos adds (-12,1); viewport conversion subtracts (8,21).
+                self._draw_frames(surface, f"object/misc/misc{499 + emotion['id']}_stand.img", 0, x - 20, y - 105)
 
     def _draw_flash(self, surface: pygame.Surface, actor: dict[str, Any], x: int, y: int) -> None:
         """The harm-protection bubble over an actor at field point (x, y)."""

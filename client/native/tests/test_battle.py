@@ -5,6 +5,7 @@ from __future__ import annotations
 import pathlib
 import struct
 import sys
+import types
 import unittest
 
 import pygame
@@ -97,6 +98,34 @@ class HeldItemTest(unittest.TestCase):
     def test_trapped_ctrl_uses_needle(self) -> None:
         self.assertEqual(self.scene([[41, 1], [NEEDLE_ACTION, 1]], ACTOR_TRAPPED)._smart_use(), NEEDLE_ACTION)
         self.assertEqual(self.scene([[41, 1]], ACTOR_TRAPPED)._smart_use(), 0)
+
+
+class EmotionInputTest(unittest.TestCase):
+    def test_keys_are_suppressed_while_chat_is_open(self):
+        scene = BattleScene.__new__(BattleScene)
+        scene.runtime = types.SimpleNamespace(namespace={"Win_IsVisible": lambda path: True})
+        scene.over, scene.realtime, scene.emotion_pressed = False, True, 0
+        scene.handle(pygame.event.Event(pygame.KEYDOWN, key=pygame.K_t))
+        self.assertEqual(scene.emotion_pressed, 0)
+        scene.runtime.namespace["Win_IsVisible"] = lambda path: False
+        scene.handle(pygame.event.Event(pygame.KEYDOWN, key=pygame.K_t))
+        self.assertEqual(scene.emotion_pressed, 1)
+        scene.handle(pygame.event.Event(pygame.KEYDOWN, key=pygame.K_p))
+        self.assertEqual(scene.emotion_pressed, 6)
+
+    def test_practice_emotion_has_the_same_cooldown(self):
+        scene = BattleScene.__new__(BattleScene)
+        scene.runtime, scene.practice_emotion = None, None
+        scene.over, scene.realtime, scene.local_id = False, False, 1
+        scene.state = {"clock": 4000}
+        scene.handle(pygame.event.Event(pygame.KEYDOWN, key=pygame.K_t))
+        self.assertEqual(scene.practice_emotion["id"], 1)
+        scene.state["clock"] = 5000
+        scene.handle(pygame.event.Event(pygame.KEYDOWN, key=pygame.K_p))
+        self.assertEqual(scene.practice_emotion["id"], 1)
+        scene.state["clock"] = 6000
+        scene.handle(pygame.event.Event(pygame.KEYDOWN, key=pygame.K_p))
+        self.assertEqual(scene.practice_emotion["id"], 6)
 
 
 class TreasureScoreTest(unittest.TestCase):

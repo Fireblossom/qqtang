@@ -670,11 +670,17 @@ func (server *Server) handleGameEventMessage(config ListenerConfig, session *con
 				case game.NotifyUseEmotion:
 					var emotion game.UseEmotionEvent
 					emotion, relayErr = game.ParseUseEmotionEvent(event)
+					if relayErr == nil && emotion.PlayerID != uint32(session.Profile.PlayerID) {
+						relayErr = fmt.Errorf("use-emotion player %d is not sender %d", emotion.PlayerID, session.Profile.PlayerID)
+					}
+					if relayErr == nil {
+						_, relayErr = server.requireMatchParticipantActor(session, uint16(emotion.PlayerID), "use-emotion")
+					}
 					if relayErr == nil {
 						response, event, relayErr = game.BuildLocalGameEventRelay(data)
 					}
 					if relayErr == nil {
-						result = fmt.Sprintf("qqt_game_event_ack_emotion_uin_%d_id_%d", emotion.UIN, emotion.EmotionID)
+						result = fmt.Sprintf("qqt_game_event_ack_emotion_player_%d_id_%d", emotion.PlayerID, emotion.EmotionID)
 					}
 				case game.CreateNPCBossEvent:
 					// CREATE_NPC_BOSS belongs to the native rule-8 handler set. The

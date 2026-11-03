@@ -150,6 +150,7 @@ type onlineMatch struct {
 	// A bubble key press waits here for the next engine tick; the client
 	// steps every frame but the engine only on 20 ms boundaries.
 	bombPressed bool
+	emotions    map[uint16]emotionState
 	// Held-item uses requested over TCP and not yet confirmed, by action:
 	// the scene clock of the request.
 	useRequested map[uint8]uint32
@@ -646,6 +647,9 @@ func (match *onlineMatch) step(step command) ([]battleengine.Event, error) {
 			if entry.Prop != 0 {
 				match.requestPreparedUse(entry.Prop)
 			}
+			if entry.Emotion != 0 {
+				match.requestEmotion(entry.Emotion)
+			}
 		}
 	}
 	target := match.sceneClock()
@@ -869,6 +873,12 @@ func (match *onlineMatch) applyRemote(sender uint16, message game.BattleMessageD
 	}
 	schema := uint16(message.DataID)
 	event := game.GameEvent{Schema: schema, Body: message.Data}
+	if schema == game.NotifyUseEmotion {
+		if emotion, err := game.ParseUseEmotionEvent(event); err == nil && emotion.PlayerID == uint32(sender) {
+			match.applyEmotion(emotion)
+		}
+		return nil
+	}
 	if events, handled := match.boxRemote(sender, event); handled {
 		return events
 	}
@@ -1465,6 +1475,10 @@ func (match *onlineMatch) handleTCP(packet tcpPacket) {
 			return
 		}
 		switch notify.Schema {
+		case game.NotifyUseEmotion:
+			if emotion, err := game.ParseUseEmotionEvent(game.GameEvent{Schema: notify.Schema, Body: notify.Body}); err == nil {
+				match.applyEmotion(emotion)
+			}
 		case game.NotifyChangeArbitrator:
 			if len(notify.Body) >= 2 {
 				match.changeArbitrator(uint16(notify.Body[0])<<8 | uint16(notify.Body[1]))
