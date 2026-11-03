@@ -296,6 +296,7 @@ class MachineDrawingTest(unittest.TestCase):
 
     def test_ready_machine_draws_native_gate_and_local_arrow(self) -> None:
         scene = BattleScene.__new__(BattleScene)
+        scene.machine_projectiles = {}
         scene.local_id = 1
         scene.state = {"clock": 48000, "actors": [{"id": 1, "team": 1}], "machine": {"gates": [
             {"row": 3, "col": 6, "first": True, "team": 1, "ready": True, "fired": 0}]}}

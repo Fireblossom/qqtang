@@ -20,6 +20,7 @@ from ..runtime import UIRuntime
 from ..script import call_script, log
 from . import mapfile, prepared
 from .effect import EffectPlayer
+from .machine_projectile import MachineProjectile
 from .sidecar import (ACTOR_ELIMINATED, ACTOR_TRAPPED, EVENT_ACTOR_ELIMINATED, EVENT_ACTOR_RESPAWNED, EVENT_BOMB_EXPLODED,
                       EVENT_CELL_DAMAGED, EVENT_CELL_DESTROYED, EVENT_MAP_ELEMENT_MOVED, MOVE_DOWN, MOVE_LEFT, MOVE_NONE, MOVE_RIGHT, MOVE_UP, TICK_MS, Sidecar)
 
@@ -382,6 +383,7 @@ class BattleScene:
         self.practice_emotion: dict[str, int] | None = None
         self.shown_slots: list[tuple[int, int]] | None = None
         self.shown_masks: dict[int, tuple[float, float]] = {}
+        self.machine_projectiles: dict[tuple[int, int, bool], MachineProjectile] = {}
         self.accumulated_ms = 0.0
         self.names = {player["id"]: player.get("name") or f"玩家{player['id']}" for player in players}
         # Room seats 0..7 by PlayerID (online only).
@@ -575,6 +577,7 @@ class BattleScene:
         previous_clock = self.clock
         tcp, self.pending_tcp = self.pending_tcp, []
         self.state = self.sidecar.step([action], min(ticks, 10), tcp)
+        self._update_machine_projectiles()
         for packet in self.state.get("tcp_out") or ():
             if self.on_tcp_out is not None:
                 self.on_tcp_out(packet["cmd"], bytes.fromhex(packet["payload"]))
@@ -1055,6 +1058,19 @@ class BattleScene:
         number = 190 + hp if hp <= 5 else 191 + min(hp, 10)
         self._draw_frames(field, f"object/misc/misc{number}_stand.img", 0, actor["x"] - 10, actor["y"] - 42)
 
+    def _update_machine_projectiles(self) -> None:
+        present = set()
+        for gate in (self.state.get("machine") or {}).get("gates") or ():
+            if gate.get("destroyed"):
+                continue
+            key = (gate["row"], gate["col"], gate["first"])
+            present.add(key)
+            if key not in self.machine_projectiles:
+                self.machine_projectiles[key] = MachineProjectile(*key)
+            self.machine_projectiles[key].advance(self.clock, gate["fired"])
+        for key in set(self.machine_projectiles) - present:
+            del self.machine_projectiles[key]
+
     def _draw_machine_gates(self, field: pygame.Surface, row: int) -> None:
         # 0x005EF91F locates machine images one column left, two rows up.
         for gate in (self.state.get("machine") or {}).get("gates") or ():
@@ -1068,6 +1084,12 @@ class BattleScene:
             x = FIELD_ORIGIN[0] + (gate["col"] - 1) * CELL
             y = FIELD_ORIGIN[1] + (gate["row"] - 2) * CELL
             self._draw_frames(field, f"object/misc/misc{number}_stand.img", frame, x, y)
+            flight = self.machine_projectiles.get((row, gate["col"], first))
+            if flight is not None and (picture := flight.picture(self.clock)) is not None:
+                number, frame, px, py = picture
+                # Same native SetPos / zero image anchor as the machine body.
+                self._draw_frames(field, f"object/misc/misc{number}_stand.img", frame,
+                                  FIELD_ORIGIN[0] + px - 20, FIELD_ORIGIN[1] + py - 20)
             local = self._local_actor()
             if gate["ready"] and local is not None and local["team"] == gate["team"]:
                 arrow_x = FIELD_ORIGIN[0] + gate["col"] * CELL + (-20 if first else 60)
