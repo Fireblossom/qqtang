@@ -39,6 +39,7 @@ FLIGHT_STEPS = {0: (1, 0), 1: (0, -1), 2: (-1, 0), 3: (0, 1)}  # wire direction:
 # Avatar canvas (100x100) point that sits on the actor's position.
 AVATAR_ANCHOR = (50, 64)
 BIG_BOMB_ANCHOR = (45, 70)
+FIELD_LOCK_FLASH_MS = 450
 # Rule 12's camera view (0x005C87B0).
 VIEW_SIZE = (800, 520)
 # A named Boss plays its cloth's "birth" for 1000 ms (0x005ACBFC).
@@ -712,6 +713,7 @@ class BattleScene:
                     self._draw_box_health(field, actor)
         self._draw_streak(field)
         self._draw_box_effects(field)
+        self._draw_field_lock(field)
         charge = (self.state.get("machine") or {}).get("charge")
         actor = self._local_actor() if charge is not None else None
         if actor is not None and actor["state"] != ACTOR_ELIMINATED:
@@ -835,6 +837,20 @@ class BattleScene:
                 self._draw_frames(field, "object/misc/misc196_stand.img", 0, boss["x"] - 11, boss["y"] - 43)
                 number = 190 + boss["hp"] if boss["hp"] <= 5 else 191 + min(boss["hp"], 10)
                 self._draw_frames(field, f"object/misc/misc{number}_stand.img", 0, boss["x"] - 10, boss["y"] - 42)
+
+    def _draw_field_lock(self, field: pygame.Surface) -> None:
+        """0x0061667E: locking a battlefield lights flame255 (3 frames) on
+        each of its cells."""
+        adventure = self.state.get("adventure") or {}
+        flash = adventure.get("flash_at")
+        if not flash or not 0 <= self.clock - flash < FIELD_LOCK_FLASH_MS:
+            return
+        f = adventure["field"]
+        ox, oy = FIELD_ORIGIN
+        frame = (self.clock - flash) // (FIELD_LOCK_FLASH_MS // 3)
+        for row in range(f["Row"], f["Row"] + f["H"]):
+            for col in range(f["Col"], f["Col"] + f["W"]):
+                self._draw_frames(field, "object/flame/flame255_stand.img", frame, ox + col * CELL, oy + row * CELL)
 
     def _draw_adventure_npcs(self, field: pygame.Surface, row: int) -> None:
         """Rule 12's NPCs: the model of their ImageID (object/player/

@@ -623,7 +623,7 @@ func (engine *Engine) positionWalkable(actor *Actor, position Position, directio
 	// native corner order. A type-1 corner can bypass the other original
 	// corner only after BOTH forward cells pass the recursive check.
 	for _, collision := range collisions {
-		if _, inside := engine.grid.Cell(collision.cell); !inside {
+		if _, inside := engine.grid.Cell(collision.cell); !inside || !actor.fieldAllows(collision.cell) {
 			return false
 		}
 	}

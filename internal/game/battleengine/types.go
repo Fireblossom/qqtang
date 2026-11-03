@@ -764,6 +764,10 @@ type Actor struct {
 	nativePreviousPosition Position
 	// Adventure bubble refill (0x005B9F1C): the used count, the time since the
 	// last placement or refill, and the actor's live bubbles last tick.
+	// fieldLock is rule 12's battlefield lock (0x005B7C16): while the actor
+	// stands inside the rectangle it cannot step out of it.
+	fieldLock        bool
+	fieldLockRect    [4]int16 // row, col, height, width
 	adventureUsed    int
 	adventureResume  uint32
 	adventureBubbles map[uint32]struct{}

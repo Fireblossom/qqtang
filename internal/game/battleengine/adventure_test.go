@@ -87,3 +87,26 @@ func TestAdventureFlamesDoNotTrapAndBubblesComeBack(t *testing.T) {
 		}
 	}
 }
+
+func TestBattlefieldLockKeepsTheActorInside(t *testing.T) {
+	cfg := testConfig()
+	cfg.Grid = testOpenGrid(8, 3)
+	cfg.Rules.NativeAdventure, cfg.Rules.ExternalConclusion = true, true
+	e := mustEngine(t, cfg)
+	if err := e.SetActorFieldLock(1, 0, 0, 3, 3); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 60; i++ {
+		e.Step([]Action{{PlayerID: 1, Move: DirectionRight}})
+	}
+	if col := e.Actors()[0].Position.Cell().Col; col != 2 {
+		t.Fatalf("locked actor reached column %d", col)
+	}
+	e.SetActorFieldLock(1, 0, 0, 0, 0)
+	for i := 0; i < 60; i++ {
+		e.Step([]Action{{PlayerID: 1, Move: DirectionRight}})
+	}
+	if col := e.Actors()[0].Position.Cell().Col; col <= 2 {
+		t.Fatalf("released actor stayed at column %d", col)
+	}
+}

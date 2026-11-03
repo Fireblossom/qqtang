@@ -14,8 +14,8 @@ package main
 // Not the original yet: the PVE NPC controller (MoveStrategy 1..5 at
 // 0x005BAE70, BattleStrategy, aggro, skills such as 21025) is a stand-in
 // that chases a player within View cells and otherwise wanders inside
-// NPCBounds; it never places bubbles. Battlefield locking (0x0061667E) is
-// not played.
+// NPCBounds; it never places bubbles. The battlefield lock flashes flame255
+// once when it locks; the flash on bumping its edge (0x005F38F9) is not played.
 
 import (
 	"fmt"
@@ -79,9 +79,12 @@ type adventureRule struct {
 	rng      *rand.Rand
 	seen     map[string]bool
 	clearAt  uint32 // first frame with every NPC spawned and dead
-	doorSent bool
-	roundMS  uint32
-	events   []battleengine.Event
+	// The local player's battlefield lock and when its flame255 flash began.
+	locked      bool
+	lockFlashAt uint32
+	doorSent    bool
+	roundMS     uint32
+	events      []battleengine.Event
 }
 
 type advActorView struct {
@@ -114,6 +117,8 @@ type adventureView struct {
 	Open    bool                     `json:"door_open"`
 	Width   int                      `json:"width"`
 	Height  int                      `json:"height"`
+	Locked  bool                     `json:"locked,omitempty"`
+	FlashAt uint32                   `json:"flash_at,omitempty"`
 }
 
 func newAdventureRule(stage mapdata.AdventureStage, field mapdata.AdventureBattlefield, begin game.GameBeginData) *adventureRule {
@@ -209,10 +214,6 @@ func (match *onlineMatch) produceAdventureNPCs(now uint32) {
 		}
 	}
 	if len(batch.NPCs) == 0 {
-		if !rule.allProduced() {
-			// Nothing left here: the next battlefield (0x005E801B).
-			rule.fieldIdx++
-		}
 		return
 	}
 	body, err := batch.MarshalNetworkBinary()
@@ -249,6 +250,52 @@ func (match *onlineMatch) createAdventureNPCs(batch game.CreatePVENPCEvent, now 
 		rule.npcs[id] = n
 	}
 	match.logf("adventure: %d NPCs in battlefield %d", len(batch.NPCs), rule.fieldIdx)
+}
+
+// advanceAdventureField is 0x005B8ECC/0x005E801B on every client: with no
+// NPC alive and none left to spawn in the current battlefield (0x005E8279,
+// right/bottom edges exclusive), the next battlefield starts; after the
+// last one the field is the whole map. The lock is released.
+func (match *onlineMatch) advanceAdventureField(now uint32) {
+	rule := match.adventure
+	if rule.living() != 0 || rule.fieldIdx >= len(rule.stage.Fields) || now < adventureProduceFromMS {
+		return
+	}
+	f := rule.currentField()
+	for i, npc := range rule.stage.NPCs {
+		if !rule.produced[i] && npc.BornRow >= f.Row && npc.BornRow < f.Row+f.H && npc.BornCol >= f.Col && npc.BornCol < f.Col+f.W {
+			return
+		}
+	}
+	rule.fieldIdx++
+	if rule.locked {
+		rule.locked = false
+		_ = match.engine.SetActorFieldLock(match.local, 0, 0, 0, 0)
+	}
+	match.logf("adventure: Enter Next Battle %d", rule.fieldIdx)
+}
+
+// lockAdventureField is 0x0061667E: the local player stepping into the
+// current battlefield locks it there and lights flame255 on every cell.
+func (match *onlineMatch) lockAdventureField(now uint32) {
+	rule := match.adventure
+	if rule.locked || rule.fieldIdx >= len(rule.stage.Fields) {
+		return
+	}
+	actor, ok := actorByID(match.engine.Actors(), match.local)
+	if !ok || actor.State != battleengine.ActorActive {
+		return
+	}
+	f := rule.currentField()
+	c := actor.Position.Cell()
+	if int(c.Col) < f.Col || int(c.Col) >= f.Col+f.W || int(c.Row) < f.Row || int(c.Row) >= f.Row+f.H {
+		return
+	}
+	if err := match.engine.SetActorFieldLock(match.local, int16(f.Row), int16(f.Col), int16(f.H), int16(f.W)); err != nil {
+		match.logf("battlefield lock: %v", err)
+		return
+	}
+	rule.locked, rule.lockFlashAt = true, now
 }
 
 func (match *onlineMatch) adventurePlayer(id uint16) *advPlayer {
@@ -297,9 +344,11 @@ func (match *onlineMatch) adventureTick(now uint32) {
 		return
 	}
 	arbitrator := match.isArbitrator()
+	match.advanceAdventureField(now)
 	if arbitrator {
 		match.produceAdventureNPCs(now)
 	}
+	match.lockAdventureField(now)
 	// The local player's own damage: fire, then NPC contact (0x00615E6D).
 	if actor, ok := actorByID(match.engine.Actors(), match.local); ok && actor.State == battleengine.ActorActive {
 		p := rule.players[match.local]
@@ -673,7 +722,8 @@ func (match *onlineMatch) adventureView() *adventureView {
 		return nil
 	}
 	view := &adventureView{Players: map[uint16]advPlayerView{}, Field: rule.currentField(), DoorRow: rule.stage.LevelRow, DoorCol: rule.stage.LevelCol,
-		Open: rule.clearAt != 0, Width: int(rule.field.Battlefield.Width), Height: int(rule.field.Battlefield.Height)}
+		Open: rule.clearAt != 0, Width: int(rule.field.Battlefield.Width), Height: int(rule.field.Battlefield.Height),
+		Locked: rule.locked, FlashAt: rule.lockFlashAt}
 	for id, p := range rule.players {
 		view.Players[id] = advPlayerView{HP: p.hp, MaxHP: p.maxHP, ProtectedUntil: p.protectedUntil, DyingSince: p.dyingSince}
 	}

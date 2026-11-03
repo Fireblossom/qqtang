@@ -92,3 +92,29 @@ func ConfigFromAdventureStage(field mapdata.AdventureBattlefield, options Advent
 	}
 	return Config{Seed: options.SimulationSeed, Grid: grid, Rules: rules, Participants: participants, Pickups: pickups}, nil
 }
+
+// SetActorFieldLock locks (or with h == 0 releases) the actor inside a
+// battlefield rectangle; only rule 12 uses it (0x0061667E, 0x005B7C16).
+func (engine *Engine) SetActorFieldLock(playerID uint16, row, col, h, w int16) error {
+	if engine == nil || !engine.rules.NativeAdventure {
+		return fmt.Errorf("battlefield lock requires the adventure rule")
+	}
+	index := engine.actorIndex(playerID)
+	if index < 0 {
+		return fmt.Errorf("battlefield lock player %d is not a participant", playerID)
+	}
+	actor := &engine.actors[index]
+	actor.fieldLock, actor.fieldLockRect = h > 0 && w > 0, [4]int16{row, col, h, w}
+	return nil
+}
+
+func (actor *Actor) fieldContains(cell Cell) bool {
+	r := actor.fieldLockRect
+	return cell.Row >= r[0] && cell.Row < r[0]+r[2] && cell.Col >= r[1] && cell.Col < r[1]+r[3]
+}
+
+// fieldAllows is 0x005B7C16: inside the locked field only cells of the
+// field are reachable; outside it the lock does not hold the actor back.
+func (actor *Actor) fieldAllows(cell Cell) bool {
+	return !actor.fieldLock || !actor.fieldContains(actor.Position.Cell()) || actor.fieldContains(cell)
+}
