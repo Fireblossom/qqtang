@@ -43,6 +43,29 @@ type bossActor struct {
 	protectedUntil uint32
 	normal         []game.BossItemInfo // NormalItems still to drop
 	ai             bossController
+	greeted        bool
+}
+
+// bossGreetings are the lines 0x005AE672 sends when the birth ends, as GBK
+// bytes from 0x007F2A00/04/10 (the original's four leading spaces kept).
+// 0x005FDA38 shows nothing on receipt; the sailor has no line.
+var bossGreetings = map[uint16]string{
+	24: "\x20\x20\x20\x20\xce\xd2\xd3\xd0\xd2\xbb\xb8\xf6\xb4\xf3\xc3\xd8\xc3\xdc\xa3\xac\xbf\xc9\xc8\xdd\xb2\xbb\xb5\xc3\xc4\xe3\xc3\xc7\xc0\xb4\xb4\xf2\xc8\xc5\xa3\xa1",                                                                                                                                                                                                                                                                         // 我有一个大秘密，可容不得你们来打扰！
+	28: "\x20\x20\x20\x20\xd5\xe2\xc9\xed\xd2\xc2\xb7\xfe\xba\xdc\xba\xcf\xc9\xed\xb0\xa1\xa3\xa1",                                                                                                                                                                                                                                                                                                                                                 // 这身衣服很合身啊！
+	34: "\x20\x20\x20\x20\xbb\xb6\xd3\xad\xb8\xf7\xce\xbb\xdd\xb0\xc1\xd9\xb2\xc6\xb8\xbb\xb5\xc4\xb9\xac\xb5\xee\xa3\xac\xd5\xe2\xc0\xef\xb5\xc4\xc3\xbf\xb8\xf6\xd5\xe4\xb1\xa6\xb6\xbc\xbd\xfe\xc8\xbe\xd7\xc5\xd2\xf3\xba\xec\xb5\xc4\xcf\xca\xd1\xaa\xa3\xac\xbd\xf1\xcc\xec\xc4\xe3\xc3\xc7\xb5\xc4\xcf\xca\xd1\xaa\xbd\xab\xca\xb9\xd5\xe2\xd0\xa9\xd5\xe4\xb1\xa6\xbb\xc0\xb7\xa2\xb3\xf6\xb8\xfc\xc3\xd4\xc8\xcb\xb5\xc4\xb9\xe2\xb2\xca", // 欢迎各位莅临财富的宫殿……
+}
+
+func (match *onlineMatch) bossGreeting(b *bossActor, now uint32) {
+	words, ok := bossGreetings[b.role]
+	if !ok {
+		return
+	}
+	body, err := (game.NPCTalkEvent{ObjectID: b.id, Words: []byte(words)}).MarshalNetworkBinary()
+	if err != nil {
+		return
+	}
+	match.queueNPC(&match.boss.outbox, b.id, game.NotifyNPCTalk, now, body)
+	match.mirror(game.NotifyNPCTalk, body)
 }
 
 // bossController is the arbitrator's AI (FUN_005df20b's controller at +0x888).
@@ -212,6 +235,10 @@ func (match *onlineMatch) bossTick(now uint32, events []battleengine.Event) {
 		if now < b.bornAt+bossBirthMS {
 			b.lastTick = now
 			continue
+		}
+		if !b.greeted {
+			b.greeted = true
+			match.bossGreeting(b, now)
 		}
 		if now-b.lastTick > 4*tickMS {
 			// A new arbitrator takes the Boss over from its interpolated state.

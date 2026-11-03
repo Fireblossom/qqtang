@@ -332,3 +332,25 @@ func TestBossStopsWhenEveryPlayerIsDead(t *testing.T) {
 		t.Fatal("the Boss kept acting after every player died")
 	}
 }
+
+func TestGriffinGreetsWhenBornButSailorDoesNot(t *testing.T) {
+	m := bossMatch(t, 1)
+	m.boss.actors[30001].ai = nil
+	advanceTo(t, m, m.engine.ElapsedMS()+bossBirthMS)
+	m.bossTick(m.engine.ElapsedMS(), nil)
+	if len(mirrored(t, m, game.NotifyNPCTalk)) != 0 {
+		t.Fatal("the sailor spoke")
+	}
+	b := m.boss.actors[30001]
+	b.role, b.greeted = 24, false
+	m.bossTick(m.engine.ElapsedMS(), nil)
+	m.bossTick(m.engine.ElapsedMS(), nil)
+	talks := mirrored(t, m, game.NotifyNPCTalk)
+	if len(talks) != 1 {
+		t.Fatalf("griffin talks %d", len(talks))
+	}
+	talk, err := game.ParseNPCTalkEvent(talks[0])
+	if err != nil || talk.ObjectID != 30001 || len(talk.Words) != 40 {
+		t.Fatalf("talk %+v %v", talk, err)
+	}
+}
