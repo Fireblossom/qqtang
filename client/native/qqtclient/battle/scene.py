@@ -270,6 +270,9 @@ class ResultRow:
     level_points: int  # total points, for the level icon
     scores: tuple[int, ...] = ()  # paired per-field scores, retained from GAME_OVER
     mode_count: int = 0  # fourth extension remains an ordinal, not inferred gameplay state
+    points_before: int | None = None
+    remark: int = 0  # native GAME_OVER honor resource ordinal
+    identity: int = 0  # profile+0x20; bit13 overrides the result honor
 
 
 @dataclasses.dataclass
@@ -1482,7 +1485,9 @@ class BattleScene:
     def show_results(self, rows: list[ResultRow]) -> None:
         self.result_rows = sorted(rows, key=lambda row: (-row.result, row.player_id != self.local_id))
         self.result_shown_at = self.now_ms
-        self.result_display = ResultDisplay(self.map.rule, self.result_rows, self.local_id, self.names)
+        levels = self.runtime.namespace.get("LevelCfg") if self.runtime is not None else None
+        self.result_display = ResultDisplay(self.map.rule, self.result_rows, self.local_id, self.names,
+                                            levels.points if levels is not None else ())
         self.result_level_icons = {}
         for index in range(9):
             self._script("ui_NotifyShowResultLevelIcon", 0, 0, 0, index, 0)
@@ -1500,6 +1505,11 @@ class BattleScene:
                 continue
             image, x, y = frames[item.frame % len(frames)]
             if image is not None:
+                if item.clip_width is not None:
+                    width = min(image.get_width(), max(0, int(item.clip_width)))
+                    if width:
+                        screen.blit(image, (item.x, item.y), (0, 0, width, image.get_height()))
+                    continue
                 image = image.copy()
                 image.set_alpha(item.alpha)
                 screen.blit(image, (item.x + x, item.y + y))

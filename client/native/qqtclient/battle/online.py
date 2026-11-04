@@ -21,6 +21,7 @@ from ..runtime import UIRuntime
 from ..script import log
 from ..session import Session
 from .scene import BattleScene, ResultRow
+from .result import result_points
 from .sidecar import Sidecar, SidecarError
 
 # The result stays up this long unless Enter, Esc or a click returns to the
@@ -38,6 +39,7 @@ class MatchMember:
     wear: tuple[tuple[str, int], ...] = ()  # costume parts worn in the room
     seat: int = -1  # room seat 0..7 (Client.exe actor +0x396); -1 if unknown
     gender: int = 0  # as the room reports it; 1 picks the male title ranks
+    identity: int = 0
 
 
 @dataclasses.dataclass
@@ -148,12 +150,18 @@ class OnlineBattle:
         log("[match] game over: " + ", ".join(f"{result.player_id}={result.result}" for result in over.results))
         self.scene.result = mine.result if mine is not None else match.RESULT_LOSS
         self.scene.over = True
-        self.scene.show_results([
-            ResultRow(result.player_id, result.result, *(result.counts + [0, 0, 0])[:3], result.point,
-                      self.context.members[result.player_id].points + result.point if result.player_id in self.context.members else result.point,
-                      tuple(result.scores), result.counts[3] if len(result.counts) > 3 else 0)
-            for result in over.results
-        ])
+        rows = []
+        for result in over.results:
+            member = self.context.members.get(result.player_id)
+            before = member.points if member is not None else 0
+            points = result_points(self.scene.map.rule, before, result.scores)
+            if self.scene.map.rule == 12:
+                points = before + result.point  # PVE profile projection is still separate
+            rows.append(ResultRow(
+                result.player_id, result.result, *(result.counts + [0, 0, 0])[:3], result.point, points,
+                tuple(result.scores), result.counts[3] if len(result.counts) > 3 else 0,
+                before if member is not None else None, result.remark, member.identity if member is not None else 0))
+        self.scene.show_results(rows)
         if self.finish_at is None:
             self.finish_at = self.elapsed_ms + RESULT_SHOWN_MS
 

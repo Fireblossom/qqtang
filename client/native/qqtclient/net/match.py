@@ -38,6 +38,7 @@ class PlayerResult:
     point: int
     counts: list[int]  # kills, rescues, reward, mode-specific
     scores: list[int]
+    remark: int = 0
 
 
 @dataclasses.dataclass
@@ -62,13 +63,13 @@ def parse_game_over(body: bytes) -> GameOver:
     offset = 5
     results = []
     for _ in range(count):
-        player_id, result, _remark, point, fields = struct.unpack_from(">HBIIB", body, offset)
+        player_id, result, remark, point, fields = struct.unpack_from(">HBIIB", body, offset)
         offset += 12
         counts = list(struct.unpack_from(f">{fields}I", body, offset))
         offset += 4 * fields
         scores = list(struct.unpack_from(f">{fields}I", body, offset))
         offset += 4 * fields
-        results.append(PlayerResult(player_id, result, point, counts, scores))
+        results.append(PlayerResult(player_id, result, point, counts, scores, remark))
     game_mode = body[offset] if offset < len(body) else 0
     return GameOver(time_ms, results, game_mode)
 

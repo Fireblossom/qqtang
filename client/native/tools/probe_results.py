@@ -15,7 +15,7 @@ from probe_sculpture_animation import picture_fixture
 from win32emu import Win32Emu
 
 
-def run(root):
+def run(root, honors=False):
     snapshots, texts, portraits = [], [], []
     e, pictures, draws, patch = picture_fixture(root, snapshots)
     code = e.malloc(64)
@@ -41,10 +41,13 @@ def run(root):
     patch(0x5DD38D, "portrait_lose", lambda e: 0, 0)
     patch(0x47F050, "raw_image", lambda e: 0, 0)
 
+    profile_flags = dict(value=0)
+
     def profile(e):
         destination = e.arg(1)
         e.write(destination, bytes(0x23E0))
         e.w32(destination, 1000005)
+        e.w32(destination + 0x20, profile_flags["value"])
         return 1
 
     patch(0x5A3BE2, "profile", profile, 2)
@@ -52,7 +55,7 @@ def run(root):
     def signed(address):
         return struct.unpack("<i", e.read(address, 4))[0]
 
-    def create(rule_id, outcome):
+    def create(rule_id, outcome, remark=0):
         world, scene, actor = [e.malloc(n) for n in (0x60000, 0x6000, 0x800)]
         rule = e.call(0x5F47A9, (scene, rule_id))
         e.w32(world + 0x37F8, scene)
@@ -66,6 +69,7 @@ def run(root):
         e.write(row, struct.pack("<H", 1))
         e.write(row + 7, "糖五".encode("gbk") + b"\0")
         e.write(row + 28, bytes([outcome]))
+        e.w32(row + 29, remark)
         e.write(row + 49, b"\x04")
         e.write(row + 50, struct.pack("<8I", 2, 3, 100, 7, 52, 63, 2000, 17))
         result = e.malloc(0x354)
@@ -75,7 +79,7 @@ def run(root):
             raise RuntimeError("native result initialization failed")
         return result
 
-    def emit(result, rule, outcome, elapsed, cadence, full=False):
+    def emit(result, rule, outcome, elapsed, cadence, full=False, metadata=None):
         snapshots.clear()
         texts.clear()
         e.call(0x6137BB, ecx=result)
@@ -91,7 +95,19 @@ def run(root):
             picture = e.r32(result + 0x2A8)
             host = pictures[picture]["host"]
             record.update(table=pictures[picture]["number"], position=[signed(host + 8), signed(host + 12)])
+        if metadata is not None:
+            record.update(metadata)
         print(json.dumps(record))
+
+    if honors:
+        for remark, flags in ((101, 0), (201, 0), (701, 0), (101, 0x2000)):
+            profile_flags["value"] = flags
+            result = create(4, 2, remark)
+            for _ in range(215):
+                e.call(0x613560, (20,), ecx=result)
+            emit(result, 4, 2, 4300, 20, True,
+                 dict(kind="honor_draw", remark=remark, profile_flags=flags))
+        return
 
     checkpoints = {0, 3000, 3020, 3040, 3200, 3400, 3600, 3740, 3760, 3800, 4000, 4260}
     for rule in (4, 7, 8, 12):
@@ -132,4 +148,6 @@ def run(root):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("client_root", type=pathlib.Path)
-    run(parser.parse_args().client_root)
+    parser.add_argument("--honors", action="store_true")
+    arguments = parser.parse_args()
+    run(arguments.client_root, arguments.honors)
