@@ -60,8 +60,18 @@ def experience_percent(points, thresholds):
     return f32(min(100, max(0, (points - low) * 100 / (high - low))))
 
 
+def pve_experience_percent(points, thresholds):
+    # 00602F9B chooses the interval with low <= points < high. At the
+    # final level it finds no next interval and returns zero.
+    level = bisect.bisect_right(thresholds, points)
+    if level == 0 or level >= len(thresholds):
+        return 0.0
+    low, high = thresholds[level - 1:level + 1]
+    return f32((points - low) * 100 / (high - low))
+
+
 class ResultDisplay:
-    def __init__(self, rule, rows, local_id, names, thresholds=(), progress=None):
+    def __init__(self, rule, rows, local_id, names, thresholds=(), progress=None, pve_thresholds=()):
         self.rule, self.rows, self.local_id, self.names = rule, rows, local_id, names
         self.base = 130 if rule == 12 else 30
         self.elapsed = 0
@@ -75,6 +85,9 @@ class ResultDisplay:
         if progress is None and rule != 12 and thresholds and mine is not None and mine.points_before is not None:
             progress = (experience_percent(mine.points_before, thresholds),
                         experience_percent((mine.points_before + mine.point) & 0xFFFFFFFF, thresholds))
+        if progress is None and rule == 12 and pve_thresholds and mine is not None and mine.pve_points_before is not None:
+            progress = (pve_experience_percent(mine.pve_points_before, pve_thresholds),
+                        pve_experience_percent(result_points(rule, mine.pve_points_before, mine.scores), pve_thresholds))
         self.progress = list(map(f32, progress)) if progress is not None else None
 
     def advance(self, milliseconds):

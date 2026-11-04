@@ -13,6 +13,7 @@ from typing import Any, Callable
 
 import pygame
 
+from .. import pve
 from ..avatar import AvatarCache
 from ..render import SpriteCache, cell_width
 from ..resources import Resources
@@ -273,6 +274,7 @@ class ResultRow:
     points_before: int | None = None
     remark: int = 0  # native GAME_OVER honor resource ordinal
     identity: int = 0  # profile+0x20; bit13 overrides the result honor
+    pve_points_before: int | None = None
 
 
 @dataclasses.dataclass
@@ -1488,7 +1490,8 @@ class BattleScene:
         self.result_shown_at = self.now_ms
         levels = self.runtime.namespace.get("LevelCfg") if self.runtime is not None else None
         self.result_display = ResultDisplay(self.map.rule, self.result_rows, self.local_id, self.names,
-                                            levels.points if levels is not None else ())
+                                            levels.points if levels is not None else (),
+                                            pve_thresholds=tuple(level.point for level in pve.levels()) if self.map.rule == 12 else ())
         self.result_level_icons = {}
         for index in range(9):
             self._script("ui_NotifyShowResultLevelIcon", 0, 0, 0, index, 0)

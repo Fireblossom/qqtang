@@ -15,7 +15,7 @@ from win32emu import EmuStop, Win32Emu
 
 
 def observe(root, points, gain, scores, rule_id=1, section_mode=0, remark=0,
-            players=None, local_id=1, name=None):
+            players=None, local_id=1, name=None, pve_points=None):
     e = Win32Emu(root / "Client.exe", root)
     e.handlers["__dllonexit"] = (lambda e: e.arg(0)), 0
     e.w32(0x85DA74, e.r32(0x85DA74) | 1)
@@ -42,9 +42,24 @@ def observe(root, points, gain, scores, rule_id=1, section_mode=0, remark=0,
         e.w32(destination, 1000005)
         player = next(player for player in inputs if player["id"] == e.arg(0))
         e.w32(destination + 0x34, player["points"])
+        if pve_points is not None:
+            e.w32(destination + 0x4F, pve_points)
         return 1
 
     patch(0x5A3BE2, "profile", profile, 2)
+    if pve_points is not None:
+        from decrypt_pve import SectionReader, cfg_sizes
+        text = SectionReader(root)(b"config/pvedata.dat", cfg_sizes(root)["pvedata"])
+        module = e.make_object("RoomModule", 26)
+        e.w32(app + 0x7D0, module)
+
+        def read_cfg(e):
+            if e.cstr(e.arg(0)).lower() != b"config/pvedata.dat":
+                raise RuntimeError("unexpected config")
+            e.write(e.arg(2), text + b"\0")
+            return 1
+
+        e.handlers["RoomModule+0x64"] = read_cfg, 3
     e.w32(handler + 4, scene)
     e.w32(app + 0x37F8, scene)
     e.w32(scene + 8, app)
@@ -103,6 +118,8 @@ def observe(root, points, gain, scores, rule_id=1, section_mode=0, remark=0,
     if players is not None:
         record = dict(kind="order", case=name, players=inputs, rule=rule_id,
                       section_mode=section_mode, local_id=local_id, display=captured[0])
+    if pve_points is not None:
+        record["pve_points"] = pve_points
     print(json.dumps(record))
 
 
@@ -110,8 +127,23 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("client_root", type=pathlib.Path)
     parser.add_argument("--orders", action="store_true")
+    parser.add_argument("--pve", action="store_true")
     arguments = parser.parse_args()
     root = arguments.client_root
+    if arguments.pve:
+        import xml.etree.ElementTree as ET
+        from decrypt_pve import SectionReader, cfg_sizes
+        text = SectionReader(root)(b"config/pvedata.dat", cfg_sizes(root)["pvedata"])
+        thresholds = sorted(int(node.attrib["point"]) for node in ET.fromstring(text.decode("gbk"))
+                            if node.tag.startswith("lev_"))
+        print(json.dumps(dict(kind="pve_thresholds", values=thresholds)))
+        for pve_points in (0, 100, 572, 573, 600, 1288, 1289, 428326798, 428326799):
+            for section_mode in (0, 1, 2):
+                observe(root, 950, 50, [10, 20, 30, 40], rule_id=12,
+                        pve_points=pve_points, section_mode=section_mode)
+        for scores in ([], [10], [0, 0, 30, 100]):
+            observe(root, 950, 50, scores, rule_id=12, pve_points=100)
+        raise SystemExit(0)
     if arguments.orders:
         players = [dict(id=player, result=result, points=1000 * player, gain=10,
                         scores=[score], team=team)

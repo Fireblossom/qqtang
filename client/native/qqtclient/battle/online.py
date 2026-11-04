@@ -40,6 +40,7 @@ class MatchMember:
     seat: int = -1  # room seat 0..7 (Client.exe actor +0x396); -1 if unknown
     gender: int = 0  # as the room reports it; 1 picks the male title ranks
     identity: int = 0
+    pve_points: int | None = None
 
 
 @dataclasses.dataclass
@@ -155,12 +156,11 @@ class OnlineBattle:
             member = self.context.members.get(result.player_id)
             before = member.points if member is not None else 0
             points = result_points(self.scene.map.rule, before, result.scores)
-            if self.scene.map.rule == 12:
-                points = before + result.point  # PVE profile projection is still separate
             rows.append(ResultRow(
                 result.player_id, result.result, *(result.counts + [0, 0, 0])[:3], result.point, points,
                 tuple(result.scores), result.counts[3] if len(result.counts) > 3 else 0,
-                before if member is not None else None, result.remark, member.identity if member is not None else 0))
+                before if member is not None else None, result.remark, member.identity if member is not None else 0,
+                member.pve_points if member is not None else None))
         self.scene.show_results(rows)
         if self.finish_at is None:
             self.finish_at = self.elapsed_ms + RESULT_SHOWN_MS

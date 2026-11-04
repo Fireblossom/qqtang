@@ -8,7 +8,7 @@ import types
 import unittest
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
-from qqtclient.battle.result import ResultDisplay, experience_percent, experience_level, result_points
+from qqtclient.battle.result import ResultDisplay, experience_percent, experience_level, pve_experience_percent, result_points
 from qqtclient.battle.scene import BattleScene, ResultRow
 from qqtclient.battle.online import MatchContext, MatchMember, OnlineBattle, RESULT_SHOWN_MS
 from qqtclient.net import match
@@ -153,3 +153,35 @@ class ResultsTest(unittest.TestCase):
                 self.assertEqual([result.player_id for result in scene.result_rows], [player["player_id"] for player in native])
                 self.assertEqual([(text.text, text.y) for text in scene.result_display.plan()[1] if text.y >= 257],
                                  [(str(player["player_id"]), 257 + player["index"] * 27) for player in native])
+
+    def test_pve_courage_projection_matches_native_reader_parser_and_boundaries(self):
+        rows = self.fixture("result_pve_v848.jsonl")
+        thresholds = rows[0]["values"]
+        self.assertEqual(len(thresholds), 31)
+        self.assertEqual(len(rows), 31)
+        for row in rows[1:]:
+            native = row["display"]
+            after = result_points(12, row["pve_points"], row["scores"])
+            points = result_points(12, row["points"], row["scores"])
+            result = ResultRow(1, 2, 2, 3, 100, row["gain"], points,
+                               tuple(row["scores"]), pve_points_before=row["pve_points"])
+            model = ResultDisplay(12, [result], 1, {}, pve_thresholds=thresholds)
+            with self.subTest(before=row["pve_points"], scores=row["scores"], mode=row["section_mode"]):
+                self.assertEqual([pve_experience_percent(row["pve_points"], thresholds),
+                                  pve_experience_percent(after, thresholds)], native["progress"])
+                self.assertEqual(model.progress, native["progress"])
+                self.assertEqual(points - row["points"], native["score_total"])
+                model.phase = 3
+                self.assertEqual([image.x for image in model.plan()[0] if image.clip_width is not None], [268, 268])
+
+    def test_pve_wire_projection_uses_courage_before_and_all_four_score_fields(self):
+        battle = OnlineBattle.__new__(OnlineBattle)
+        battle.local_id, battle.next_stage, battle.elapsed_ms, battle.finish_at = 1, None, 123, None
+        battle.context = MatchContext(False, {1: MatchMember(1000005, "糖五", 950, pve_points=100)}, lambda: None)
+        captured = []
+        battle.scene = types.SimpleNamespace(show_results=lambda rows: captured.extend(rows), map=types.SimpleNamespace(rule=12))
+        body = struct.pack(">IBHBIIB", 1000, 1, 1, match.RESULT_WIN, 0, 50, 4)
+        body += struct.pack(">8I", 2, 3, 100, 7, 10, 20, 30, 40) + b"\x1a"
+        payload = struct.pack(">HII", 1, 1, len(body) + 4) + struct.pack("<I", match.SCHEMA_GAME_OVER) + body
+        battle.on_game_event(types.SimpleNamespace(payload=payload))
+        self.assertEqual(captured, [ResultRow(1, 2, 2, 3, 100, 50, 1050, (10, 20, 30, 40), 7, 950, 0, 0, 100)])

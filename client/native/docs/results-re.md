@@ -1,6 +1,6 @@
 # v848结算控制器：入场、表格与Count/Score
 
-2026-11-04。原版 `0x00612C86/0x00612F3B/0x00613560/0x006137BB` 及行/数字/统计组件实际执行；实现为 `battle/result.py`、`BattleScene._draw_results`。后续已补普通竞技XP条、等级投影与特殊荣誉，见 `result-progress-re.md`；探险资料投影和头像独立部件/胜负动作仍未完成，不把本轮记成整个结算画面全量复刻。
+2026-11-04。原版 `0x00612C86/0x00612F3B/0x00613560/0x006137BB` 及行/数字/统计组件实际执行；实现为 `battle/result.py`、`BattleScene._draw_results`。后续已补普通竞技XP条、等级投影与特殊荣誉，见 `result-progress-re.md`，探险勇气投影见 `result-pve-re.md`；头像独立部件/胜负动作仍未完成，不把本轮记成整个结算画面全量复刻。
 
 ## 显示阶段和位置
 
