@@ -191,6 +191,41 @@ func TestBoxNPCEnteringExistingBoxFlameIsTrapped(t *testing.T) {
 	}
 }
 
+func TestBoxNPCAdvertisesFullFloatForecastAndFollowsCorrectionFirst(t *testing.T) {
+	m := npcTestMatch(t, 1, 1)
+	n := addTestNPC(t, m, 20001, 27)
+	n.pos = battleengine.Position{X: 220, Y: 251}
+	n.navigator.walking, n.navigator.direction = true, 0
+	if err := m.engine.SetNativeBoxCell(battleengine.Cell{Row: 5, Col: 6}, battleengine.Tile{Kind: battleengine.CellSolid, MapElementOccupied: true}); err != nil {
+		t.Fatal(err)
+	}
+	m.moveBoxNPC(n, 20)
+	if n.pos.X != 220 || n.motion.Y <= 253 || n.motion.Y >= 254 || n.moveCorner != n.pos || n.moveEnd != (battleengine.Position{X: 580, Y: 260}) {
+		t.Fatalf("native float correction and full forecast: pos%v motion%v corner%v end%v", n.pos, n.motion, n.moveCorner, n.moveEnd)
+	}
+	m.publishBoxNPCMove(n, 100, true)
+	message := m.box.npc.outbox[len(m.box.npc.outbox)-1].message
+	move, err := game.ParsePlayerMove(message.Data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wire := move.Entries[0].Move
+	if wire.CornerPosX != 220 || wire.CornerPosY != 253 || wire.EndPosX != 580 || wire.EndPosY != 260 {
+		t.Fatalf("forecast missing from wire: %+v", wire)
+	}
+	peer := npcTestMatch(t, 2, 1)
+	remote := addTestNPC(t, peer, 20001, 27)
+	remote.netMoveSet, remote.netMove = true, wire
+	peer.interpolateBoxNPC(remote, 120)
+	if remote.pos.X != 220 || remote.pos.Y <= 253 || remote.pos.Y >= 260 {
+		t.Fatalf("peer skipped perpendicular correction: %+v", remote.pos)
+	}
+	peer.interpolateBoxNPC(remote, 300)
+	if remote.pos.X <= 220 || remote.pos.Y != 260 {
+		t.Fatalf("peer did not continue along primary axis: %+v", remote.pos)
+	}
+}
+
 func TestBoxNPCSyrupTimeoutAndRespawnAreSceneState(t *testing.T) {
 	m := npcTestMatch(t, 1, 1)
 	n := addTestNPC(t, m, 20001, 25)

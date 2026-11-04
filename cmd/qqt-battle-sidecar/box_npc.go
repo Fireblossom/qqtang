@@ -6,8 +6,8 @@ package main
 // register the normal bubble command 00610BA0, so generic AIType2 bubble
 // code 005DF009 is not dispatched. Escape search shares WF with Bosses.
 // The rule-8 move command dispatches every 12 updates (stop retries sooner).
-// Default geometry uses the shared integer native movement/corner resolver;
-// subpixel integration, active traversal and status interactions remain open.
+// Default geometry retains float32 coordinates and uses the native 25ms
+// endpoint forecast. Active traversal and status interactions remain open.
 // NPCs use ordinary syrup (HP field 0, 00607A23), not four-layer player HP.
 // They remain outside the eight participant slots and match conclusions.
 
@@ -26,6 +26,8 @@ type boxNPCActor struct {
 	id                              uint16
 	role                            uint16
 	pos                             battleengine.Position
+	motion                          battleengine.NativeNPCPosition
+	motionKnown                     bool
 	facing                          byte
 	moving                          bool
 	dead                            bool
@@ -48,11 +50,13 @@ type boxNPCActor struct {
 	lastMoveSent                    uint32
 	lastMovePos                     battleengine.Position
 	lastMoveEnd                     battleengine.Position
+	lastMoveCorner                  battleengine.Position
 	lastMoveFacing                  byte
 	lastMoveMoving                  bool
 	moveInitialized                 bool
 	moveEnd                         battleengine.Position
 	moveEndValid                    bool
+	moveCorner                      battleengine.Position
 	netMove                         game.PlayerMoveSequence
 	netMoveSet                      bool
 }
@@ -316,7 +320,7 @@ func (match *onlineMatch) publishNPCMove(outbox *[]boxNPCOutbound, n *boxNPCActo
 	} else if !n.moveEndValid && len(n.path) > 0 {
 		end = battleengine.PositionAtCellCenter(n.path[0])
 	}
-	if !force && n.moveInitialized && now-n.lastMoveSent < movementHeartbeat && n.moving == n.lastMoveMoving && n.facing == n.lastMoveFacing && end == n.lastMoveEnd {
+	if !force && n.moveInitialized && now-n.lastMoveSent < movementHeartbeat && n.moving == n.lastMoveMoving && n.facing == n.lastMoveFacing && end == n.lastMoveEnd && n.moveCorner == n.lastMoveCorner {
 		return
 	}
 	walk := n.facing
@@ -325,6 +329,9 @@ func (match *onlineMatch) publishNPCMove(outbox *[]boxNPCOutbound, n *boxNPCActo
 	}
 	n.sequence++
 	move := game.PlayerMoveSequence{Sequence: n.sequence, TimeStamp: now, CurrentPosX: uint16(n.pos.X), CurrentPosY: uint16(n.pos.Y), EndPosX: uint16(end.X), EndPosY: uint16(end.Y), WalkAndDirection: walk, Speed: n.speed}
+	if n.moving {
+		move.CornerPosX, move.CornerPosY = uint16(n.moveCorner.X), uint16(n.moveCorner.Y)
+	}
 	body, err := (game.PlayerMove{PlayerID: n.id, Entries: []game.PlayerMoveEntry{{PlayerID: n.id, Move: move}}}).MarshalNetworkBinary()
 	if err == nil {
 		match.queueNPC(outbox, n.id, game.PlayerMoveSchema, now, body)
@@ -332,6 +339,7 @@ func (match *onlineMatch) publishNPCMove(outbox *[]boxNPCOutbound, n *boxNPCActo
 	n.lastMoveSent = now
 	n.lastMovePos = n.pos
 	n.lastMoveEnd = end
+	n.lastMoveCorner = n.moveCorner
 	n.lastMoveFacing = n.facing
 	n.lastMoveMoving = n.moving
 	n.moveInitialized = true
@@ -373,28 +381,54 @@ func (match *onlineMatch) interpolateBoxNPC(n *boxNPCActor, now uint32) {
 		return
 	}
 	m := n.netMove
-	pos := battleengine.Position{X: int32(m.CurrentPosX), Y: int32(m.CurrentPosY)}
-	end := battleengine.Position{X: int32(m.EndPosX), Y: int32(m.EndPosY)}
-	speed := uint16(bossPixelsPerSecond(m.Speed))
-	travel := int32(uint64(now-m.TimeStamp) * uint64(speed) / 1000)
+	pos := battleengine.NativeNPCPosition{X: float32(m.CurrentPosX), Y: float32(m.CurrentPosY)}
+	end := battleengine.NativeNPCPosition{X: float32(m.EndPosX), Y: float32(m.EndPosY)}
+	speed := float32(bossSpeedTable[min(int(m.Speed), len(bossSpeedTable)-1)])
+	travel := float32(float32(float32(now-m.TimeStamp)*speed) * float32(.04))
 	if m.WalkAndDirection&0x10 != 0 {
-		if pos.X != end.X {
-			d := min(travel, abs32(end.X-pos.X))
-			if pos.X < end.X {
-				pos.X += d
-			} else {
-				pos.X -= d
+		// Forecast corner is where perpendicular correction starts. Follow the
+		// initial primary leg, then correction, then the final primary leg.
+		advance := func(target battleengine.NativeNPCPosition) {
+			dx, dy := target.X-pos.X, target.Y-pos.Y
+			remaining := dx
+			if remaining < 0 {
+				remaining = -remaining
 			}
-		} else {
-			d := min(travel, abs32(end.Y-pos.Y))
-			if pos.Y < end.Y {
-				pos.Y += d
-			} else {
-				pos.Y -= d
+			vertical := dx == 0
+			if vertical {
+				remaining = dy
+				if remaining < 0 {
+					remaining = -remaining
+				}
 			}
+			used := min(travel, remaining)
+			if vertical {
+				if dy < 0 {
+					pos.Y -= used
+				} else {
+					pos.Y += used
+				}
+			} else {
+				if dx < 0 {
+					pos.X -= used
+				} else {
+					pos.X += used
+				}
+			}
+			travel -= used
 		}
+		if m.CornerPosX != 0 || m.CornerPosY != 0 {
+			advance(battleengine.NativeNPCPosition{X: float32(m.CornerPosX), Y: float32(m.CornerPosY)})
+		}
+		if m.WalkAndDirection&1 == 0 {
+			advance(battleengine.NativeNPCPosition{X: pos.X, Y: end.Y})
+		} else {
+			advance(battleengine.NativeNPCPosition{X: end.X, Y: pos.Y})
+		}
+		advance(end)
 	}
-	n.pos = pos
+	n.motion, n.motionKnown = pos, true
+	n.pos = pos.Pixels()
 	n.moving = m.WalkAndDirection&0x10 != 0
 	n.facing = m.WalkAndDirection & 3
 	n.lastTick = now
@@ -517,91 +551,40 @@ func (match *onlineMatch) advanceBoxNPC(n *boxNPCActor, now uint32) {
 	n.lastTick = now
 }
 
-// moveBoxNPC uses the shared native integer displacement/corner resolver.
-// NPC rate conversion still rounds to px/s; subpixel integration, active
-// traversal and transformation capabilities remain separate work.
+// nativePosition keeps subpixels across integer view/wire updates, while
+// accepting an explicit scene position change (spawn, trap or takeover).
+func (n *boxNPCActor) nativePosition() battleengine.NativeNPCPosition {
+	if !n.motionKnown || n.motion.Pixels() != n.pos {
+		n.motion = battleengine.NativeNPCPosition{X: float32(n.pos.X), Y: float32(n.pos.Y)}
+		n.motionKnown = true
+	}
+	return n.motion
+}
+
+// moveBoxNPC runs the original default float resolver and 25ms forecast.
 func (match *onlineMatch) moveBoxNPC(n *boxNPCActor, dt uint32) {
-	n.moveEndValid = true
-	n.moveEnd = n.pos
+	n.moveEndValid, n.moveEnd = true, n.pos
+	n.moveCorner = battleengine.Position{}
 	n.moving = false
 	if !n.navigator.walking {
-		n.moveBlocked = true // 005CF8D9 returns zero for a standing actor
+		n.moveBlocked = true
 		return
 	}
 	n.facing = n.navigator.direction
-	n.fraction += uint32(bossPixelsPerSecond(n.speed)) * dt
-	travel := int(n.fraction / 1000)
-	n.fraction %= 1000
-	start := n.pos
-	observed := start
-	if travel > 0 {
-		position, err := match.engine.MoveRuleNPC(n.id, n.pos, battleDirection(n.facing), travel)
-		if err != nil {
-			match.logf("NPC movement: %v", err)
-			return
-		}
-		n.pos = position
-		n.moveBlocked = n.pos == start
-		observed = n.pos
-	} else {
-		// A subpixel remainder has not produced an integer displacement yet.
-		// Probe the next pixel so its wire endpoint cannot point outside the
-		// field when the held command is already blocked.
-		projected, err := match.engine.MoveRuleNPC(n.id, n.pos, battleDirection(n.facing), 1)
-		if err == nil {
-			observed = projected
-			n.moveBlocked = projected == start
-		}
-	}
-	// 005F3D0A publishes the commanded walk state even when movement fails.
+	before := n.nativePosition()
+	speed := float32(bossSpeedTable[min(int(n.speed), len(bossSpeedTable)-1)])
+	n.motion = match.engine.MoveRuleNPCFloat(n.id, before, battleDirection(n.facing), speed, dt)
+	n.pos = n.motion.Pixels()
+	n.moveBlocked = n.motion == before
+	// 005F3D0A sends the commanded walk state even when displacement fails.
 	n.moving = true
-	if n.moveBlocked {
-		n.moveEnd = n.pos
-		return
-	}
-	physical := n.facing
-	if observed != start {
-		if observed.X != start.X {
-			physical = 0
-			if observed.X < start.X {
-				physical = 2
-			}
-		} else {
-			physical = 3
-			if observed.Y < start.Y {
-				physical = 1
-			}
-		}
-	}
-	n.moveEnd = npcNextSegmentEnd(n.pos, physical)
-	// A perpendicular correction that reaches the centre ends there. The
-	// next update retries the commanded direction and publishes its new end.
-	if physical != n.facing && (physical%2 == 0 && n.pos.X%40 == 20 || physical%2 == 1 && n.pos.Y%40 == 20) {
-		n.moveEnd = n.pos
+	projection := match.engine.ProjectRuleNPCMovement(n.id, n.motion, battleDirection(n.facing), speed)
+	n.moveEnd = projection.End
+	if projection.HasCorner {
+		n.moveCorner = projection.Corner
 	}
 }
 
-func npcNextSegmentEnd(position battleengine.Position, direction byte) battleengine.Position {
-	end := position
-	if direction == 0 || direction == 2 {
-		end.X = position.X/40*40 + 20
-		if direction == 0 && end.X <= position.X {
-			end.X += 40
-		}
-		if direction == 2 && end.X >= position.X {
-			end.X -= 40
-		}
-	} else {
-		end.Y = position.Y/40*40 + 20
-		if direction == 3 && end.Y <= position.Y {
-			end.Y += 40
-		}
-		if direction == 1 && end.Y >= position.Y {
-			end.Y -= 40
-		}
-	}
-	return end
-}
 func (match *onlineMatch) trapBoxNPC(n *boxNPCActor, now uint32) {
 	n.trapped = true
 	n.trappedAt = now
