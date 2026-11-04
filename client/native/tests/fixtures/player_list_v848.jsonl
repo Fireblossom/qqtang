@@ -1,0 +1,12 @@
+{"kind": "default_panel", "seat": 0, "points": 0, "ok": 1, "background": 0, "card": 0, "bound": 0, "events": [["portrait_position", 677, 134], ["portrait_facing", 3], ["update_portrait", 20], ["draw_portrait"]], "texts": [[765, 116, "\u7cd6\u4e94", 4278190080, 12], [764, 115, "\u7cd6\u4e94", 4291293948, 12], [741, 136, "QQ\u5802\u5e73\u6c11", 4278190080, 12], [740, 135, "QQ\u5802\u5e73\u6c11", 4291293948, 12]], "draws": []}
+{"kind": "default_panel", "seat": 3, "points": 10000, "ok": 1, "background": 0, "card": 0, "bound": 0, "events": [["portrait_position", 677, 287], ["portrait_facing", 3], ["update_portrait", 20], ["draw_portrait"]], "texts": [[765, 269, "\u7cd6\u4e94", 4278190080, 12], [764, 268, "\u7cd6\u4e94", 4291293948, 12], [729, 289, "\u7cd6\u679c\u7231\u597d\u8005", 4278190080, 12], [728, 288, "\u7cd6\u679c\u7231\u597d\u8005", 4291293948, 12]], "draws": []}
+{"kind": "default_panel", "seat": 7, "points": 150000, "ok": 1, "background": 0, "card": 0, "bound": 0, "events": [["portrait_position", 677, 491], ["portrait_facing", 3], ["update_portrait", 20], ["draw_portrait"]], "texts": [[765, 473, "\u7cd6\u4e94", 4278190080, 12], [764, 472, "\u7cd6\u4e94", 4291293948, 12], [729, 493, "\u751c\u5473\u6280\u672f\u5458", 4278190080, 12], [728, 492, "\u751c\u5473\u6280\u672f\u5458", 4291293948, 12]], "draws": []}
+{"kind": "filename", "resource_id": "0x1e000201", "path": "object\\Namecard\\Namecard2_stand.img", "exists": true}
+{"kind": "filename", "resource_id": "0x1e000202", "path": "object\\Namecard\\Namecard2_trigger.img", "exists": false}
+{"kind": "filename", "resource_id": "0x1e000204", "path": "object\\Namecard\\Namecard2_walk.img", "exists": true}
+{"kind": "filename", "resource_id": "0x1f000101", "path": "object\\NamecardBound\\NamecardBound1_stand.img", "exists": false}
+{"kind": "filename", "resource_id": "0x1f000102", "path": "object\\NamecardBound\\NamecardBound1_trigger.img", "exists": false}
+{"kind": "filename", "resource_id": "0x1f000104", "path": "object\\NamecardBound\\NamecardBound1_walk.img", "exists": false}
+{"kind": "base_panel", "canvas": [191, 600], "frame_offset": [7, 0], "samples": [[0, 0, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0]]}
+{"kind": "default_widget_background", "argb": 0}
+{"kind": "gfx_clear", "args": [[0, 0, 1, 0, 1065353216, 0]]}
