@@ -166,7 +166,7 @@ else: it.value += v
 
 公共工具 [证实]：
 
-- `pathValid()` `0x005BB7F6`：战斗中要求 `+0x8e4` 目标非空且**目标当前格 == 目标格 `+0x8ec/+0x8ed`**，否则无效；然后检查路径上每格：有泡（日志 "Have XXX bombs at row %d col %d"）或地图元素在该方向挡路（`elem.vtbl+0x2c(row,col,dir)`）→ 无效；最后 `trimToCurrent()`。
+- `pathValid()` `0x005BB7F6`：战斗中要求 `+0x8e4` 目标非空且**目标当前格 == 目标格 `+0x8ec/+0x8ed`**，否则无效；然后检查路径上每格：有泡或地图元素 `elem.vtbl+0x2c(row,col,dir)` 返回非零→无效。实际基础元素非零表示可通，这个条件与新建寻路相反；终点方向9返回零。最后 `trimToCurrent()`。真实谓词及正式适配补证见 `pve-route-elements-re.md`。
 - `trimToCurrent()` `0x005BB9F1`：在路径里找当前格，删除它之前的元素，找不到返回 0。
 - `centered()` `0x005BB932`：路径非空，且 `x ∈ [cx+10, cx+30]`、`y ∈ [cy+10, cy+30]`（cx,cy 为当前格左上角）。
 - `findPath(from, goal)`：`clearPath(); pf.setPolygon(N+0x91c); ok = pf.find(from, goal, &path)`；失败则清路径、目标格设为 (0xFF,0xFF)。

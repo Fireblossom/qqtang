@@ -15,6 +15,7 @@
 - [x] 房间角色属性DYSTRIP已接入共用三段填充，50条原版构造/布局记录、201项Python测试及实际角色悬停验收通过（`docs/ui-strip-re.md`）。
 - [x] 背景状态帧顺序、逐控件秒时钟、首帧循环等待、默认方案和资源帧溢出已按原版执行修正，293条记录/13,824帧及202项Python测试通过；正常建房与角色按钮悬停/离开实测见 `docs/ui-animation-re.md`。
 - [x] 探险路线新建已替换为原版A*，包含同代价取舍、open目标提前终止、方向通行、脚下泡和500次展开边界；106条完整搜索基准及相关Go全套通过（`docs/pve-astar-re.md`）。
+- [x] 探险旧路线复用适配真实基础地图元素方向位，保留原版与寻路相反的判定及末节点方向9行为；197条原版记录经正式入口回放通过（`docs/pve-route-elements-re.md`）。
 - [x] 测试机器人 `--autoplay`：两个客户端无人操作也能互相对打，用于联调各种玩法
 
 ## 登录、选区、大厅
@@ -101,7 +102,7 @@
   - [x] 九张真实地图构建与隐藏物品保留测试通过；1404保留原始重复出生槽位和抽样权重。
   - [x] 1401/1404双autoplay真实联网局双方同判2队胜，分别在90220/37120ms，服务端零warn/error。1401还验证NPC生成、糖浆6秒死亡和补生；该旧局主动放泡属于宿主偏差。
   - [x] 推/停双端、碰撞阈值、箱内道具随动、发射器奇偶侧挡、再生UID/1500ms保护、49/Scene1含义、RPC/UDP NPC去重/接管均有专项测试。
-  - [~] NPC速度表、WF逃生/避险与候选权重（`docs/box-ai-re.md`）、路径栈追加/消费和两层门控（`docs/npc-follow-re.md`）、默认碰撞/滑角与持续火焰命中均已接入。8668条原版记录、相关Go全套、Python202项及Windows/386交叉编译通过；1401/1404两端实测覆盖角色25/26/27、6秒困泡死亡/补生及自然胜负，服务端零告警；末击与最终死亡通知乱序/重复亦已补幂等回归（`docs/npc-navigation-re.md`）。规则8不派发普通放泡，旧500ms自动放泡已撤下（`docs/npc-rule-dispatch-re.md`）。默认float32位移及完整Corner/End预测已接入（`docs/npc-motion-re.md`）；默认接收端已按原版玩家表、逐帧拐角/终点及float32累加修正（`docs/npc-remote-path-re.md`），接收队列与快慢回正也已对照（`docs/npc-remote-queue-re.md`），共享发送历史/序列及无固定心跳也已对照（`docs/npc-publish-re.md`），完整Win32实局仍待核对；默认冰箱速度覆盖及同步已接入（`docs/npc-ice-re.md`），默认freeze空槽、命令恢复和阴影已接入（`docs/npc-picture-re.md`）；变身/主动道具等能力仍待完成。
+  - [~] NPC速度表、WF逃生/避险与候选权重（`docs/box-ai-re.md`）、路径栈追加/消费和两层门控（`docs/npc-follow-re.md`）、默认碰撞/滑角与持续火焰命中均已接入。8865条原版记录、相关Go全套、Python202项及Windows/386交叉编译通过；1401/1404两端实测覆盖角色25/26/27、6秒困泡死亡/补生及自然胜负，服务端零告警；末击与最终死亡通知乱序/重复亦已补幂等回归（`docs/npc-navigation-re.md`）。规则8不派发普通放泡，旧500ms自动放泡已撤下（`docs/npc-rule-dispatch-re.md`）。默认float32位移及完整Corner/End预测已接入（`docs/npc-motion-re.md`）；默认接收端已按原版玩家表、逐帧拐角/终点及float32累加修正（`docs/npc-remote-path-re.md`），接收队列与快慢回正也已对照（`docs/npc-remote-queue-re.md`），共享发送历史/序列及无固定心跳也已对照（`docs/npc-publish-re.md`），完整Win32实局仍待核对；默认冰箱速度覆盖及同步已接入（`docs/npc-ice-re.md`），默认freeze空槽、命令恢复和阴影已接入（`docs/npc-picture-re.md`）；变身/主动道具等能力仍待完成。
   - [ ] 未做历史录像逐帧画面对照；当前资源无flame10000/10001图片，未补造这两张特效。
 - [~] Boss 叠加层（18 张图，含地图 11、124）：AIType 3 控制器、出生/受伤/掉落/死亡、接触击杀、技能 1 减速胶已接入（`docs/boss-lifecycle-re.md`、`docs/boss-ai-re.md`）。
   - [x] AIType3未变身Boss持续保留方向，已接入默认float32物理与完整Corner/End预测；349条原版记录、5568帧对照通过。变身和特殊控制器仍待核对；探险默认仲裁物理已在后续接入（`docs/boss-motion-re.md`、`docs/pve-motion-re.md`）。

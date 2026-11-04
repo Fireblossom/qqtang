@@ -799,7 +799,15 @@ func (match *onlineMatch) adventureReuseRoute(n *advNPC) (byte, bool) {
 	}
 	return n.route.reuse(n.nativePosition(), targetMatches, func(cell battleengine.Cell) bool { return bombs[cell] }, func(node pveRouteNode) bool {
 		tile, ok := match.engine.TileAt(node.cell)
-		return !ok || tile.Kind != battleengine.CellOpen || tile.MapElementOccupied
+		if !ok {
+			return true
+		}
+		if !tile.MapElementOccupied && tile.Kind == battleengine.CellOpen {
+			return false
+		}
+		// 005BB7F6 rejects a nonzero passage result, unlike 005F0FC1.
+		// CMapElement 005EF1AA returns zero for terminal direction9.
+		return node.direction < 4 && tile.PlayerPassable(battleDirection(node.direction))
 	})
 }
 
