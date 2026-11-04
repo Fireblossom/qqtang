@@ -970,7 +970,19 @@ func (match *onlineMatch) applyRemote(sender uint16, message game.BattleMessageD
 		if err != nil || (death.PlayerID != sender && sender != match.arbitrator) {
 			return nil
 		}
-		events, err := match.runtime.AcceptNativeElimination(death.PlayerID, 0, pickupsFromItems(death.Items))
+		// Rule 8's last 0x1162 can already commit elimination before its
+		// final 0x0FA7 arrives through another stream. Still run the final
+		// scene callback, but do not replay the transition or reject it.
+		alreadyApplied := false
+		if match.box != nil {
+			if actor, found := actorByID(match.engine.Actors(), death.PlayerID); found {
+				alreadyApplied = actor.State == battleengine.ActorEliminated
+			}
+		}
+		var events []battleengine.Event
+		if !alreadyApplied {
+			events, err = match.runtime.AcceptNativeElimination(death.PlayerID, 0, pickupsFromItems(death.Items))
+		}
 		if err != nil {
 			match.logf("death of %d rejected: %v", death.PlayerID, err)
 		}
