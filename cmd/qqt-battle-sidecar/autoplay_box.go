@@ -28,7 +28,7 @@ func (bot *autoplayBot) actBox(engine *battleengine.Engine, world autoplayWorld,
 	}
 	// Use the two rule-granted bubbles when they can safely open the field.
 	held := false
-	for _, slot := range actor.HeldActions {
+	for _, slot := range actor.HeldActionInventory() {
 		held = held || slot.ActionID == 49 && slot.Count > 0
 	}
 	if held && world.worthBombing(here, actor) && onCentre(actor.Position) {

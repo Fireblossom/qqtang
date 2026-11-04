@@ -46,6 +46,7 @@ func (engine *Engine) RespawnActor(playerID uint16, cell Cell) (Event, error) {
 		OxygenValue: NativeOxygenValueInitial, PublicBehavior: actor.PublicBehavior,
 		HarmProtectionExpiresAt: saturatingAdd(engine.elapsedMS, NativePostTransformationProtectionMS),
 		nativePreviousPosition:  actor.Position,
+		nativeActionInventory:   actor.nativeActionInventory, nativeHeldGeneration: actor.nativeHeldGeneration,
 	}
 	return Event{Kind: EventActorRespawned, TimeMS: engine.elapsedMS, PlayerID: playerID, Cell: cell, Position: position, TeamID: actor.TeamID,
 		EffectExpiresAt: actor.HarmProtectionExpiresAt}, nil

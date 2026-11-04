@@ -1,7 +1,7 @@
 package battleengine
 
-// HeldActionGrantAmount is the public inventory consequence of a native grant.
-// Observation and mutation share it, including saturation and seven-slot limits.
+// HeldActionGrantAmount is the bounded policy inventory consequence of a grant.
+// The default mode shares its byte saturation and seven-slot limits.
 func HeldActionGrantAmount(slots [NativeBattleActionSlots]HeldActionSlot, actionID, count uint8) uint8 {
 	_, gain := heldActionGrantSlot(slots, actionID, count)
 	return gain
@@ -34,6 +34,14 @@ func actorHeldActionCount(actor *Actor, actionID uint8) uint8 {
 	if actor == nil || actionID == 0 {
 		return 0
 	}
+	if actor.nativeActionInventory {
+		for _, stack := range actor.nativeHeldActions {
+			if stack.ActionID == actionID {
+				return uint8(min(stack.Count, 255))
+			}
+		}
+		return 0
+	}
 	for _, slot := range actor.HeldActions {
 		if slot.ActionID == actionID {
 			return slot.Count
@@ -42,12 +50,24 @@ func actorHeldActionCount(actor *Actor, actionID uint8) uint8 {
 	return 0
 }
 
-// grantHeldAction mirrors the native seven-slot inventory: an existing action
-// stacks in place, otherwise the first empty slot is used. A full inventory
-// rejects the grant while the scene pickup itself may still be consumed.
+// Native mode appends new stacks and retains items beyond the visible page.
+// The default bounded mode preserves the seven-slot policy contract.
 func grantHeldAction(actor *Actor, actionID, count uint8) bool {
 	if actor == nil || actionID == 0 || count == 0 {
 		return false
+	}
+	if actor.nativeActionInventory {
+		for i := range actor.nativeHeldActions {
+			if actor.nativeHeldActions[i].ActionID == actionID {
+				actor.nativeHeldActions[i].Count += uint32(count)
+				actor.projectHeldActions()
+				return true
+			}
+		}
+		actor.nativeHeldGeneration++
+		actor.nativeHeldActions = append(actor.nativeHeldActions, HeldActionStack{actionID, uint32(count), actor.nativeHeldGeneration})
+		actor.projectHeldActions()
+		return true
 	}
 	index, gain := heldActionGrantSlot(actor.HeldActions, actionID, count)
 	if index < 0 {
@@ -60,6 +80,21 @@ func grantHeldAction(actor *Actor, actionID, count uint8) bool {
 
 func consumeHeldAction(actor *Actor, actionID uint8) bool {
 	if actor == nil || actionID == 0 {
+		return false
+	}
+	if actor.nativeActionInventory {
+		for i := range actor.nativeHeldActions {
+			stack := &actor.nativeHeldActions[i]
+			if stack.ActionID != actionID || stack.Count == 0 {
+				continue
+			}
+			stack.Count--
+			if stack.Count == 0 {
+				actor.nativeHeldActions = append(actor.nativeHeldActions[:i], actor.nativeHeldActions[i+1:]...)
+			}
+			actor.projectHeldActions()
+			return true
+		}
 		return false
 	}
 	for index := range actor.HeldActions {
@@ -81,6 +116,16 @@ func removeHeldAction(actor *Actor, actionID uint8) {
 	if actor == nil || actionID == 0 {
 		return
 	}
+	if actor.nativeActionInventory {
+		for i, stack := range actor.nativeHeldActions {
+			if stack.ActionID == actionID {
+				actor.nativeHeldActions = append(actor.nativeHeldActions[:i], actor.nativeHeldActions[i+1:]...)
+				actor.projectHeldActions()
+				return
+			}
+		}
+		return
+	}
 	for actorHeldActionCount(actor, actionID) != 0 {
 		for index := range actor.HeldActions {
 			if actor.HeldActions[index].ActionID != actionID {
@@ -93,8 +138,33 @@ func removeHeldAction(actor *Actor, actionID uint8) {
 	}
 }
 
+// HeldActionInventory returns a detached, ordered list. The seven-slot
+// observation remains a bounded projection for existing policies and models.
+func (actor Actor) HeldActionInventory() []HeldActionStack {
+	if actor.nativeActionInventory {
+		return append([]HeldActionStack(nil), actor.nativeHeldActions...)
+	}
+	var stacks []HeldActionStack
+	for _, slot := range actor.HeldActions {
+		if slot.ActionID != 0 && slot.Count != 0 {
+			stacks = append(stacks, HeldActionStack{ActionID: slot.ActionID, Count: uint32(slot.Count)})
+		}
+	}
+	return stacks
+}
+
+func (actor *Actor) projectHeldActions() {
+	actor.HeldActions = [NativeBattleActionSlots]HeldActionSlot{}
+	for i, stack := range actor.nativeHeldActions {
+		if i == NativeBattleActionSlots {
+			break
+		}
+		actor.HeldActions[i] = HeldActionSlot{ActionID: stack.ActionID, Count: uint8(min(stack.Count, 255))}
+	}
+}
+
 // GrantHeldAction adds count of a rule-granted action (such as rule 6's
-// put-down item 66, 0x0087EC6D) to an actor's seven slots, as a pickup would.
+// put-down item 66, 0x0087EC6D) to an actor's inventory, as a pickup would.
 // It reports whether the inventory had room.
 func (engine *Engine) GrantHeldAction(playerID uint16, actionID, count uint8) bool {
 	index := engine.actorIndex(playerID)

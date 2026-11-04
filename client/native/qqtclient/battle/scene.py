@@ -382,6 +382,7 @@ class BattleScene:
         self.emotion_pressed = 0
         self.practice_emotion: dict[str, int] | None = None
         self.shown_slots: list[tuple[int, int]] | None = None
+        self.item_page = 0
         self.shown_masks: dict[int, tuple[float, float]] = {}
         self.machine_projectiles: dict[tuple[int, int, bool], MachineProjectile] = {}
         self.accumulated_ms = 0.0
@@ -475,6 +476,13 @@ class BattleScene:
                     self.emotion_pressed = EMOTION_KEYS[event.key]
                     if not self.realtime and self.clock >= 2000 and (self.practice_emotion is None or self.clock - self.practice_emotion["since"] >= 2000):
                         self.practice_emotion = {"player": self.local_id, "id": self.emotion_pressed, "since": self.clock}
+            elif event.key == pygame.K_TAB:
+                chat_open = self.runtime is not None and self.runtime.namespace["Win_IsVisible"]("UI.game.chat")
+                if not chat_open and not self.over:
+                    # Native 0061021C requests a seven-slot page. Its getter
+                    # omits the offset; apply the intended page consistently.
+                    self.item_page = getattr(self, "item_page", 0) + 1
+                    self._slots()
             elif event.key in KEY_MOVES:
                 move = KEY_MOVES[event.key]
                 if move in self.held:
@@ -502,16 +510,18 @@ class BattleScene:
             self.use_pressed = value
 
     def _slots(self) -> list[tuple[int, int]]:
-        """The local player's seven item slots as (action or item, count).
-        Room props keep the first slots in GAME_BEGIN order (an empty slot
-        once used up) and the held-item slots follow them; the native
-        arrangement is inferred: the merged-slot rebuild still needs tracing
-        through protected code. Cooldown fields are independently verified."""
-        prepared = [(entry["item"], entry["count"]) if entry["count"] > 0 else (0, 0)
-                    for entry in self.state.get("prepared") or ()][:7]
-        actor = self._local_actor()
-        held = [(action, count) if count else (0, 0) for action, count in (actor.get("held") or ())] if actor else []
-        return (prepared + held + [(0, 0)] * 7)[:7]
+        """The current seven-slot viewport of the native ordered inventory."""
+        inventory = self.state.get("slots")
+        if inventory is None:
+            # Offline practice has no prepared room props.
+            actor = self._local_actor()
+            inventory = [(action, count) if count else (0, 0) for action, count in (actor.get("held") or ())] if actor else []
+            inventory = [(entry["item"], entry["count"]) for entry in self.state.get("prepared") or () if entry["count"] > 0] + inventory
+        pages = max(1, (len(inventory) + 6) // 7)
+        self.item_page = getattr(self, "item_page", 0) % pages
+        start = self.item_page * 7
+        selected = inventory[start:start + 7]
+        return [tuple(entry) for entry in selected] + [(0, 0)] * (7 - len(selected))
 
     def _smart_use(self) -> int:
         """Ctrl: the first item of slots 0..5 that can be used now. The

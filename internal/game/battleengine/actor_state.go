@@ -456,6 +456,7 @@ func (engine *Engine) eliminateActorWithDrops(actorIndex int, killerID uint16, v
 	for index := range actor.HeldActions {
 		actor.HeldActions[index] = HeldActionSlot{}
 	}
+	actor.nativeHeldActions = nil
 	actor.nativeBasicPickupDelta = [3]int16{}
 	actor.CarriedObjectives = [MaxObjectiveKinds]uint16{}
 	events := engine.installDeathDrops(actor.PlayerID, drops)

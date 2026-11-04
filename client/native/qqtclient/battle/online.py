@@ -59,11 +59,13 @@ class OnlineBattle:
         if server is None:
             raise SidecarError("section server is unknown")
         self.local_id = session.profile.player_id
+        get_bar = runtime.namespace.get("GetEquipedProp")
+        prepared_order = [entry.m_stItem.m_nItemID for entry in get_bar()] if get_bar else None
         sidecar = Sidecar()
         try:
             state = sidecar.start_online(resources.root, begin, self.local_id, session.uin, server.ip, server.udp_port,
                                          {player_id: member.uin for player_id, member in context.members.items()}, context.free_rule,
-                                         session.autoplay)
+                                         session.autoplay, prepared_order)
         except SidecarError:
             sidecar.close()
             raise

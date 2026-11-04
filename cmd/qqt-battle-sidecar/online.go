@@ -71,6 +71,7 @@ const (
 )
 
 type onlineInit struct {
+	PreparedOrder []uint32          `json:"prepared_order"`
 	Begin         string            `json:"begin"` // hex GameBegin 0x0089 payload
 	LocalID       uint16            `json:"local_id"`
 	LocalUIN      uint32            `json:"local_uin"`
@@ -170,7 +171,8 @@ type onlineMatch struct {
 	itemUses map[[3]uint32]bool
 	// The local player's room props (GAME_BEGIN NewItems) and the uses
 	// requested over TCP (0x1174) but not yet confirmed (0x1175).
-	prepared []preparedView
+	prepared  []preparedView
+	slotOrder []slotIdentity
 	// Room props' scene effects (fireworks' GridsAnim), from errorPPP.ini.
 	propTable         map[uint32]mapdata.AdventureProp
 	propEffects       []propEffectView
@@ -480,9 +482,11 @@ func newOnlineMatch(init command) (*onlineMatch, beginView, error) {
 	}
 	for _, entry := range view.Players {
 		if entry.ID == match.local {
-			match.prepared = append([]preparedView(nil), entry.Prepared...)
+			match.prepared = selectPreparedOrder(entry.Prepared, options.PreparedOrder)
 		}
 	}
+	match.filterPreparedDefinitions()
+	match.initSlotOrder()
 	go match.receive()
 	// Register before returning init: the Python host loads the scene before
 	// its first step, which can otherwise postpone presence past Ready/Go.
@@ -495,10 +499,14 @@ func newOnlineMatch(init command) (*onlineMatch, beginView, error) {
 // players' hits, which they report themselves. Any other client's engine
 // only follows the arbitrator and asks on behalf of its own player.
 func onlineRules(local, arbitrator uint16) battleengine.Rules {
+	rules := battleengine.Rules{TickMS: tickMS, AllowAuthorityTransfer: true, NativeActionInventory: true}
 	if local == arbitrator {
-		return battleengine.Rules{TickMS: tickMS, LocalHitPlayerID: local, AllowAuthorityTransfer: true}
+		rules.LocalHitPlayerID = local
+	} else {
+		rules.NativeOutcomeAuthority = true
+		rules.NativeRequestPlayerID = local
 	}
-	return battleengine.Rules{TickMS: tickMS, NativeOutcomeAuthority: true, NativeRequestPlayerID: local, AllowAuthorityTransfer: true}
+	return rules
 }
 
 // ruleOptions adds the selected rule's default-off engine extensions to the
@@ -1604,7 +1612,7 @@ func (match *onlineMatch) requestItemUse(action uint8) {
 		return
 	}
 	held := false
-	for _, slot := range actor.HeldActions {
+	for _, slot := range actor.HeldActionInventory() {
 		held = held || (slot.ActionID == action && slot.Count > 0)
 	}
 	now := match.engine.ElapsedMS()

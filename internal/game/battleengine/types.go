@@ -336,6 +336,9 @@ type Rules struct {
 	NativeBoxPhysics bool
 	// NativeMachineSupply enables rule-7's immediate 0x115A floor pickups.
 	NativeMachineSupply bool
+	// NativeActionInventory retains the original ordered inventory beyond
+	// the seven visible slots. Offline training keeps its fixed projection.
+	NativeActionInventory bool
 	// NativeAdventure is native rule 12 (探险): one cooperative team, flames
 	// never trap players (the caller turns bubble and contact damage into HP,
 	// docs/adventure-combat-re.md), every scene item is a rule pickup, and
@@ -670,12 +673,20 @@ const (
 	MovementStatusFast
 )
 
-// HeldActionSlot mirrors one of the seven native in-match action slots. Empty
+// HeldActionSlot is one of the seven projected action slots. Empty
 // slots have ActionID and Count equal to zero. The fixed-width value enters
 // Clone and Observation without maps, pointers or allocation-dependent order.
 type HeldActionSlot struct {
 	ActionID uint8
 	Count    uint8
+}
+
+// HeldActionStack is one entry of the native action vector (005C9A18).
+// Generation changes when a consumed stack is later acquired again.
+type HeldActionStack struct {
+	ActionID   uint8
+	Count      uint32
+	Generation uint32
 }
 
 // PublicBehaviorKind identifies one visible action category accumulated over
@@ -740,6 +751,9 @@ type Actor struct {
 	MovementStatus             MovementStatusKind
 	MovementStatusExpiresAt    uint32
 	HeldActions                [NativeBattleActionSlots]HeldActionSlot
+	nativeActionInventory      bool
+	nativeHeldActions          []HeldActionStack
+	nativeHeldGeneration       uint32
 	// CarriedObjectives counts the Rules.ObjectiveSceneIDs this actor has
 	// collected since its last elimination, by the same index.
 	CarriedObjectives [MaxObjectiveKinds]uint16

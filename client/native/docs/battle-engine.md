@@ -262,3 +262,9 @@ All in `internal/game/battleengine/types.go:13-71` unless noted.
 * `sidecar/main.go`, `sidecar/overlay.json`, `sidecar/qqt-battle-sidecar`, `sidecar/in.jsonl`, `sidecar/out.jsonl`: JSON-lines sidecar prototype and test run.
 * `qbvprobe/main.go`, `qbvprobe/qbvprobe`: QBV decode and replay probe.
 * `flames.png`: contact sheet of the flame sprites.
+
+## Native inventory update, 2026-11-04
+
+The native client now enables the default-off `Rules.NativeActionInventory` extension (and the matching competitive-runtime option). It retains the ordered action vector and 32-bit stack counts beyond the seven visible slots. `Actor.HeldActionInventory()` returns a detached full list; consumption, death drops, clearing, respawn and cloning preserve its semantics. The default policy inventory and fixed seven-slot `Observation.HeldActions` stay bounded, including their byte-count projection.
+
+Local prepared props follow the room bar via `Client.exe 005B974A`, then share chronological append/stack/erase order with world actions. The sidecar exports the full mixed `slots` list; Tab pages it seven entries at a time. The original Tab getters omit the offset, so the host corrects this indexing bug. Native probes, compatibility scope and live verification: [item-slots-re.md](item-slots-re.md).

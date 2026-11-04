@@ -22,12 +22,13 @@ type NativeRuntimeParticipant struct {
 // where ConfirmTrappedDeath consumes the client's authoritative Die callback;
 // an offline environment can set it to an explicitly chosen training value.
 type CompetitiveRuntimeOptions struct {
-	SimulationSeed uint64
-	SpawnSeed      uint32
-	ItemSeed       uint32
-	SpawnMode      NativeSpawnMode
-	TickMS         uint32
-	TrapDurationMS uint32
+	NativeActionInventory bool
+	SimulationSeed        uint64
+	SpawnSeed             uint32
+	ItemSeed              uint32
+	SpawnMode             NativeSpawnMode
+	TickMS                uint32
+	TrapDurationMS        uint32
 	// VirtualTrapDurationMS is used only by server-owned AI actors. It must not
 	// turn into a guessed timeout for connected human clients.
 	VirtualTrapDurationMS uint32
@@ -70,6 +71,7 @@ func NewRuntimeFromCompetitiveMap(entry mapdata.CompetitiveMap, options Competit
 			TrapDurationMS:         options.TrapDurationMS,
 			VirtualTrapDurationMS:  options.VirtualTrapDurationMS,
 			NativeOutcomeAuthority: options.NativeOutcomeAuthority,
+			NativeActionInventory:  options.NativeActionInventory,
 		},
 		Participants:         participants,
 		RecordedWallItems:    append([]mapdata.CompetitiveWallItem(nil), options.RecordedWallItems...),

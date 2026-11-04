@@ -31,7 +31,7 @@ func TestNativePassiveAndHeldPickupsUseDistinctState(t *testing.T) {
 	}
 }
 
-func TestNativeHeldActionInventoryUsesSevenSlots(t *testing.T) {
+func TestDefaultHeldInventoryKeepsSevenSlotPolicyContract(t *testing.T) {
 	actor := Actor{}
 	for actionID := uint8(1); actionID <= NativeBattleActionSlots; actionID++ {
 		if !grantHeldAction(&actor, actionID, 1) {

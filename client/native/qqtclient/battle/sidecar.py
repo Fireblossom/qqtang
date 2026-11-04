@@ -72,13 +72,15 @@ class Sidecar:
         })
 
     def start_online(self, client_root: pathlib.Path, begin: bytes, local_id: int, local_uin: int, server_host: str,
-                     server_udp_port: int, uins: dict[int, int], free_rule: bool, autoplay: bool = False) -> dict[str, Any]:
+                     server_udp_port: int, uins: dict[int, int], free_rule: bool, autoplay: bool = False,
+                     prepared_order: list[int] | None = None) -> dict[str, Any]:
         """begin is the GameBegin (0x0089) payload; the reply's "begin" holds
         the map, arbitrator and roster."""
         return self._call({"cmd": "init", "client_root": str(client_root), "online": {
             "begin": begin.hex(), "local_id": local_id, "local_uin": local_uin, "server_host": server_host,
             "server_udp_port": server_udp_port, "uins": {str(key): value for key, value in uins.items()}, "free_rule": free_rule,
             "autoplay": autoplay,
+            **({"prepared_order": prepared_order} if prepared_order is not None else {}),
         }})
 
     def step(self, actions: list[dict[str, Any]], ticks: int = 1, tcp: list[tuple[int, bytes]] | None = None) -> dict[str, Any]:

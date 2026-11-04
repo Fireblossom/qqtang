@@ -138,6 +138,7 @@ func (engine *Engine) Reset(config Config) error {
 		actors = append(actors, Actor{
 			Participant: participant, Position: position, State: ActorActive, Facing: DirectionDown,
 			OxygenValue: NativeOxygenValueInitial, initial: participant, DurabilityLeft: config.Rules.NativeDurabilityLayers,
+			nativeActionInventory: config.Rules.NativeActionInventory,
 		})
 		teamSeen[participant.TeamID] = struct{}{}
 		participants[index] = participant
@@ -210,6 +211,7 @@ func (engine *Engine) Clone() *Engine {
 	clone.grid = engine.grid.Clone()
 	clone.actors = append([]Actor(nil), engine.actors...)
 	for index := range clone.actors {
+		clone.actors[index].nativeHeldActions = append([]HeldActionStack(nil), engine.actors[index].nativeHeldActions...)
 		if motion := engine.actors[index].nativeHumanMotion; motion != nil {
 			copy := *motion
 			copy.queue = append([]NativeHumanMovement(nil), motion.queue...)
@@ -341,7 +343,11 @@ func (engine *Engine) Actors() []Actor {
 	if engine == nil {
 		return nil
 	}
-	return append([]Actor(nil), engine.actors...)
+	actors := append([]Actor(nil), engine.actors...)
+	for i := range actors {
+		actors[i].nativeHeldActions = append([]HeldActionStack(nil), engine.actors[i].nativeHeldActions...)
+	}
+	return actors
 }
 
 // ClearPublicBehaviorMemories starts a new controller-history boundary without

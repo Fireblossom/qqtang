@@ -121,12 +121,12 @@ func ordinaryDeathDropSceneIDs(actor *Actor) []uint32 {
 			sceneIDs = append(sceneIDs, uint32(index+1))
 		}
 	}
-	for _, slot := range actor.HeldActions {
+	for _, slot := range actor.HeldActionInventory() {
 		sceneID, ok := nativeSceneForBattleAction(slot.ActionID)
 		if !ok {
 			continue
 		}
-		for count := uint8(0); count < slot.Count && len(sceneIDs) < nativeDeathDropMaximum; count++ {
+		for count := uint32(0); count < slot.Count && len(sceneIDs) < nativeDeathDropMaximum; count++ {
 			sceneIDs = append(sceneIDs, sceneID)
 		}
 	}

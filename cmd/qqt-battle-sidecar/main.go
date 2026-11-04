@@ -105,8 +105,8 @@ type actorView struct {
 	TrapExpires uint32 `json:"trap_expires"`
 	Protected   uint32 `json:"protected_until"`
 	Durability  byte   `json:"durability"`
-	// The seven held-item slots as [action ID, count]; empty slots are zero.
-	Held [battleengine.NativeBattleActionSlots][2]uint8 `json:"held"`
+	// Complete native inventory; pad short lists to the original seven slots.
+	Held [][2]uint32 `json:"held"`
 	// Carried rule objectives (treasure gems 150, 151, 152) by kind.
 	Carried [battleengine.MaxObjectiveKinds]uint16 `json:"carried"`
 }
@@ -181,8 +181,9 @@ type stateView struct {
 	// Online mode only.
 	Begin *beginView `json:"begin,omitempty"`
 	Net   *netView   `json:"net,omitempty"`
-	// The local player's room props left, in GAME_BEGIN order.
+	// The local player's room props left, in local room-bar order.
 	Prepared  []preparedView `json:"prepared,omitempty"`
+	Slots     [][2]uint32    `json:"slots,omitempty"`
 	Bun       *bunView       `json:"bun,omitempty"` // rule 3
 	Tank      *tankView      `json:"tank,omitempty"`
 	Sculpture *sculptureView `json:"sculpture,omitempty"` // rule 6
@@ -259,6 +260,7 @@ func runOnline(init command, lines *bufio.Scanner, out *json.Encoder) error {
 	defer match.close()
 	state := view(match.runtime, nil)
 	state.Begin, state.Net, state.Prepared = &begin, match.netView(), match.preparedView()
+	state.Slots = match.mixedSlots()
 	state.Kills, state.Streaks = byPlayer(match.kills), byPlayer(match.streaks)
 	if match.bun != nil {
 		state.Bun = match.bun.view()
@@ -302,6 +304,7 @@ func runOnline(init command, lines *bufio.Scanner, out *json.Encoder) error {
 		}
 		state := view(match.runtime, events)
 		state.Net, state.TCPOut, state.Prepared = match.netView(), match.takeTCP(), match.preparedView()
+		state.Slots = match.mixedSlots()
 		state.Kills, state.Streaks = byPlayer(match.kills), byPlayer(match.streaks)
 		if match.bun != nil {
 			state.Bun = match.bun.view()
@@ -361,7 +364,8 @@ func newRuntime(init command) (*battleengine.Runtime, error) {
 		tick = 20
 	}
 	return battleengine.NewRuntimeFromCompetitiveMap(entry, battleengine.CompetitiveRuntimeOptions{
-		SpawnSeed: init.SpawnSeed, ItemSeed: init.ItemSeed,
+		NativeActionInventory: true,
+		SpawnSeed:             init.SpawnSeed, ItemSeed: init.ItemSeed,
 		SpawnMode: battleengine.NativeSpawnModeForMap(entry, init.FreeRule),
 		TickMS:    tick, TrapDurationMS: init.TrapMS,
 		Participants: participants, Policies: policies,
@@ -455,8 +459,11 @@ func view(runtime *battleengine.Runtime, events []battleengine.Event) stateView 
 			TrapExpires: actor.TrapExpiresAt, Protected: actor.HarmProtectionExpiresAt, Durability: actor.DurabilityLeft,
 			Carried: actor.CarriedObjectives,
 		}
-		for index, slot := range actor.HeldActions {
-			next.Held[index] = [2]uint8{slot.ActionID, slot.Count}
+		for _, slot := range actor.HeldActionInventory() {
+			next.Held = append(next.Held, [2]uint32{uint32(slot.ActionID), slot.Count})
+		}
+		for len(next.Held) < battleengine.NativeBattleActionSlots {
+			next.Held = append(next.Held, [2]uint32{})
 		}
 		state.Actors = append(state.Actors, next)
 	}
