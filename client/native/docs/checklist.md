@@ -12,6 +12,7 @@
 - [x] 动态遮罩与分段条控件：DYMASK 按原版从十二点顺时针擦除、度/秒向目标推进（`docs/ui-dymask-re.md`），Unicorn 顶点核对和离线界面截图通过；`Win_SetStrip*` 和 LIFESTRIP / DYLIFESTRIP 已用于糖客基地血条。带入道具的开局/共享冷却也已接入（`docs/prepared-cooldown-re.md`）。
 - [~] 真窗口流程验证：SDL Cocoa 窗口自动化已走过登录、进区、大厅、宠物面板、商城锻造预览、房间及双客户端211对战，双方退出正常、服务端零警告；音频使用 dummy，未测声音。仍需人工试玩全部流程/模式，不能把窗口自动化称为人工验收。截图及日志在 `/private/tmp/qqt-mall-re/window-smoke/`。
 - [x] 控件声明透明度、最小值、逐更新渐变/OnDisappear与父子ARGB调制已接入，154条原版记录/1152帧及Python200项通过，双端探险与logo启动验收见 `docs/ui-alpha-re.md`。
+- [x] 房间角色属性DYSTRIP已接入共用三段填充，50条原版构造/布局记录、201项Python测试及实际角色悬停验收通过（`docs/ui-strip-re.md`）。
 - [x] 测试机器人 `--autoplay`：两个客户端无人操作也能互相对打，用于联调各种玩法
 
 ## 登录、选区、大厅

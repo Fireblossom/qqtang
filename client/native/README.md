@@ -309,3 +309,5 @@ Go 的游戏、协议和服务端测试可在 macOS 运行；包含本地 TCP/UD
 - 人物部件绘制顺序（由后到前）：npack、foot、leg、body、cloth、head、face、hair；方向帧 0 右、1 上、2 左、3 下。普通图即红队配色；其他队伍用 `_m` 灰度图按 `colorlist.dat` 的色相染色，保持 HLS 亮度。
 
 控件透明度声明、渐变最小值/边界回调及父子ARGB调制已按gameUI实际执行修正，154条独立UI基准和Python200项通过；PVE头像位置保持原脚本，透明度恢复0.8（`docs/ui-alpha-re.md`）。
+
+房间角色提示的泡数/威力/速度DYSTRIP已恢复按当前值/上限填充，直接复用原生生命条布局；50条独立UI记录和Python201项通过（`docs/ui-strip-re.md`）。

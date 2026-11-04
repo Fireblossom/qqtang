@@ -13,7 +13,7 @@ from . import dimg
 from .resources import Resources
 from .script import log
 from .widgets import TEXT_INPUT_TYPES, Widget
-from .ui_alpha import alpha_byte, combined_alpha
+from .ui_alpha import alpha_byte, combined_alpha, float32
 
 DT_CENTER, DT_RIGHT, DT_VCENTER, DT_BOTTOM = 1, 2, 4, 8
 FONT_CANDIDATES = (
@@ -174,7 +174,7 @@ class Renderer:
             self.screen.blit(fill, (x, y))
         if widget.type == "NUMLABEL":
             self._draw_number(widget, x, y, alpha)
-        elif widget.type in ("LIFESTRIP", "DYLIFESTRIP"):
+        elif widget.type in ("DYSTRIP", "LIFESTRIP", "DYLIFESTRIP"):
             self._draw_life_strip(widget, x, y, alpha)
         elif widget.type == "PICLABEL":
             self._draw_glyph_frames(widget, x, y, alpha)
@@ -222,13 +222,14 @@ class Renderer:
 
     def _draw_life_strip(self, widget: Widget, x: int, y: int, alpha: float) -> None:
         """1001192F: keep both end thirds and stretch the middle third."""
-        if not 0.01 < widget.strip_current <= widget.strip_total or not widget.image:
+        current, total = float32(widget.strip_current), float32(widget.strip_total)
+        if not float32(0.01) < current <= total or not widget.image:
             return
         frames = self.sprites.get(widget.image)
         if not frames or frames[0][0] is None:
             return
         source, ox, oy = frames[0]
-        width = int(widget.w * widget.strip_current / widget.strip_total)
+        width = int(float32(float32(widget.w * current) / total))
         if width < 1:
             return
         cap = source.get_width() // 3
