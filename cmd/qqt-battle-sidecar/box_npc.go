@@ -29,6 +29,8 @@ type boxNPCActor struct {
 	motion                          battleengine.NativeNPCPosition
 	motionKnown                     bool
 	ice                             npcIceState
+	picture                         npcPictureState
+	pictureMovePending              bool
 	facing                          byte
 	moving                          bool
 	dead                            bool
@@ -85,17 +87,20 @@ type boxNPCState struct {
 }
 
 type boxNPCActorView struct {
-	ID      uint16 `json:"id"`
-	Role    uint16 `json:"role"`
-	Team    byte   `json:"team"`
-	X       int32  `json:"x"`
-	Y       int32  `json:"y"`
-	Facing  byte   `json:"facing"`
-	Moving  bool   `json:"moving"`
-	Dead    bool   `json:"dead"`
-	Trapped bool   `json:"trapped"`
-	Speed   byte   `json:"speed"`
-	Iced    bool   `json:"iced"`
+	ID            uint16 `json:"id"`
+	Role          uint16 `json:"role"`
+	Team          byte   `json:"team"`
+	X             int32  `json:"x"`
+	Y             int32  `json:"y"`
+	Facing        byte   `json:"facing"`
+	Moving        bool   `json:"moving"`
+	Dead          bool   `json:"dead"`
+	Trapped       bool   `json:"trapped"`
+	Speed         byte   `json:"speed"`
+	Iced          bool   `json:"iced"`
+	PictureAction byte   `json:"picture_action"`
+	PictureFacing byte   `json:"picture_facing"`
+	PictureClock  uint32 `json:"picture_clock"`
 }
 type boxNPCView struct {
 	Actors []boxNPCActorView `json:"actors"`
@@ -184,7 +189,7 @@ func (match *onlineMatch) createBoxNPC(data game.CreateNPCBoss, now uint32) erro
 		// this fresh ID into the NPC list. Its optional 3s protection branch
 		// is therefore not taken by a newly generated rule-8 monster.
 		p := profiles[int(info.RoleID)-25]
-		s.actors[info.BossID] = &boxNPCActor{id: info.BossID, role: uint16(info.RoleID), pos: battleengine.PositionAtCellCenter(cell), facing: 3, lastTick: now, navigator: newNPCNavigator(cell, 3, now), capacity: p[0], maxCapacity: p[1], power: p[2], maxPower: p[3], speed: p[4], maxSpeed: p[5]}
+		s.actors[info.BossID] = &boxNPCActor{id: info.BossID, role: uint16(info.RoleID), pos: battleengine.PositionAtCellCenter(cell), facing: 3, lastTick: now, navigator: newNPCNavigator(cell, 3, now), picture: npcPictureState{action: 1, facing: 3}, capacity: p[0], maxCapacity: p[1], power: p[2], maxPower: p[3], speed: p[4], maxSpeed: p[5]}
 		s.nextID = max(s.nextID, info.BossID+1)
 		match.logf("box NPC %d role %d spawned at %d,%d", info.BossID, info.RoleID, cell.Row, cell.Col)
 	}
@@ -367,9 +372,22 @@ func (match *onlineMatch) boxNPCTick(now uint32) {
 			match.advanceBoxNPC(n, now)
 		} else {
 			previous := n.lastTick
-			match.interpolateBoxNPC(n, now)
 			if now >= previous {
+				n.picture.frame(now - previous)
 				n.ice.frame(now - previous)
+			}
+			match.interpolateBoxNPC(n, now)
+			// 005ABE96 updates the picture before the remote interpolator;
+			// a newly consumed move can then reset the pose to frame zero.
+			if n.pictureMovePending && n.netMoveSet && now >= n.netMove.TimeStamp && !n.trapped {
+				action := byte(1)
+				if n.netMove.WalkAndDirection&0x10 != 0 {
+					action = 4
+				}
+				n.picture.set(action, n.netMove.WalkAndDirection&3)
+				n.pictureMovePending = false
+			}
+			if now >= previous {
 				n.lastTick = now
 			}
 		}
@@ -503,6 +521,7 @@ func (match *onlineMatch) advanceBoxNPC(n *boxNPCActor, now uint32) {
 	}
 	dt := now - n.lastTick
 	defer n.ice.frame(dt)
+	defer n.picture.frame(dt)
 	// Follow the last authenticated segment when taking over mid-cell.
 	if len(n.path) == 0 && n.netMoveSet && n.moving {
 		n.path = []battleengine.Cell{{Row: int16(n.netMove.EndPosY / 40), Col: int16(n.netMove.EndPosX / 40)}}
@@ -559,8 +578,10 @@ func (match *onlineMatch) advanceBoxNPC(n *boxNPCActor, now uint32) {
 	}); emitted {
 		n.navigator.direction, n.navigator.walking = direction, direction != 9
 		if direction == 9 {
+			n.picture.set(1, n.facing)
 			n.path = nil
 		} else {
+			n.picture.set(4, direction)
 			n.facing = direction
 			n.path = []battleengine.Cell{boxStep(n.pos.Cell(), direction)}
 		}
@@ -606,6 +627,8 @@ func (match *onlineMatch) moveBoxNPC(n *boxNPCActor, dt uint32) {
 }
 
 func (match *onlineMatch) trapBoxNPC(n *boxNPCActor, now uint32) {
+	n.picture.set(2, 3) // 005B4E7B selects trigger and facing270
+	n.pictureMovePending = false
 	n.trapped = true
 	n.trappedAt = now
 	n.lastTick = now
@@ -775,6 +798,7 @@ func (match *onlineMatch) boxNPCRemote(sender uint16, event game.GameEvent) ([]b
 	case game.NotifyPlayerTrapped:
 		if len(event.Body) == 6 && binary.BigEndian.Uint32(event.Body[2:]) == 0 && !n.dead {
 			n.ice.refresh()
+			n.picture.set(7, n.facing)
 		}
 		return nil, true
 	case game.PlayerMoveSchema:
@@ -790,8 +814,10 @@ func (match *onlineMatch) boxNPCRemote(sender uint16, event game.GameEvent) ([]b
 			if n.netMoveSet && (m.TimeStamp < n.netMove.TimeStamp || int16(m.Sequence-n.netMove.Sequence) < 0) {
 				continue
 			}
+			fresh := !n.netMoveSet || m != n.netMove
 			n.netMove = m
 			n.netMoveSet = true
+			n.pictureMovePending = n.pictureMovePending || fresh
 			n.sequence = m.Sequence
 			// Wire speed is effective (e.g. ice=2), not the permanent stat.
 			// Base speed follows the spawn template and item notifications.
@@ -818,6 +844,8 @@ func (match *onlineMatch) boxNPCRemote(sender uint16, event game.GameEvent) ([]b
 	case game.PlayerBeExploded:
 		q, err := game.ParsePlayerExplodedEvent(event)
 		if err == nil && !n.dead && !q.IsAvatar {
+			n.picture.set(2, 3)
+			n.pictureMovePending = false
 			n.pos = battleengine.Position{X: int32(q.PosX), Y: int32(q.PosY)}
 			n.trapped = true
 			n.trappedAt = q.ClientTime
@@ -871,7 +899,8 @@ func (match *onlineMatch) boxNPCView() *boxNPCView {
 		if n.dead && now >= n.deadAt+1000 {
 			continue
 		}
-		view.Actors = append(view.Actors, boxNPCActorView{ID: n.id, Role: n.role, Team: 7, X: n.pos.X, Y: n.pos.Y, Facing: byte(battleDirection(n.facing)), Moving: n.moving, Dead: n.dead, Trapped: n.trapped, Speed: n.effectiveNPCSpeed(), Iced: n.ice.active})
+		view.Actors = append(view.Actors, boxNPCActorView{ID: n.id, Role: n.role, Team: 7, X: n.pos.X, Y: n.pos.Y, Facing: byte(battleDirection(n.facing)), Moving: n.moving, Dead: n.dead, Trapped: n.trapped, Speed: n.effectiveNPCSpeed(), Iced: n.ice.active,
+			PictureAction: n.picture.action, PictureFacing: byte(battleDirection(n.picture.facing)), PictureClock: n.picture.clock})
 	}
 	return view
 }

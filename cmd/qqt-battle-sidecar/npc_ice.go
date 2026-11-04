@@ -35,6 +35,7 @@ func (match *onlineMatch) iceBoxNPC(n *boxNPCActor, now uint32) {
 		return
 	}
 	n.ice.refresh()
+	n.picture.set(7, n.facing)
 	body := make([]byte, 6)
 	binary.BigEndian.PutUint16(body, n.id)
 	// 006034B4 observes the local human then NPCs without changing the UDP

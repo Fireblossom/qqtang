@@ -49,9 +49,7 @@ BIG_BOMB_ANCHOR = (45, 70)
 FIELD_LOCK_FLASH_MS = 450
 # Rule 12's camera view (0x005C87B0).
 VIEW_SIZE = (800, 520)
-# 00425F10 loads birth pictures at 200ms/frame; action14 plays once.
-# Actor mode independently controls when to leave the birth pose.
-BOSS_BIRTH_FRAME_MS = 200
+NPC_SHADOW = "object/misc/misc131_stand.img"
 WALK_FRAME_MS = 100
 FLAME_FRAME_MS = 70
 ITEM_FRAME_MS = 120
@@ -904,14 +902,30 @@ class BattleScene:
         for npc in (state.get("npc") or {}).get("actors") or ():
             if npc.get("dead") or npc["y"] // CELL != row:
                 continue
+            self._draw_npc_shadow(field, npc)
+            action = npc.get("picture_action", 2 if npc.get("trapped") else 4 if npc.get("moving") else 1)
+            # Default construction never loads slots7/14. Native drawing
+            # keeps the shadow but does not fall back to stand or walk.
+            if action in (7, 14):
+                self.walk_started.pop(npc["id"], None)
+                continue
             record = {"id": npc["id"], "role": npc["role"], "avatar_role": 0, "team": npc["team"],
-                      "x": npc["x"], "y": npc["y"], "facing": npc["facing"],
-                      "state": ACTOR_TRAPPED if npc.get("trapped") else 0, "protected_until": 0}
-            if npc.get("moving"):
-                self.walk_started.setdefault(npc["id"], self.clock)
+                      "x": npc["x"], "y": npc["y"], "facing": npc.get("picture_facing", npc["facing"]),
+                      "state": ACTOR_TRAPPED if action == 2 else 0, "protected_until": 0,
+                      "picture_clock": npc.get("picture_clock")}
+            if action == 4:
+                if "picture_clock" in npc:
+                    self.walk_started[npc["id"]] = self.clock - npc["picture_clock"] // 2
+                else:
+                    self.walk_started.setdefault(npc["id"], self.clock)
             else:
                 self.walk_started.pop(npc["id"], None)
             self._draw_actor(field, record)
+
+    def _draw_npc_shadow(self, field: pygame.Surface, actor: dict[str, Any]) -> None:
+        # 00424990: shadow host is (30,59) from the cloth canvas host.
+        self._draw_frames(field, NPC_SHADOW, 0, FIELD_ORIGIN[0] + actor["x"] - 20,
+                          FIELD_ORIGIN[1] + actor["y"] - 5)
 
     def _draw_box_effects(self, field: pygame.Surface) -> None:
         for effect in (self.state.get("box") or {}).get("effects") or ():
@@ -924,7 +938,7 @@ class BattleScene:
 
     def _draw_bosses(self, field: pygame.Surface, row: int) -> None:
         """A Boss overlay's NPCs (docs/boss-lifecycle-re.md): the role's cloth
-        "birth" until native mode9 ends, then stand/walk, the HP bar
+        shadow during default mode9, then stand/walk, the HP bar
         over the head (0x005D2835, every client) and the 3 s flash after a
         hit. A dead Boss disappears at once (0x00606606)."""
         for boss in (self.state.get("boss") or {}).get("actors") or ():
@@ -932,15 +946,9 @@ class BattleScene:
                 continue
             record = {"id": boss["id"], "role": boss["role"], "avatar_role": boss.get("avatar_role", 0), "team": 7, "x": boss["x"], "y": boss["y"],
                       "facing": boss["facing"], "state": 0, "protected_until": boss["protected_until"], "durability": boss["hp"]}
-            born_for = boss.get("birth_age", self.clock - boss["born"])
+            self._draw_npc_shadow(field, boss)
             in_birth = boss.get("birth_mode", 1) == 9
-            cloth = self.avatars.parts(boss["role"], "stand").get("cloth")
-            birth = f"object/cloth/cloth{cloth}_birth.img"
-            if in_birth and cloth and self.sprites.get(birth):
-                frames = len(self.sprites.get(birth) or ()) or 1
-                self._draw_frames(field, birth, min(frames - 1, born_for // BOSS_BIRTH_FRAME_MS),
-                                  boss["x"] - AVATAR_ANCHOR[0], boss["y"] - AVATAR_ANCHOR[1])
-            else:
+            if not in_birth:
                 if boss.get("moving"):
                     self.walk_started.setdefault(boss["id"], self.clock)
                 else:
@@ -1398,7 +1406,8 @@ class BattleScene:
         if actor["state"] == ACTOR_ELIMINATED:
             image = self.avatars.get(role, actor["team"] - 1, "die", direction, int(dead_for // (DIE_MS // 4)), wear=self._wear(actor))
         elif actor["state"] == ACTOR_TRAPPED:
-            image = self.avatars.get(role, actor["team"] - 1, "trigger", direction, int(trapped_for // TRAPPED_FRAME_MS), wear=self._wear(actor))
+            frame = actor["picture_clock"] // 200 if actor.get("picture_clock") is not None else int(trapped_for // TRAPPED_FRAME_MS)
+            image = self.avatars.get(role, actor["team"] - 1, "trigger", direction, frame, wear=self._wear(actor))
         elif actor["id"] in self.walk_started:
             frame = (self.clock - self.walk_started[actor["id"]]) // WALK_FRAME_MS
             image = self.avatars.get(role, actor["team"] - 1, "walk", direction, frame, wear=self._wear(actor))
