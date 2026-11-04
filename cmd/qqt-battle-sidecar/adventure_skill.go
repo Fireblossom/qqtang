@@ -156,18 +156,11 @@ func (match *onlineMatch) adventureTrySkill(n *advNPC, now uint32) bool {
 
 // adventureEnmityTarget is 0x005BC25F (highest) / 0x005BC398 (lowest).
 func (match *onlineMatch) adventureEnmityTarget(n *advNPC, highest bool) uint16 {
-	var chosen uint16
-	best := 0
-	for _, a := range match.livingAdventurePlayers() {
-		if !n.boundsContain(a.Position.Cell()) {
-			continue
-		}
-		v := n.enmity[a.PlayerID]
-		if chosen == 0 || highest && v > best || !highest && v < best {
-			chosen, best = a.PlayerID, v
-		}
+	strategy := uint32(0)
+	if highest {
+		strategy = 1
 	}
-	return chosen
+	return adventureSelectTarget(n, match.livingAdventurePlayers(), strategy, 0)
 }
 
 // startAdventureCast is the 0x0FB0 receiver 0x006048BF: the prop prepares

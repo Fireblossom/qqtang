@@ -144,8 +144,8 @@ func newSpecialRule(layers mapdata.MapLayers, seed int64) *specialRule {
 	return rule
 }
 
-// doorLCG is the CRT rand of 0x004522F0 drawn three times (0x005D927B).
-func doorLCG(seed uint32) uint32 {
+// nativeSceneRandom is 004522F0, shared by door shuffling and PVE targets.
+func nativeSceneRandom(seed uint32) uint32 {
 	s := seed*0x41C64E6D + 0x3039
 	a := (s >> 16) % 0x800
 	s = s*0x41C64E6D + 0x3039
@@ -161,7 +161,7 @@ func (rule *specialRule) shuffleDoors(seed uint32) {
 	if n == 0 {
 		return
 	}
-	r := doorLCG(seed)
+	r := nativeSceneRandom(seed)
 	idx := make([]int, n)
 	for i := range idx {
 		idx[i] = i

@@ -13,8 +13,8 @@ package main
 //
 // NPCs follow 0x005BAE70 (docs/adventure-npc-ai-re.md): enmity, the
 // battle switch, a random step (MoveStrategy 3) or a chase (4); they never
-// place bubbles. Their skills (props cast with 0x0FB0/0x10F7) are not
-// played yet. The battlefield lock flashes flame255 once when it locks; the
+// place bubbles. Their skills use the prop controller in adventure_skill.go.
+// The battlefield lock flashes flame255 once when it locks; the
 // flash on bumping its edge (0x005F38F9) is not played.
 
 import (
@@ -638,8 +638,7 @@ func (match *onlineMatch) adventureEnmity() {
 			continue
 		}
 		for _, a := range players {
-			c, nc := a.Position.Cell(), n.pos.Cell()
-			if !n.boundsContain(c) || int(abs32(int32(c.Col-nc.Col))) > n.view || int(abs32(int32(c.Row-nc.Row))) > n.view {
+			if !n.inView(a.Position) {
 				continue
 			}
 			if v, exists := n.enmity[a.PlayerID]; exists && v == 0 {
@@ -672,6 +671,18 @@ func (match *onlineMatch) adventureEnmity() {
 	}
 }
 
+// 005BAD0C truncates the pixel differences before dividing by40. Comparing
+// cell indices loses up to a cell of view at either edge of the NPC's cell.
+func (n *advNPC) inView(target battleengine.Position) bool {
+	if !n.boundsContain(target.Cell()) {
+		return false
+	}
+	position := n.nativePosition()
+	dx := abs32(int32(position.X-float32(target.X))) / 40
+	dy := abs32(int32(position.Y-float32(target.Y))) / 40
+	return int(dx) <= n.view && int(dy) <= n.view
+}
+
 // adventureNPCTick is the move command 0x006112AF for a PVE NPC: decide
 // on the scene command's seventh eligible NPC execution (retry after9),
 // retain the command and run default float movement.
@@ -697,22 +708,7 @@ func (match *onlineMatch) adventureNPCTick(n *advNPC, now uint32) {
 // bubbles).
 func (match *onlineMatch) adventureNPCDecide(n *advNPC, now uint32) int {
 	players := match.livingAdventurePlayers()
-	// 0x005BADE5 with GEnmity 0x005BBBFF.
-	total := 0
-	for _, a := range players {
-		if n.boundsContain(a.Position.Cell()) {
-			if _, exists := n.enmity[a.PlayerID]; !exists {
-				n.enmity[a.PlayerID] = 0
-			}
-			total += n.enmity[a.PlayerID]
-		}
-	}
-	switch {
-	case n.battle && total == 0:
-		n.battle, n.strategy, n.route = false, n.savedStrategy, nil
-	case !n.battle && total >= 1:
-		n.battle, n.savedStrategy, n.strategy, n.route, n.battleSince = true, n.strategy, 4, nil, now
-	}
+	updateAdventureBattle(n, players, now)
 	if match.adventureTrySkill(n, now) {
 		return bossDirStop
 	}
@@ -725,7 +721,7 @@ func (match *onlineMatch) adventureNPCDecide(n *advNPC, now uint32) int {
 	}
 	switch n.strategy {
 	case 4:
-		return match.adventureChase(n, here, players)
+		return match.adventureChase(n, here, players, now)
 	default:
 		// 3 (every stage NPC); 1/2 patrols are not in any stage file and
 		// fall back to 3 anyway when their path fails.
@@ -749,30 +745,36 @@ func (match *onlineMatch) adventureNPCDecide(n *advNPC, now uint32) int {
 	return int(n.route[0].direction)
 }
 
+func updateAdventureBattle(n *advNPC, players []battleengine.Actor, now uint32) {
+	// 0x005BADE5 with GEnmity 0x005BBBFF.
+	if n.enmity == nil {
+		n.enmity = map[uint16]int{}
+	}
+	total := 0
+	for _, a := range players {
+		if n.boundsContain(a.Position.Cell()) {
+			if _, exists := n.enmity[a.PlayerID]; !exists {
+				n.enmity[a.PlayerID] = 0
+			}
+			total += n.enmity[a.PlayerID]
+		}
+	}
+	switch {
+	case n.battle && total == 0:
+		n.battle, n.strategy, n.route = false, n.savedStrategy, nil
+		n.battleSince = 0
+	case !n.battle && total >= 1:
+		n.battle, n.savedStrategy, n.strategy, n.route, n.battleSince = true, n.strategy, 4, nil, now
+	}
+}
+
 // adventureChase is MoveStrategy 4 (0x005BB33A) with the target picked by
-// BattleStrategy (0x005BC134: 0 lowest enmity, 1 highest, 2 none).
-func (match *onlineMatch) adventureChase(n *advNPC, here battleengine.Cell, players []battleengine.Actor) int {
+// BattleStrategy (005BC134: 0 lowest enmity, 1 highest, 2 scene-seeded choice).
+func (match *onlineMatch) adventureChase(n *advNPC, here battleengine.Cell, players []battleengine.Actor, now uint32) int {
 	if p := match.adventure.players[n.target]; n.target != 0 && (p == nil || p.dead) {
 		n.addEnmity(n.target, -10_000_000)
 	}
-	n.target = 0
-	best := 0
-	for _, a := range players {
-		if !n.boundsContain(a.Position.Cell()) {
-			continue
-		}
-		v := n.enmity[a.PlayerID]
-		switch n.info.BattleStrategy {
-		case 0:
-			if n.target == 0 || v < best {
-				n.target, best = a.PlayerID, v
-			}
-		case 1:
-			if n.target == 0 || v > best {
-				n.target, best = a.PlayerID, v
-			}
-		}
-	}
+	n.target = adventureSelectTarget(n, players, n.info.BattleStrategy, now)
 	if n.target == 0 {
 		n.route = nil
 		return bossDirStop
@@ -784,6 +786,41 @@ func (match *onlineMatch) adventureChase(n *advNPC, here battleengine.Cell, play
 		return bossDirStop
 	}
 	return int(n.route[0].direction)
+}
+
+// 005BC134/005BC25F/005BC398/005BC4D3. Strategy2 samples the candidate
+// vector with scene-time RNG modulo(count-1), excluding the last candidate.
+func adventureSelectTarget(n *advNPC, players []battleengine.Actor, strategy, now uint32) uint16 {
+	if strategy > 2 {
+		return 0
+	}
+	var chosen uint16
+	best := 0
+	var candidates []uint16
+	for _, a := range players {
+		if !n.boundsContain(a.Position.Cell()) {
+			continue
+		}
+		if strategy == 2 {
+			candidates = append(candidates, a.PlayerID)
+			continue
+		}
+		if n.enmity == nil {
+			n.enmity = map[uint16]int{}
+		}
+		value := n.enmity[a.PlayerID]
+		n.enmity[a.PlayerID] = value
+		if chosen == 0 || strategy == 1 && value > best || strategy == 0 && value < best {
+			chosen, best = a.PlayerID, value
+		}
+	}
+	if len(candidates) == 1 {
+		return candidates[0]
+	}
+	if len(candidates) > 1 {
+		return candidates[nativeSceneRandom(now)%uint32(len(candidates)-1)]
+	}
+	return chosen
 }
 
 // adventureReuseRoute is the shared fast path of 005BB1E1/005BB33A.
