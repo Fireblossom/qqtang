@@ -4,8 +4,9 @@ package main
 // replenishing an empty NPC list after 3s. 005DF20B chooses 007A358C:
 // 005DEF29 wanders/replans every 500ms and escapes danger, while 005DF009
 // places a bubble only after 005B0598 finds an escape route. This controller
-// preserves those decisions with a bounded grid search; the native search's
-// complete tie-breaking and corner-slide code are not reproduced here.
+// shares the native WF search and candidate order with Boss controllers.
+// Continuous steering, corner slides and all status interactions remain
+// outside this centre-to-centre movement implementation.
 // NPCs use ordinary syrup (HP field 0, 00607A23), not four-layer player HP.
 // They remain outside the eight participant slots and match conclusions.
 
@@ -49,7 +50,6 @@ type boxNPCActor struct {
 	moveInitialized                 bool
 	netMove                         game.PlayerMoveSequence
 	netMoveSet                      bool
-	bossSpeed                       bool // a Boss moves by the NPC speed table
 }
 type boxNPCOutbound struct {
 	author  uint16
@@ -366,10 +366,7 @@ func (match *onlineMatch) interpolateBoxNPC(n *boxNPCActor, now uint32) {
 	m := n.netMove
 	pos := battleengine.Position{X: int32(m.CurrentPosX), Y: int32(m.CurrentPosY)}
 	end := battleengine.Position{X: int32(m.EndPosX), Y: int32(m.EndPosY)}
-	speed, _ := battleengine.NativeSpeedPixelsPerSecond(m.Speed)
-	if n.bossSpeed {
-		speed = uint16(bossPixelsPerSecond(m.Speed))
-	}
+	speed := uint16(bossPixelsPerSecond(m.Speed))
 	travel := int32(uint64(now-m.TimeStamp) * uint64(speed) / 1000)
 	if m.WalkAndDirection&0x10 != 0 {
 		if pos.X != end.X {
@@ -410,7 +407,7 @@ func (match *onlineMatch) npcPath(n *boxNPCActor, danger battleengine.DangerTime
 	queue := []battleengine.Cell{start}
 	previous := map[battleengine.Cell]battleengine.Cell{start: start}
 	depth := map[battleengine.Cell]int{start: 0}
-	speed, _ := battleengine.NativeSpeedPixelsPerSecond(n.speed)
+	speed := bossPixelsPerSecond(n.speed)
 	perCell := uint32(40000 / max(1, int(speed)))
 	for len(queue) > 0 {
 		cell := queue[0]
@@ -459,16 +456,10 @@ func (match *onlineMatch) npcPlace(n *boxNPCActor, now uint32) bool {
 	if active >= int(n.capacity) || !match.npcOpen(n.pos.Cell(), n.pos.Cell()) {
 		return false
 	}
-	clone := match.engine.Clone()
-	if _, err := clone.PlaceRuleNPCBomb(n.id, n.pos.Cell(), uint16(n.power)+1, 0, now); err != nil {
-		return false
-	}
-	timeline, err := clone.DangerTimeline(4000)
-	if err != nil {
-		return false
-	}
-	path := match.npcPath(n, timeline, 10)
-	if len(path) == 0 {
+	// 005B0598 searches the current world before placing its own bubble.
+	// Its destination must leave both axes and have a WF route cost <=10.
+	path, ok := (&bossGeneral{}).escapePlan(match.bossWorld(now), n.pos.Cell())
+	if !ok {
 		return false
 	}
 	property := byte(0)
@@ -483,7 +474,7 @@ func (match *onlineMatch) npcPlace(n *boxNPCActor, now uint32) bool {
 	body, _ := (game.PlayerUseBombEvent{PlayerID: n.id, ClientTime: now, BombID: 1, Row: byte(n.pos.Cell().Row), Column: byte(n.pos.Cell().Col), Power: uint16(n.power) + 1, Property: property}).MarshalNetworkBinary()
 	match.queueBoxNPC(n.id, game.PlayerUseBomb, now, body)
 	match.mirror(game.PlayerUseBomb, body)
-	n.path = path
+	n.path = npcPathCells(path)
 	match.logf("box NPC %d places bubble at %d,%d", n.id, n.pos.Cell().Row, n.pos.Cell().Col)
 	return true
 }
@@ -557,25 +548,25 @@ func (match *onlineMatch) advanceBoxNPC(n *boxNPCActor, now uint32) {
 			if n.role == 27 {
 				radius = 10
 			}
-			n.path = match.npcPath(n, n.danger, radius)
+			path, _ := match.bossWorld(now).safePlan(n.pos.Cell(), radius, match.box.rng.Intn)
+			n.path = npcPathCells(path)
 		} else if !match.npcPlace(n, now) {
-			dirs := []byte{}
+			var mask uint32
+			count := 0
 			for d := byte(0); d < 4; d++ {
 				if match.npcOpen(boxStep(n.pos.Cell(), d), n.pos.Cell()) {
-					dirs = append(dirs, d)
+					mask |= 1 << (3 - d)
+					count++
 				}
 			}
-			if len(dirs) > 0 {
-				i := match.box.rng.Intn(len(dirs))
-				if byte((i+2)%4) == n.facing && len(dirs) > 1 {
-					i = (i + 1) % len(dirs)
-				}
-				n.path = []battleengine.Cell{boxStep(n.pos.Cell(), dirs[i])}
+			if count > 0 {
+				direction := npcWanderDirection(mask, n.facing, uint32(match.box.rng.Intn(count)))
+				n.path = []battleengine.Cell{boxStep(n.pos.Cell(), direction)}
 			}
 		}
 	}
 	n.moving = false
-	speed, _ := battleengine.NativeSpeedPixelsPerSecond(n.speed)
+	speed := bossPixelsPerSecond(n.speed)
 	n.fraction += uint32(speed) * dt
 	travel := int32(n.fraction / 1000)
 	n.fraction %= 1000

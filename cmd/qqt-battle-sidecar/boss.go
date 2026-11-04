@@ -216,7 +216,7 @@ func (match *onlineMatch) createBosses(data game.CreateNPCBoss, now uint32) {
 		}
 		cell := rule.spawns[at]
 		b := &bossActor{info: info, bornAt: now, normal: append([]game.BossItemInfo(nil), info.NormalItems...)}
-		b.id, b.role, b.pos, b.facing, b.lastTick, b.bossSpeed = info.BossID, uint16(info.RoleID), battleengine.PositionAtCellCenter(cell), 3, now, true
+		b.id, b.role, b.pos, b.facing, b.lastTick = info.BossID, uint16(info.RoleID), battleengine.PositionAtCellCenter(cell), 3, now
 		// 0x005AA58D writes nothing when any value is out of range.
 		if info.Bubble <= 8 && info.Power >= 1 && info.Power <= 9 && info.Rate >= 1 && info.Rate <= 8 && info.HP <= 10 {
 			b.capacity, b.power, b.speed, b.hp = byte(info.Bubble), byte(info.Power), byte(info.Rate), int(info.HP)

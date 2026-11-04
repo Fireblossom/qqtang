@@ -408,7 +408,7 @@ func ring(here battleengine.Cell, r int, visit func(battleengine.Cell) bool) {
 				if i+j > d {
 					continue
 				}
-				for _, s := range [4][2]int16{{1, 1}, {1, -1}, {-1, 1}, {-1, -1}} {
+				for _, s := range [4][2]int16{{1, 1}, {-1, 1}, {1, -1}, {-1, -1}} {
 					if visit(battleengine.Cell{Row: here.Row + s[0]*int16(i), Col: here.Col + s[1]*int16(j)}) {
 						return
 					}
@@ -420,7 +420,14 @@ func ring(here battleengine.Cell, r int, visit func(battleengine.Cell) bool) {
 
 // findSafeCell is 0x005B22FC with R = 10.
 func (ai *bossGeneral) findSafeCell(w *bossWorld, here battleengine.Cell) bool {
-	const r = 10
+	var ok bool
+	ai.path, ok = w.safePlan(here, 10, w.match.boss.rng.Intn)
+	return ok
+}
+
+// safePlan is 005B22FC: preserve duplicate candidates and stop after R+1
+// reachable entries. The caller supplies its arbitrator-local RNG.
+func (w *bossWorld) safePlan(here battleengine.Cell, r int, choose func(int) int) ([]pathNode, bool) {
 	var candidates []battleengine.Cell
 	ring(here, r, func(c battleengine.Cell) bool {
 		if w.safe(c) {
@@ -430,7 +437,7 @@ func (ai *bossGeneral) findSafeCell(w *bossWorld, here battleengine.Cell) bool {
 	})
 	var reachable []battleengine.Cell
 	for _, c := range candidates {
-		if _, ok := ai.pathTo(w, here, c, false, false, true); ok {
+		if _, _, ok := w.find(here, c, pathMaxF, pathMaxOpen, false, true); ok {
 			reachable = append(reachable, c)
 			if len(reachable) > r {
 				break
@@ -438,11 +445,10 @@ func (ai *bossGeneral) findSafeCell(w *bossWorld, here battleengine.Cell) bool {
 		}
 	}
 	if len(reachable) == 0 {
-		ai.path = nil
-		return false
+		return nil, false
 	}
-	_, ok := ai.pathTo(w, here, reachable[w.match.boss.rng.Intn(len(reachable))], false, false, true)
-	return ok
+	path, _, ok := w.find(here, reachable[choose(len(reachable))], pathMaxF, pathMaxOpen, false, true)
+	return path, ok
 }
 
 // chaseAlive is 0x005B1BB8: pick the nearest player allowing danger and

@@ -68,7 +68,7 @@ func adventureSkillMatch(t *testing.T, prop mapdata.AdventureProp, trigger strin
 		props: map[uint32]mapdata.AdventureProp{prop.ID: prop}}
 	n := &advNPC{view: 3, enmity: map[uint16]int{1: 30}, strategy: 4, battle: true, hp: 50, maxHP: 100, lastFire: map[int]uint32{}, info: game.PVENPC{BattleStrategy: 1}}
 	one, _ := actorByID(m.engine.Actors(), 1)
-	n.id, n.pos, n.speed, n.bossSpeed = 30300, battleengine.PositionAtCellCenter(battleengine.Cell{Row: one.Position.Cell().Row, Col: one.Position.Cell().Col - 2}), 3, true
+	n.id, n.pos, n.speed = 30300, battleengine.PositionAtCellCenter(battleengine.Cell{Row: one.Position.Cell().Row, Col: one.Position.Cell().Col - 2}), 3
 	m.adventure.npcs[n.id] = n
 	return m, n
 }

@@ -274,7 +274,7 @@ func (match *onlineMatch) createAdventureNPCs(batch game.CreatePVENPCEvent, now 
 		cell := battleengine.Cell{Row: int16(info.BornRow), Col: int16(info.BornCol)}
 		n := &advNPC{base: uint16(info.NPCBaseID), info: info, hp: int(info.HP), maxHP: int(info.HP), defense: int(info.Defense), harm: int(info.Harm), view: int(info.View), bounds: bounds,
 			enmity: map[uint16]int{}, strategy: int(info.MoveStrategy), lastFire: map[int]uint32{}}
-		n.id, n.role, n.pos, n.facing, n.lastTick, n.speed, n.bossSpeed = id, uint16(info.ImageID), battleengine.PositionAtCellCenter(cell), 3, now, byte(min(info.Speed, 10)), true
+		n.id, n.role, n.pos, n.facing, n.lastTick, n.speed = id, uint16(info.ImageID), battleengine.PositionAtCellCenter(cell), 3, now, byte(min(info.Speed, 10))
 		rule.npcs[id] = n
 	}
 	match.logf("adventure: %d NPCs in battlefield %d", len(batch.NPCs), rule.fieldIdx)

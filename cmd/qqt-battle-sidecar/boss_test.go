@@ -622,7 +622,7 @@ func TestAdventureNPCEntersBattleAfterAPlayerEntersItsView(t *testing.T) {
 		bubbles: map[uint32]bool{}, seen: map[string]bool{}, rng: rand.New(rand.NewSource(1))}
 	n := &advNPC{view: 3, enmity: map[uint16]int{}, strategy: 3, info: game.PVENPC{BattleStrategy: 1}}
 	one, _ := actorByID(m.engine.Actors(), 1)
-	n.id, n.pos, n.speed, n.bossSpeed = 30300, battleengine.PositionAtCellCenter(battleengine.Cell{Row: one.Position.Cell().Row, Col: one.Position.Cell().Col - 3}), 3, true
+	n.id, n.pos, n.speed = 30300, battleengine.PositionAtCellCenter(battleengine.Cell{Row: one.Position.Cell().Row, Col: one.Position.Cell().Col - 3}), 3
 	m.adventure.npcs[n.id] = n
 	m.adventureNPCDecide(n, 0) // the first decision creates the zero entries
 	m.adventureEnmity()        // in view with a zero entry: +20
