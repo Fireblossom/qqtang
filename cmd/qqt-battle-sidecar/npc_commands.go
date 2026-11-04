@@ -21,3 +21,12 @@ func (command *npcMoveCommand) tick(rule byte, elapsed uint32, actorMode, moveme
 	}
 	return direction, true
 }
+
+// Rule1 registers movement before the ordinary bubble command. Bubble
+// planning has no access to the scene movement command's counter.
+func (command *npcMoveCommand) generalFrame(elapsed uint32, actorMode, movementMode byte, decide func() byte, apply func(byte), bubble func()) {
+	if direction, emitted := command.tick(1, elapsed, actorMode, movementMode, decide); emitted {
+		apply(direction)
+	}
+	bubble()
+}

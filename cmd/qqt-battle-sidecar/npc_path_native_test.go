@@ -15,7 +15,7 @@ func nativePathNodes(entries [][5]int) []pathNode {
 	var nodes []pathNode
 	for index := len(entries) - 1; index >= 0; index-- {
 		entry := entries[index]
-		nodes = append(nodes, pathNode{cell: battleengine.Cell{Row: int16(entry[0]), Col: int16(entry[1])}, dir: entry[2], kind: byte(entry[3]), marker: byte(entry[4])})
+		nodes = append(nodes, pathNode{cell: battleengine.Cell{Row: int16(entry[0]), Col: int16(entry[1])}, dir: entry[2], kind: byte(entry[3]), padding: byte(entry[4])})
 	}
 	return nodes
 }
@@ -63,6 +63,22 @@ func TestNPCPathConsumptionMatchesNative(t *testing.T) {
 				t.Fatalf("fallback%v counter%d pos%v queries%v; native result%d counter%d pos%v queries%v", fallback, path.mismatches, pos, queries, row.Result, row.AfterCounter, row.AfterPosition, row.Queries)
 			}
 			assertNativeNPCPath(t, path.nodes, row.Entries)
+			// The Boss bridge must preserve the same float position, retained
+			// mismatch counter, node consumption and collision query inputs.
+			n := &boxNPCActor{id: 30001, role: 32, speed: byte(row.Level), facing: row.Facing,
+				motion: battleengine.NativeNPCPosition{X: row.Position[0], Y: row.Position[1]}, motionKnown: true}
+			n.pos = n.motion.Pixels()
+			n.navigator.walking = !row.Standing
+			boss := &bossGeneral{path: nativePathNodes(row.Before), pathMismatches: row.Counter}
+			queries = make([][6]int32, 0)
+			fallback = boss.followPath(n, row.Dt, func(x, y int32, direction byte) bool {
+				queries = append(queries, [6]int32{x, y, int32(direction), 0, 0, 1})
+				return row.Allowed
+			})
+			if fallback != (row.Result == 1) || boss.pathMismatches != row.AfterCounter || n.motion != (battleengine.NativeNPCPosition{X: row.AfterPosition[0], Y: row.AfterPosition[1]}) || !reflect.DeepEqual(queries, row.Queries) {
+				t.Fatalf("Boss bridge differs: fallback%v counter%d motion%v queries%v", fallback, boss.pathMismatches, n.motion, queries)
+			}
+			assertNativeNPCPath(t, boss.path, row.Entries)
 		})
 		checked++
 	}
@@ -87,6 +103,9 @@ func TestNPCEscapeAppendMatchesNativeNonemptyVector(t *testing.T) {
 		follower := npcPathFollower{nodes: nativePathNodes(row.Before)}
 		follower.appendEscape(path)
 		assertNativeNPCPath(t, follower.nodes, row.Entries)
+		boss := bossGeneral{path: nativePathNodes(row.Before)}
+		boss.appendEscape(path)
+		assertNativeNPCPath(t, boss.path, row.Entries)
 		return
 	}
 	t.Fatal("missing native append record")

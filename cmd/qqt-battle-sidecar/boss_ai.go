@@ -56,24 +56,23 @@ func newBossController(info game.CompetitiveBossInfo) bossController {
 	return &bossWander{}
 }
 
-// pathNode is one item of N+0x75C: the cell, the direction to the next cell
-// (9 at the goal), the node type (2 danger, 1 box, 3 plain, 0 start) and the
-// marker (4: place a bubble now).
+// pathNode is one item of N+0x75C: cell, direction (9 at the goal),
+// kind (0 start, 1 box, 2 danger, 3 plain, 4 bubble) and native padding.
 type pathNode struct {
-	cell   battleengine.Cell
-	dir    int
-	kind   byte
-	marker byte
+	cell    battleengine.Cell
+	dir     int
+	kind    byte
+	padding byte
 }
 
 type bossGeneral struct {
-	counter int
 	// path[0] is the current cell (the original vector's last item).
-	path   []pathNode
-	gate   uint32
-	last   [4]uint32 // skills 1..3 by index
-	inited bool
-	pirate pirateState
+	path           []pathNode
+	pathMismatches uint32
+	gate           uint32
+	last           [4]uint32 // skills 1..3 by index
+	inited         bool
+	pirate         pirateState
 }
 
 // bossWorld is the per-frame view the original reads from the scene.
@@ -289,9 +288,9 @@ func (ai *bossGeneral) pathTo(w *bossWorld, from, to battleengine.Cell, truncate
 	if len(ai.path) == 0 {
 		return length, false
 	}
-	ai.path[0].marker = 0
+	ai.path[0].kind = 0
 	if box {
-		ai.path[0].marker = 4
+		ai.path[0].kind = 4
 	}
 	return length, true
 }
@@ -310,17 +309,19 @@ func (ai *bossGeneral) tick(match *onlineMatch, b *bossActor, now uint32) {
 		b.navigator.walking, b.navigator.direction = b.moving, b.facing
 	}
 	w := match.bossWorld(now)
-	ai.bombTick(w, b)
-	if ai.counter <= bossDecideFrames {
-		ai.counter++
-	} else if d := ai.decide(w, b); d == bossDirStop {
-		b.path = nil // 0x005C07D6 stops; the counter stays, so it decides again next frame
-		b.navigator.walking = false
-	} else {
-		ai.counter = 0
-		b.path = []battleengine.Cell{bossStep(b.pos.Cell(), d)}
-		b.navigator.walking, b.navigator.direction = true, byte(d)
+	movementMode := byte(1)
+	if b.navigator.walking {
+		movementMode = 2
 	}
+	match.boss.moveCommand.generalFrame(now, b.birth.mode, movementMode, func() byte { return byte(ai.decide(w, b)) }, func(direction byte) {
+		if direction == bossDirStop {
+			b.path = nil
+			b.navigator.walking = false
+		} else {
+			b.path = []battleengine.Cell{bossStep(b.pos.Cell(), int(direction))}
+			b.navigator.walking, b.navigator.direction = true, direction
+		}
+	}, func() { ai.bombTick(w, b) })
 	if b.transformed() {
 		match.bossMove(b, now)
 	} else {
@@ -367,7 +368,9 @@ func (ai *bossGeneral) decide(w *bossWorld, b *bossActor) int {
 	} else if r == 24 || r == 28 || r > 28 {
 		ai.genericSkills(w, b)
 	}
-	if ai.followPath(here) && !ai.bombNearestBox(w, here) {
+	if ai.followPath(&b.boxNPCActor, tickMS, func(x, y int32, facing byte) bool {
+		return w.match.engine.RuleNPCPositionPassable(b.id, battleengine.Position{X: x, Y: y}, battleDirection(facing))
+	}) && !ai.bombNearestBox(w, here) {
 		return bossDirStop
 	}
 	return ai.lastDir()
@@ -495,7 +498,7 @@ func (ai *bossGeneral) chaseAlive(w *bossWorld, here battleengine.Cell) bool {
 		return false
 	}
 	if far := len(ai.path) - 1; ai.path[far].cell == goal {
-		ai.path[far].marker = 4
+		ai.path[far].kind = 4
 	}
 	return true
 }
@@ -533,17 +536,22 @@ func (ai *bossGeneral) collectItem(w *bossWorld, here battleengine.Cell) bool {
 	return found
 }
 
-// followPath is 0x005B1EA6, simplified to our cell-centre movement: it
-// returns true when the old path is used up.
-func (ai *bossGeneral) followPath(here battleengine.Cell) bool {
-	for len(ai.path) > 0 && ai.path[0].cell != here {
-		ai.path = ai.path[1:]
-	}
-	if len(ai.path) < 2 {
-		ai.path = nil
-		return true
-	}
-	return false
+// followPath uses the same 005B1EA6 state machine as default roaming NPCs.
+func (ai *bossGeneral) followPath(n *boxNPCActor, dt uint32, canPass func(int32, int32, byte) bool) bool {
+	native := n.nativePosition()
+	position := npcFollowPosition{native.X, native.Y}
+	path := npcPathFollower{nodes: ai.path, mismatches: ai.pathMismatches}
+	fallback := path.follow(&position, n.facing, !n.navigator.walking, int(n.effectiveNPCSpeed()), dt, canPass)
+	ai.path, ai.pathMismatches = path.nodes, path.mismatches
+	n.motion = battleengine.NativeNPCPosition{X: position.x, Y: position.y}
+	n.pos = n.motion.Pixels()
+	return fallback
+}
+
+func (ai *bossGeneral) appendEscape(nodes []pathNode) {
+	path := npcPathFollower{nodes: ai.path, mismatches: ai.pathMismatches}
+	path.appendEscape(nodes)
+	ai.path = path.nodes
 }
 
 // bombNearestBox is 0x005B1B15: the first breakable element in scan order
@@ -568,15 +576,14 @@ func (ai *bossGeneral) bombNearestBox(w *bossWorld, here battleengine.Cell) bool
 // bombTick is 0x005DF0EB, every frame.
 func (ai *bossGeneral) bombTick(w *bossWorld, b *bossActor) {
 	here := b.pos.Cell()
-	if len(ai.path) > 0 && ai.path[0].marker != 4 && !w.playerInLine(here) {
+	if !npcBubbleEligible(ai.path, func() bool { return w.playerInLine(here) }) {
 		return
 	}
 	escape, ok := ai.escapePlan(w, here)
 	if !ok || !w.match.bossPlaceBubble(b, w.now) {
 		return
 	}
-	ai.path = escape
-	ai.counter = 0
+	ai.appendEscape(escape)
 	b.path = nil
 	if len(escape) > 1 {
 		b.path = []battleengine.Cell{escape[1].cell}

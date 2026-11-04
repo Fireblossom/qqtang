@@ -140,7 +140,7 @@ func TestNPCBubbleEligibilityMatchesNativeKindByteAndLazyLineCheck(t *testing.T)
 		}
 		var path []pathNode
 		if row.Present {
-			path = []pathNode{{kind: row.Kind, marker: row.Marker}}
+			path = []pathNode{{kind: row.Kind, padding: row.Marker}}
 		}
 		calls := 0
 		eligible := npcBubbleEligible(path, func() bool { calls++; return row.Near })

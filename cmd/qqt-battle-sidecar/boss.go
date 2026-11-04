@@ -76,8 +76,9 @@ type bossController interface {
 }
 
 type bossRule struct {
-	actors map[uint16]*bossActor
-	outbox []boxNPCOutbound
+	moveCommand npcMoveCommand
+	actors      map[uint16]*bossActor
+	outbox      []boxNPCOutbound
 	// The interleaved spawn table (0x005C18E2): A0, B0, A1, B1, ..., then the
 	// rest of A, then the rest of B. Boss i stands on entry [players + i].
 	spawns  []battleengine.Cell
