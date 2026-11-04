@@ -170,11 +170,11 @@ func TestNPCEscapeAndFleeMatchNativeWFAndChoice(t *testing.T) {
 	}
 }
 
-func TestBoxNPCMovementAndFollowerUseNPCSpeeds(t *testing.T) {
+func TestBoxNPCOwnerAndReceiverUseTheirDistinctNativeSpeedTables(t *testing.T) {
 	for _, row := range []struct {
-		role byte
-		dx   int32
-	}{{26, 100}, {27, 123}} {
+		role       byte
+		dx, peerDX int32
+	}{{25, 40, 40}, {26, 100, 72}, {27, 123, 140}} {
 		match := npcTestMatch(t, 1, 1)
 		npc := addTestNPC(t, match, 20001, row.role)
 		start := npc.pos
@@ -190,8 +190,8 @@ func TestBoxNPCMovementAndFollowerUseNPCSpeeds(t *testing.T) {
 		remote.netMoveSet = true
 		remote.netMove = game.PlayerMoveSequence{CurrentPosX: uint16(start.X), CurrentPosY: uint16(start.Y), EndPosX: 420, EndPosY: uint16(start.Y), Speed: remote.speed, WalkAndDirection: 0x10}
 		peer.interpolateBoxNPC(remote, 1000)
-		if remote.pos.X-start.X != row.dx {
-			t.Fatalf("role%d peer travel%d want%d", row.role, remote.pos.X-start.X, row.dx)
+		if remote.pos.X-start.X != row.peerDX {
+			t.Fatalf("role%d peer travel%d want%d", row.role, remote.pos.X-start.X, row.peerDX)
 		}
 	}
 }

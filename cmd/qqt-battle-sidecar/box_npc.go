@@ -412,7 +412,12 @@ func (match *onlineMatch) interpolateBoxNPC(n *boxNPCActor, now uint32) {
 	m := n.netMove
 	pos := battleengine.NativeNPCPosition{X: float32(m.CurrentPosX), Y: float32(m.CurrentPosY)}
 	end := battleengine.NativeNPCPosition{X: float32(m.EndPosX), Y: float32(m.EndPosY)}
-	speed := float32(bossSpeedTable[min(int(m.Speed), len(bossSpeedTable)-1)])
+	speed := nativeNPCRemoteScalar(m.Speed)
+	if match.adventure != nil {
+		// Adventure uses its separately adapted initializer/controller;
+		// this native 005D086B trace covers rule1/2/8 scene entities.
+		speed = float32(bossSpeedTable[min(int(m.Speed), len(bossSpeedTable)-1)])
+	}
 	travel := float32(float32(float32(now-m.TimeStamp)*speed) * float32(.04))
 	if m.WalkAndDirection&0x10 != 0 {
 		// Forecast corner is where perpendicular correction starts. Follow the
