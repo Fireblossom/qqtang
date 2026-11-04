@@ -101,15 +101,10 @@ func TestBoxNPCReceiverCreatesBeforeProxyAndUsesCellCoordinates(t *testing.T) {
 		t.Fatal("creation retry doubled NPC")
 	}
 }
-func TestBoxNPCBombRequiresEscapeAndDeduplicatesTCPUDP(t *testing.T) {
-	m := npcTestMatch(t, 1, 1)
-	n := addTestNPC(t, m, 20001, 27)
-	if !m.npcPlace(n, 100) {
-		t.Fatal("open-field NPC did not find safe bubble escape")
-	}
-	if len(m.engine.Bombs()) != 1 || len(n.navigator.path.nodes) == 0 {
-		t.Fatal("bubble placement did not retain escape plan")
-	}
+
+// Accept authenticated replicated bubbles for compatibility with existing
+// peers; the rule8 controller itself does not originate ordinary bubbles.
+func TestBoxNPCReceivedBombDeduplicatesTCPUDP(t *testing.T) {
 	peer := npcTestMatch(t, 2, 1)
 	addTestNPC(t, peer, 20001, 27)
 	body, _ := (game.PlayerUseBombEvent{PlayerID: 20001, ClientTime: 100, BombID: 1, Row: 5, Column: 5, Power: 4}).MarshalNetworkBinary()
@@ -118,19 +113,27 @@ func TestBoxNPCBombRequiresEscapeAndDeduplicatesTCPUDP(t *testing.T) {
 	if len(peer.engine.Bombs()) != 1 {
 		t.Fatal("reliable138B duplicated proxy0FA3 bubble")
 	}
-	blocked := npcTestMatch(t, 1, 1)
-	trapped := addTestNPC(t, blocked, 20001, 25)
-	for _, c := range []battleengine.Cell{{Row: 4, Col: 5}, {Row: 5, Col: 6}, {Row: 6, Col: 5}, {Row: 5, Col: 4}} {
-		blocked.engine.SetNativeBoxCell(c, battleengine.Tile{Kind: battleengine.CellSolid, MapElementOccupied: true})
-	}
-	if blocked.npcPlace(trapped, 100) {
-		t.Fatal("boxed-in NPC placed a bubble without escape")
-	}
+}
 
-	// Capacity is separately enforced even when a second path is clear.
-	n.capacity = 1
-	if m.npcPlace(n, 120) {
-		t.Fatal("NPC exceeded own bubble capacity")
+func TestBoxNPCDefaultUpdatesMoveWithoutOriginatingBubbles(t *testing.T) {
+	for _, role := range []byte{25, 26, 27} {
+		m := npcTestMatch(t, 1, 1)
+		n := addTestNPC(t, m, 20001, role)
+		start := n.pos
+		moved := false
+		for now := uint32(60020); now < 70000; now += 20 {
+			m.advanceBoxNPC(n, now)
+			moved = moved || n.pos != start
+			if len(m.engine.Bombs()) != 0 {
+				t.Fatalf("rule8 role%d originated a bubble at %d", role, now)
+			}
+		}
+		if !moved {
+			t.Fatalf("role%d stopped moving while removing bubble dispatch", role)
+		}
+		if len(mirrored(t, m, game.PlayerUseBomb)) != 0 {
+			t.Fatal("rule8 emitted an ordinary bubble message")
+		}
 	}
 }
 
@@ -188,32 +191,6 @@ func TestBoxNPCEnteringExistingBoxFlameIsTrapped(t *testing.T) {
 	}
 }
 
-func TestBoxNPCSearchAppendsBeforeCapacityFailureAndPreservesRouteOnSearchFailure(t *testing.T) {
-	m := npcTestMatch(t, 1, 1)
-	n := addTestNPC(t, m, 20001, 25)
-	old := []pathNode{{cell: n.pos.Cell(), dir: 2}, {cell: boxStep(n.pos.Cell(), 2), dir: 9, kind: 3}}
-	n.navigator.path.nodes = append([]pathNode(nil), old...)
-	if _, err := m.engine.PlaceRuleNPCBomb(n.id, battleengine.Cell{Row: 1, Col: 1}, 3, 0, 0); err != nil {
-		t.Fatal(err)
-	}
-	if m.npcPlace(n, 100) {
-		t.Fatal("full capacity placed a second bubble")
-	}
-	if len(m.engine.Bombs()) != 1 || len(n.navigator.path.nodes) <= len(old) || n.navigator.path.nodes[len(n.navigator.path.nodes)-1] != old[len(old)-1] {
-		t.Fatal("capacity failure discarded the native escape append")
-	}
-	blocked := npcTestMatch(t, 1, 1)
-	b := addTestNPC(t, blocked, 20001, 25)
-	b.navigator.path.nodes = append([]pathNode(nil), old...)
-	for direction := byte(0); direction < 4; direction++ {
-		if err := blocked.engine.SetNativeBoxCell(boxStep(b.pos.Cell(), direction), battleengine.Tile{Kind: battleengine.CellSolid, MapElementOccupied: true}); err != nil {
-			t.Fatal(err)
-		}
-	}
-	if blocked.npcPlace(b, 100) || len(blocked.engine.Bombs()) != 0 || len(b.navigator.path.nodes) != len(old) {
-		t.Fatal("failed search placed or discarded the old route")
-	}
-}
 func TestBoxNPCSyrupTimeoutAndRespawnAreSceneState(t *testing.T) {
 	m := npcTestMatch(t, 1, 1)
 	n := addTestNPC(t, m, 20001, 25)

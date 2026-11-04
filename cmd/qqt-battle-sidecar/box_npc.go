@@ -2,9 +2,9 @@ package main
 
 // Rule-8 AIType2: 00616D19/005B8FA7 create one roaming entity after 60s,
 // replenishing an empty NPC list after 3s. 005DF20B chooses 007A358C:
-// 005DEF29 gates safe decisions at 500ms and escapes danger, while 005DF009
-// places a bubble only after 005B0598 finds an escape route. This controller
-// shares the native WF search and candidate order with Boss controllers.
+// 005DEF29 gates safe decisions at 500ms and escapes danger. Rule8 does not
+// register the normal bubble command 00610BA0, so generic AIType2 bubble
+// code 005DF009 is not dispatched. Escape search shares WF with Bosses.
 // The rule-8 move command dispatches every 12 updates (stop retries sooner).
 // Default geometry uses the shared integer native movement/corner resolver;
 // subpixel integration, active traversal and status interactions remain open.
@@ -34,7 +34,6 @@ type boxNPCActor struct {
 	trapped                         bool
 	trappedAt                       uint32
 	lastTick                        uint32
-	nextDecision                    uint32
 	lastDanger                      uint32
 	navigator                       npcNavigator
 	moveBlocked                     bool
@@ -453,40 +452,6 @@ func (match *onlineMatch) npcPath(n *boxNPCActor, danger battleengine.DangerTime
 	}
 	return nil
 }
-func (match *onlineMatch) npcPlace(n *boxNPCActor, now uint32) bool {
-	// 005DF009 searches/appends before 005B08E0 checks actual capacity.
-	path, ok := (&bossGeneral{}).escapePlan(match.bossWorld(now), n.pos.Cell())
-	if !ok {
-		return false
-	}
-	n.navigator.path.appendEscape(path)
-	active := 0
-	for _, b := range match.engine.Bombs() {
-		if b.OwnerID == n.id {
-			active++
-		}
-		if b.Cell == n.pos.Cell() {
-			return false
-		}
-	}
-	if active >= int(n.capacity) || !match.npcOpen(n.pos.Cell(), n.pos.Cell()) {
-		return false
-	}
-	property := byte(0)
-	if n.sceneFourUntil > now {
-		property = 1
-	}
-	placed, err := match.engine.PlaceRuleNPCBomb(n.id, n.pos.Cell(), uint16(n.power)+1, property, now)
-	if err != nil {
-		return false
-	}
-	match.bombs[placed.BombID] = wireBomb{owner: n.id, placedAt: now, cell: n.pos.Cell()}
-	body, _ := (game.PlayerUseBombEvent{PlayerID: n.id, ClientTime: now, BombID: 1, Row: byte(n.pos.Cell().Row), Column: byte(n.pos.Cell().Col), Power: uint16(n.power) + 1, Property: property}).MarshalNetworkBinary()
-	match.queueBoxNPC(n.id, game.PlayerUseBomb, now, body)
-	match.mirror(game.PlayerUseBomb, body)
-	match.logf("box NPC %d places bubble at %d,%d", n.id, n.pos.Cell().Row, n.pos.Cell().Col)
-	return true
-}
 func (match *onlineMatch) advanceBoxNPC(n *boxNPCActor, now uint32) {
 	if now < n.lastTick {
 		return
@@ -534,15 +499,7 @@ func (match *onlineMatch) advanceBoxNPC(n *boxNPCActor, now uint32) {
 		n.danger, _ = match.engine.DangerTimeline(4000)
 		n.lastDanger = now
 	}
-	// Bubble polling retains its existing cadence until its separate dispatch
-	// call site is traced. Eligibility and vector append are independent of
-	// the frame-counted move command.
-	if now >= n.nextDecision {
-		n.nextDecision = now + 500
-		if npcBubbleEligible(n.navigator.path.nodes, func() bool { return match.bossWorld(now).playerInLine(n.pos.Cell()) }) {
-			match.npcPlace(n, now)
-		}
-	}
+	// 00609DF9 omits 00610BA0: rule8 never polls generic NPC bubbles.
 	if direction, emitted := match.boxNPCState().moveCommand.tick(8, now, 1, 1, func() byte {
 		return match.chooseBoxNPCDirection(n, now, dt)
 	}); emitted {
