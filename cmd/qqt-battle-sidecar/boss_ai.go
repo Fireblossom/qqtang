@@ -8,12 +8,10 @@ package main
 // checks every frame whether to place a bubble. The pathfinder is
 // WFPathFinder (0x005E006A).
 //
-// Differences from the original, by design: one engine tick (20 ms) is one
-// frame; a chosen direction walks to the neighbouring cell centre rather
-// than steering continuously; randomness comes from the sidecar's own
-// generator (the original's is arbitrator-local too, so peers never
-// simulate it); the global fuse change of 0x005B0BAF (2500 ms after 60 s)
-// is not applied, because peers would not see it.
+// Commands retain their direction between decisions. Default, untransformed
+// general Bosses use the shared native float32 movement and endpoint forecast.
+// One engine tick (20ms) is one decision frame; planner/path consumption and
+// special capabilities still have separate compatibility work.
 
 import (
 	"math"
@@ -309,6 +307,7 @@ func (ai *bossGeneral) tick(match *onlineMatch, b *bossActor, now uint32) {
 	if !ai.inited {
 		ai.inited = true
 		ai.gate, ai.last = now, [4]uint32{now, now, now, now}
+		b.navigator.walking, b.navigator.direction = b.moving, b.facing
 	}
 	w := match.bossWorld(now)
 	ai.bombTick(w, b)
@@ -316,11 +315,36 @@ func (ai *bossGeneral) tick(match *onlineMatch, b *bossActor, now uint32) {
 		ai.counter++
 	} else if d := ai.decide(w, b); d == bossDirStop {
 		b.path = nil // 0x005C07D6 stops; the counter stays, so it decides again next frame
+		b.navigator.walking = false
 	} else {
 		ai.counter = 0
 		b.path = []battleengine.Cell{bossStep(b.pos.Cell(), d)}
+		b.navigator.walking, b.navigator.direction = true, byte(d)
 	}
-	match.bossMove(b, now)
+	if b.transformed() {
+		match.bossMove(b, now)
+	} else {
+		match.moveDefaultNPC(&b.boxNPCActor, now-b.lastTick)
+		// Retire the old centre target as the continuous command passes it.
+		// The special-capability fallback must not later walk back to it.
+		if len(b.path) > 0 {
+			target := battleengine.PositionAtCellCenter(b.path[0])
+			reached := false
+			switch b.facing {
+			case 0:
+				reached = b.pos.Y == target.Y && b.pos.X >= target.X
+			case 1:
+				reached = b.pos.X == target.X && b.pos.Y <= target.Y
+			case 2:
+				reached = b.pos.Y == target.Y && b.pos.X <= target.X
+			case 3:
+				reached = b.pos.X == target.X && b.pos.Y >= target.Y
+			}
+			if reached {
+				b.path = b.path[1:]
+			}
+		}
+	}
 }
 
 // decide is 0x005DF058.

@@ -548,7 +548,7 @@ func (match *onlineMatch) advanceBoxNPC(n *boxNPCActor, now uint32) {
 			n.path = []battleengine.Cell{boxStep(n.pos.Cell(), direction)}
 		}
 	}
-	match.moveBoxNPC(n, dt)
+	match.moveDefaultNPC(n, dt)
 	match.collectBoxNPCPickup(n, now)
 	match.publishBoxNPCMove(n, now, false)
 	n.lastTick = now
@@ -564,8 +564,8 @@ func (n *boxNPCActor) nativePosition() battleengine.NativeNPCPosition {
 	return n.motion
 }
 
-// moveBoxNPC runs the original default float resolver and 25ms forecast.
-func (match *onlineMatch) moveBoxNPC(n *boxNPCActor, dt uint32) {
+// moveDefaultNPC runs the original default float resolver and 25ms forecast.
+func (match *onlineMatch) moveDefaultNPC(n *boxNPCActor, dt uint32) {
 	n.moveEndValid, n.moveEnd = true, n.pos
 	n.moveCorner = battleengine.Position{}
 	n.moving = false

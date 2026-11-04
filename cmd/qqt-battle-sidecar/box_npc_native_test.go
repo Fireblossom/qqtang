@@ -180,7 +180,7 @@ func TestBoxNPCOwnerAndReceiverUseTheirDistinctNativeSpeedTables(t *testing.T) {
 		start := npc.pos
 		npc.navigator.walking, npc.navigator.direction = true, 0
 		for now := uint32(20); now <= 1000; now += 20 {
-			match.moveBoxNPC(npc, 20)
+			match.moveDefaultNPC(npc, 20)
 		}
 		if npc.pos.X-start.X != row.dx {
 			t.Fatalf("role%d arb travel%d want%d", row.role, npc.pos.X-start.X, row.dx)

@@ -97,9 +97,10 @@
   - [x] 九张真实地图构建与隐藏物品保留测试通过；1404保留原始重复出生槽位和抽样权重。
   - [x] 1401/1404双autoplay真实联网局双方同判2队胜，分别在90220/37120ms，服务端零warn/error。1401还验证NPC生成、糖浆6秒死亡和补生；该旧局主动放泡属于宿主偏差。
   - [x] 推/停双端、碰撞阈值、箱内道具随动、发射器奇偶侧挡、再生UID/1500ms保护、49/Scene1含义、RPC/UDP NPC去重/接管均有专项测试。
-  - [~] NPC速度表、WF逃生/避险与候选权重（`docs/box-ai-re.md`）、路径栈追加/消费和两层门控（`docs/npc-follow-re.md`）、默认碰撞/滑角与持续火焰命中均已接入。7177条原版记录、相关Go全套、Python197项及Windows/386交叉编译通过；1401/1404两端实测覆盖角色25/26/27、6秒困泡死亡/补生及自然胜负，服务端零告警；末击与最终死亡通知乱序/重复亦已补幂等回归（`docs/npc-navigation-re.md`）。规则8不派发普通放泡，旧500ms自动放泡已撤下（`docs/npc-rule-dispatch-re.md`）。默认float32位移及完整Corner/End预测已接入（`docs/npc-motion-re.md`）；默认接收端已按原版玩家表、逐帧拐角/终点及float32累加修正（`docs/npc-remote-path-re.md`），接收队列与快慢回正也已对照（`docs/npc-remote-queue-re.md`），共享发送历史/序列及无固定心跳也已对照（`docs/npc-publish-re.md`），完整Win32实局仍待核对；默认冰箱速度覆盖及同步已接入（`docs/npc-ice-re.md`），默认freeze空槽、命令恢复和阴影已接入（`docs/npc-picture-re.md`）；变身/主动道具等能力仍待完成。
+  - [~] NPC速度表、WF逃生/避险与候选权重（`docs/box-ai-re.md`）、路径栈追加/消费和两层门控（`docs/npc-follow-re.md`）、默认碰撞/滑角与持续火焰命中均已接入。7526条原版记录、相关Go全套、Python197项及Windows/386交叉编译通过；1401/1404两端实测覆盖角色25/26/27、6秒困泡死亡/补生及自然胜负，服务端零告警；末击与最终死亡通知乱序/重复亦已补幂等回归（`docs/npc-navigation-re.md`）。规则8不派发普通放泡，旧500ms自动放泡已撤下（`docs/npc-rule-dispatch-re.md`）。默认float32位移及完整Corner/End预测已接入（`docs/npc-motion-re.md`）；默认接收端已按原版玩家表、逐帧拐角/终点及float32累加修正（`docs/npc-remote-path-re.md`），接收队列与快慢回正也已对照（`docs/npc-remote-queue-re.md`），共享发送历史/序列及无固定心跳也已对照（`docs/npc-publish-re.md`），完整Win32实局仍待核对；默认冰箱速度覆盖及同步已接入（`docs/npc-ice-re.md`），默认freeze空槽、命令恢复和阴影已接入（`docs/npc-picture-re.md`）；变身/主动道具等能力仍待完成。
   - [ ] 未做历史录像逐帧画面对照；当前资源无flame10000/10001图片，未补造这两张特效。
 - [~] Boss 叠加层（18 张图，含地图 11、124）：AIType 3 控制器、出生/受伤/掉落/死亡、接触击杀、技能 1 减速胶已接入（`docs/boss-lifecycle-re.md`、`docs/boss-ai-re.md`）。
+  - [x] AIType3未变身Boss持续保留方向，已接入默认float32物理与完整Corner/End预测；349条原版记录、5568帧对照通过。变身、特殊控制器和探险仲裁物理仍待核对（`docs/boss-motion-re.md`）。
   - [x] 引擎开关 `NativeBossNPC`、出生格、命中与 3 s 免伤、部分/死亡掉落、接触击杀、寻路、放泡逃生、技能 1 节奏、仲裁接管有专项测试。
   - [x] 地图 11 双 autoplay 真实联网局：两端同格生成，命中/掉落/技能/击杀都被服务端接受；Boss 死亡判胜、全员阵亡判负都实测过（结果见 README）。
   - [x] 海盗解释器（大副/虎克）：5 套脚本、禁泡、两波落泡、陷阱；虎克地图 12 实测零 warn。

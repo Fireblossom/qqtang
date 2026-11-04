@@ -25,7 +25,7 @@ def signed(value):
     return value if value < 2**31 else value - 2**32
 
 
-def run(root):
+def motion_environment(root):
     e = Win32Emu(root / 'Client.exe', root)
     # GFX CreateDevice omits FPU_PRESERVE: single precision, round-nearest.
     e.uc.reg_write(UC_X86_REG_FPCW, 0x007F)
@@ -60,17 +60,23 @@ def run(root):
     e.write(0x6200CE, b'\xe9' + struct.pack('<i', code - 0x6200CE - 5))
     scene, actor, output = [e.malloc(n) for n in (0x6000, 0x1000, 32)]
 
-    def move(position, direction, dt, speed):
+    def move(position, direction, dt, speed, tolerance=10):
         dx, dy = DELTAS[direction]
         moved = e.call(0x5CFC10, (scene, bits(position[0]), bits(position[1]), 0, direction,
-                                 bits(speed*dx), bits(speed*dy), dt, 10,
+                                 bits(speed*dx), bits(speed*dy), dt, tolerance,
                                  output, output+4, output+8, output+12))
         result = struct.unpack('<ff', e.read(output, 8))
         return moved, result
 
+    return e, scene, actor, output, blocked, move
+
+
+def run(root):
+    e, scene, actor, output, blocked, move = motion_environment(root)
+
     def record(position, direction, walls, forecast=True):
-        nonlocal blocked
-        blocked = set(walls)
+        blocked.clear()
+        blocked.update(walls)
         parameters = [(1, 1), (20, 3.077), (25, 13.333), (1000, 3.077)] if forecast else [(20, 3.077), (1000, 3.077)]
         for dt, speed in parameters:
             moved, result = move(position, direction, dt, speed)
@@ -99,7 +105,7 @@ def run(root):
                 position = (220+(axial if dx else cross), 260+(cross if dx else axial))
                 for walls in layouts:
                     record(position, direction, walls, forecast=False)
-        blocked = set()
+        blocked.clear()
         for dt in (17, 20, 25):
             for speed in (1, 2.5, 3.077):
                 position = (220, 260)

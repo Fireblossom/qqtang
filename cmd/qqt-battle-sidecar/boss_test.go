@@ -233,9 +233,6 @@ func TestBossChasesAndBubblesThenEscapes(t *testing.T) {
 			placed = placed || bomb.OwnerID == 30001
 		}
 	}
-	if b.pos == start {
-		t.Fatal("Boss never moved")
-	}
 	if !placed {
 		t.Fatalf("Boss placed no bubble; at %+v", b.pos.Cell())
 	}
@@ -244,14 +241,31 @@ func TestBossChasesAndBubblesThenEscapes(t *testing.T) {
 	}
 	// It leaves its own bubble's cross before the burst.
 	var bombCell battleengine.Cell
+	var firstBomb uint32
+	var afterBurst uint32
 	for _, bomb := range m.engine.Bombs() {
 		if bomb.OwnerID == 30001 {
 			bombCell = bomb.Cell
+			firstBomb, afterBurst = bomb.ID, bomb.ExplodeAtMS+520
 		}
 	}
-	for i := 0; i < 140; i++ {
-		events, _ := m.runtime.Step(nil)
+	// Placing a bubble does not bypass the movement command's frame gate.
+	// Verify escape after the actual first burst, rather than expecting a
+	// step in the placement frame or stopping the test before the fuse.
+	for m.engine.ElapsedMS() < afterBurst {
+		events, err := m.runtime.Step(nil)
+		if err != nil {
+			t.Fatal(err)
+		}
 		m.bossTick(m.engine.ElapsedMS(), events)
+	}
+	if b.pos == start {
+		t.Fatal("Boss never moved after its command gate")
+	}
+	for _, bomb := range m.engine.Bombs() {
+		if bomb.ID == firstBomb {
+			t.Fatal("test did not reach the first bubble's burst")
+		}
 	}
 	if b.dead || b.hp != 5 {
 		t.Fatalf("Boss was caught by its own bubble at %+v (bubble %+v), HP %d", b.pos.Cell(), bombCell, b.hp)

@@ -151,7 +151,7 @@ func TestBoxNPCInitialNavigatorAndBlockedSubpixelEndpoint(t *testing.T) {
 	}
 	n.pos = battleengine.Position{X: 20, Y: 60}
 	n.navigator.walking, n.navigator.direction = true, 2
-	m.moveBoxNPC(n, 1)
+	m.moveDefaultNPC(n, 1)
 	if !n.moving || !n.moveBlocked || n.moveEnd != n.pos {
 		t.Fatalf("blocked remainder advertised invalid endpoint: pos%v end%v moving%v", n.pos, n.moveEnd, n.moving)
 	}
@@ -199,7 +199,7 @@ func TestBoxNPCAdvertisesFullFloatForecastAndFollowsCorrectionFirst(t *testing.T
 	if err := m.engine.SetNativeBoxCell(battleengine.Cell{Row: 5, Col: 6}, battleengine.Tile{Kind: battleengine.CellSolid, MapElementOccupied: true}); err != nil {
 		t.Fatal(err)
 	}
-	m.moveBoxNPC(n, 20)
+	m.moveDefaultNPC(n, 20)
 	if n.pos.X != 220 || n.motion.Y <= 253 || n.motion.Y >= 254 || n.moveCorner != n.pos || n.moveEnd != (battleengine.Position{X: 580, Y: 260}) {
 		t.Fatalf("native float correction and full forecast: pos%v motion%v corner%v end%v", n.pos, n.motion, n.moveCorner, n.moveEnd)
 	}
