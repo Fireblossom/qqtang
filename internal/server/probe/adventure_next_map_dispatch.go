@@ -29,6 +29,14 @@ func (server *Server) handleAdventureNextMap(session *connectionSession, data []
 	result := adventureNextMapResult{startFollowUpResult: "qqt_second_followup"}
 	response, nextRequest, err := game.BuildLocalGameNextMapSuccess(data)
 	result.response = response
+	var battle *match.AdventureBattle
+	if err == nil && nextRequest.PlayerID == session.Profile.PlayerID {
+		battle, _ = server.adventureBattle(session.CurrentGameID)
+		if enteredMap, duplicate := server.duplicateAdventureDoorway(battle, nextRequest); duplicate {
+			result.result = fmt.Sprintf("qqt_adventure_next_map_duplicate_%d", enteredMap)
+			return result, nil
+		}
+	}
 	currentMap, currentExists := server.mapCatalog.Map(session.CurrentMapID)
 	nextMap, hasNext := server.mapCatalog.Next(session.CurrentMapID)
 	validSequence := currentExists && (nextRequest.ContinueID == uint32(currentMap.SequenceID) || nextRequest.ContinueID == game.NoRemoteContinueFileIDWire)
@@ -37,9 +45,10 @@ func (server *Server) handleAdventureNextMap(session *connectionSession, data []
 		err = fmt.Errorf("invalid next-map request player=%d continue=%d next_map=%d current_map=%d", nextRequest.PlayerID, nextRequest.ContinueID, nextRequest.NextMapID, session.CurrentMapID)
 	}
 	var transition match.AdventureStageTransition
-	var battle *match.AdventureBattle
 	if err == nil {
-		battle, err = server.adventureBattle(session.CurrentGameID)
+		if battle == nil {
+			battle, err = server.adventureBattle(session.CurrentGameID)
+		}
 		if err == nil {
 			transition, err = battle.PrepareNextStage(nextRequest.PlayerID)
 		}
@@ -136,6 +145,27 @@ func (server *Server) handleAdventureNextMap(session *connectionSession, data []
 		}
 	}
 	return result, nil
+}
+
+// Two living clients can reach the old doorway before either receives the
+// room-wide next-map notification. A destination naming the immediately
+// applied edge needs only its own ACK, without another stage mutation/fanout.
+// A zero destination is ambiguous and keeps ordinary current-stage checks.
+func (server *Server) duplicateAdventureDoorway(battle *match.AdventureBattle, request game.GameNextMapRequest) (uint32, bool) {
+	if battle == nil || request.NextMapID == game.UnspecifiedNextMapIDWire || !battle.HasParticipant(request.PlayerID) {
+		return 0, false
+	}
+	previous, current := battle.StageMapIDs()
+	if previous == 0 {
+		return 0, false
+	}
+	from, exists := server.mapCatalog.Map(previous)
+	to, hasNext := server.mapCatalog.Next(previous)
+	validContinue := exists && (request.ContinueID == uint32(from.SequenceID) || request.ContinueID == game.NoRemoteContinueFileIDWire)
+	if validContinue && hasNext && to.ID == current && adventureNextMapTargetMatches(request.NextMapID, previous, current, true) {
+		return current, true
+	}
+	return 0, false
 }
 
 func adventureFinalStageParticipants(transition match.AdventureStageTransition) []match.AdventureParticipant {

@@ -123,6 +123,7 @@ type AdventureBattle struct {
 	mu                  sync.Mutex
 	gameID              uint32
 	mapID               uint32
+	previousMapID       uint32
 	arbitratorID        uint16
 	participants        map[uint16]AdventureParticipant
 	alive               map[uint16]bool
@@ -283,6 +284,17 @@ func (battle *AdventureBattle) ItemSeed() uint32 {
 	battle.mu.Lock()
 	defer battle.mu.Unlock()
 	return battle.itemSeed
+}
+
+// StageMapIDs returns the most recent stage edge. Fresh matches have no
+// previous map; the edge is replaced only by a successful stage advance.
+func (battle *AdventureBattle) StageMapIDs() (previous, current uint32) {
+	if battle == nil {
+		return 0, 0
+	}
+	battle.mu.Lock()
+	defer battle.mu.Unlock()
+	return battle.previousMapID, battle.mapID
 }
 
 // CanAdvanceStage reports whether a client doorway request may be accepted.
@@ -483,6 +495,10 @@ func (battle *AdventureBattle) AdvanceStageWithRule(mapID, itemSeed, expectedNPC
 	}
 	if _, exists := nextParticipants[arbitratorID]; !exists {
 		return fmt.Errorf("next-stage arbitrator player %d is not a survivor", arbitratorID)
+	}
+	battle.previousMapID = battle.mapID
+	if mapID == battle.mapID {
+		battle.previousMapID = 0
 	}
 	battle.mapID = mapID
 	battle.itemSeed = itemSeed

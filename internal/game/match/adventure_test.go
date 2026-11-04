@@ -2,6 +2,34 @@ package match
 
 import "testing"
 
+func TestAdventureStageMapIDsTrackOnlySuccessfulAdvance(t *testing.T) {
+	battle, err := NewAdventureBattle(7, 1601, 1, []AdventureParticipant{{PlayerID: 1, TeamID: 1, RoleID: 1}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if previous, current := battle.StageMapIDs(); previous != 0 || current != 1601 {
+		t.Fatalf("initial stage %d -> %d", previous, current)
+	}
+	if err = battle.AdvanceStageWithRule(1602, 2, 4, 1, battle.Participants()); err != nil {
+		t.Fatal(err)
+	}
+	if previous, current := battle.StageMapIDs(); previous != 1601 || current != 1602 {
+		t.Fatalf("advanced stage %d -> %d", previous, current)
+	}
+	if err = battle.AdvanceStageWithRule(1603, 3, 4, 9, battle.Participants()); err == nil {
+		t.Fatal("invalid arbitrator advanced the stage")
+	}
+	if previous, current := battle.StageMapIDs(); previous != 1601 || current != 1602 || battle.ItemSeed() != 2 {
+		t.Fatalf("failed advance changed stage %d -> %d", previous, current)
+	}
+	if err = battle.AdvanceStageWithRule(1603, 3, 4, 1, battle.Participants()); err != nil {
+		t.Fatal(err)
+	}
+	if previous, current := battle.StageMapIDs(); previous != 1602 || current != 1603 {
+		t.Fatalf("latest stage %d -> %d", previous, current)
+	}
+}
+
 func TestAdventureBattleConcludesOnlyAfterAllPlayersDie(t *testing.T) {
 	battle, err := NewAdventureBattle(7, 1601, 1, []AdventureParticipant{
 		{PlayerID: 2, TeamID: 1},
