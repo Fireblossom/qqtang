@@ -40,8 +40,9 @@ func TestNPCRemoteScalarAndStraightHeldStepMatchNative(t *testing.T) {
 			scalars++
 			continue
 		}
-		n := &boxNPCActor{role: row.Role, netMoveSet: true, netMove: game.PlayerMoveSequence{CurrentPosX: row.Start[0], CurrentPosY: row.Start[1], EndPosX: row.End[0], EndPosY: row.End[1], WalkAndDirection: 0x10 | row.Direction, Speed: row.Rate}}
+		n := &boxNPCActor{role: row.Role, netMoveSet: true, netMove: game.PlayerMoveSequence{Sequence: 1, TimeStamp: 1, CurrentPosX: row.Start[0], CurrentPosY: row.Start[1], EndPosX: row.End[0], EndPosY: row.End[1], WalkAndDirection: 0x10 | row.Direction, Speed: row.Rate}}
 		m := &onlineMatch{}
+		m.interpolateBoxNPC(n, 0) // consume; native timestamp is not a frame deadline
 		m.interpolateBoxNPC(n, row.Dt)
 		if math.Float32bits(n.motion.X) != math.Float32bits(row.Position[0]) || math.Float32bits(n.motion.Y) != math.Float32bits(row.Position[1]) {
 			t.Fatalf("role%d rate%d dir%d dt%d: got%v native%v", row.Role, row.Rate, row.Direction, row.Dt, n.motion, row.Position)
@@ -92,7 +93,8 @@ func TestPVERemoteMatchesInitializedNativeController(t *testing.T) {
 			t.Fatal("motion samples lack initialization witness")
 		}
 		m := &onlineMatch{adventure: &adventureRule{}}
-		n := &boxNPCActor{netMoveSet: true, netMove: game.PlayerMoveSequence{CurrentPosX: row.Start[0], CurrentPosY: row.Start[1], EndPosX: row.End[0], EndPosY: row.End[1], WalkAndDirection: 0x10 | row.Direction, Speed: row.Rate}}
+		n := &boxNPCActor{netMoveSet: true, netMove: game.PlayerMoveSequence{Sequence: 1, TimeStamp: 1, CurrentPosX: row.Start[0], CurrentPosY: row.Start[1], EndPosX: row.End[0], EndPosY: row.End[1], WalkAndDirection: 0x10 | row.Direction, Speed: row.Rate}}
+		m.interpolateBoxNPC(n, 0) // consume; native timestamp is not a frame deadline
 		m.interpolateBoxNPC(n, row.Dt)
 		if math.Float32bits(n.motion.X) != math.Float32bits(row.Position[0]) || math.Float32bits(n.motion.Y) != math.Float32bits(row.Position[1]) {
 			t.Fatalf("PVE rate%d dir%d dt%d: %v native%v", row.Rate, row.Direction, row.Dt, n.motion, row.Position)
@@ -145,10 +147,11 @@ func TestNPCRemoteHeldPathsMatchNative(t *testing.T) {
 				walk |= 0x10
 			}
 			actor = &boxNPCActor{netMoveSet: true, netMove: game.PlayerMoveSequence{
-				CurrentPosX: uint16(row.Start[0]), CurrentPosY: uint16(row.Start[1]),
+				Sequence: 1, TimeStamp: 1, CurrentPosX: uint16(row.Start[0]), CurrentPosY: uint16(row.Start[1]),
 				CornerPosX: uint16(row.Corner[0]), CornerPosY: uint16(row.Corner[1]),
 				EndPosX: uint16(row.End[0]), EndPosY: uint16(row.End[1]), WalkAndDirection: walk, Speed: row.Rate,
 			}}
+			(&onlineMatch{}).interpolateBoxNPC(actor, 0)
 		}
 		var now uint32
 		for index, frame := range row.Frames {
@@ -163,8 +166,8 @@ func TestNPCRemoteHeldPathsMatchNative(t *testing.T) {
 				// Repeated delivery/tick at the same time must not consume an
 				// extra native phase transition or erase accumulated fractions.
 				match.interpolateBoxNPC(actor, now)
-				if actor.motion != s.position || actor.remote.held.phase != s.phase {
-					t.Fatalf("wire %s dir%d rate%d frame%d: %v phase%d native%v phase%d", row.Case, row.Direction, row.Rate, index, actor.motion, actor.remote.held.phase, s.position, s.phase)
+				if actor.motion != s.position || actor.remote.queue.held.phase != s.phase {
+					t.Fatalf("wire %s dir%d rate%d frame%d: %v phase%d native%v phase%d", row.Case, row.Direction, row.Rate, index, actor.motion, actor.remote.queue.held.phase, s.position, s.phase)
 				}
 			}
 			frames++

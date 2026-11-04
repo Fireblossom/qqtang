@@ -2,7 +2,6 @@ package main
 
 import (
 	"qqtang/internal/game/battleengine"
-	"qqtang/internal/protocol/game"
 )
 
 // 005D1348 stores 005C450F's player-table value in Actor+3B0 even for
@@ -97,28 +96,25 @@ func (s *nativeNPCRemoteHeld) frame(dt uint32) {
 	}
 }
 
-// Packet selection still uses the host's latest-record policy. Once selected,
-// retain the native held state instead of recalculating three legs from age.
+// npcRemotePlayback connects the native queue to the host actor-frame clock.
+// Receiving a record only queues it; consuming it happens after the picture frame.
 type npcRemotePlayback struct {
 	initialized bool
-	move        game.PlayerMoveSequence
+	frameSet    bool
 	time        uint32
-	held        nativeNPCRemoteHeld
+	queue       nativeNPCRemoteQueue
 }
 
-func (p *npcRemotePlayback) advance(m game.PlayerMoveSequence, now uint32) battleengine.NativeNPCPosition {
-	if !p.initialized || p.move != m {
-		p.initialized, p.move, p.time = true, m, m.TimeStamp
-		p.held = nativeNPCRemoteHeld{
-			position:  battleengine.NativeNPCPosition{X: float32(m.CurrentPosX), Y: float32(m.CurrentPosY)},
-			corner:    battleengine.NativeNPCPosition{X: float32(m.CornerPosX), Y: float32(m.CornerPosY)},
-			end:       battleengine.NativeNPCPosition{X: float32(m.EndPosX), Y: float32(m.EndPosY)},
-			direction: m.WalkAndDirection & 3, rate: m.Speed, walking: m.WalkAndDirection&0x10 != 0, phase: -1,
-		}
+func (p *npcRemotePlayback) initialize(position battleengine.NativeNPCPosition, now uint32) {
+	p.initialized, p.time = true, now
+	p.queue.held = nativeNPCRemoteHeld{position: position, direction: 3}
+}
+
+func (p *npcRemotePlayback) frame(now uint32) bool {
+	if now < p.time || p.frameSet && now == p.time {
+		return false
 	}
-	if now > p.time {
-		p.held.frame(now - p.time)
-		p.time = now
-	}
-	return p.held.position
+	consumed := p.queue.frame(now - p.time)
+	p.time, p.frameSet = now, true
+	return consumed
 }

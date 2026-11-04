@@ -917,11 +917,12 @@ func (match *onlineMatch) adventureRemote(sender uint16, event game.GameEvent) (
 		}
 		for _, entry := range movement.Entries {
 			m := entry.Move
-			if entry.PlayerID != n.id || n.netMoveSet && int16(m.Sequence-n.netMove.Sequence) < 0 {
+			if entry.PlayerID != n.id {
 				continue
 			}
-			n.netMove, n.netMoveSet, n.sequence, n.speed, n.path = m, true, m.Sequence, m.Speed, nil
-			match.interpolateBoxNPC(&n.boxNPCActor, match.engine.ElapsedMS())
+			if match.receiveNPCMove(&n.boxNPCActor, m) {
+				n.speed = m.Speed
+			}
 		}
 	}
 	return nil, true

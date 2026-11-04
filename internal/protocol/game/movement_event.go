@@ -12,8 +12,9 @@ const (
 	playerMoveSequenceWireSize        = 20
 )
 
-// PlayerMoveSequence is the 20-byte PLAYER_MOVESEQ record. WalkAndDirection
-// remains an opaque combined byte until its bit allocation is proven.
+// PlayerMoveSequence is the 20-byte PLAYER_MOVESEQ record. 005AF44D decodes
+// WalkAndDirection as low-nibble direction, 0x10 walking, and 0x20 a forced
+// position record consumed by 005D0A65.
 type PlayerMoveSequence struct {
 	Sequence         uint16
 	TimeStamp        uint32

@@ -79,7 +79,7 @@ func TestNPCIcePictureEndsOnCommandWhileSpeedEffectRemains(t *testing.T) {
 	}
 }
 
-func TestNPCRemoteMoveResetsPictureAfterFrameAndOnlyWhenDue(t *testing.T) {
+func TestNPCRemoteQueueConsumesAfterPictureWithoutTimestampDeadline(t *testing.T) {
 	m := npcTestMatch(t, 2, 1)
 	n := addTestNPC(t, m, 20001, 27)
 	n.picture.set(7, 3)
@@ -88,16 +88,19 @@ func TestNPCRemoteMoveResetsPictureAfterFrameAndOnlyWhenDue(t *testing.T) {
 		t.Fatal(err)
 	}
 	m.boxNPCRemote(1, game.GameEvent{Schema: game.PlayerMoveSchema, Body: body})
+	if n.picture.action != 7 || n.picture.clock != 0 {
+		t.Fatal("receive consumed the command before the actor frame")
+	}
 	m.boxNPCTick(20)
-	if n.picture.action != 7 || n.picture.clock != 20 {
-		t.Fatal("future movement reset the pose early")
+	if n.picture.action != 4 || n.picture.clock != 0 {
+		t.Fatal("timestamp was incorrectly used as a frame deadline")
 	}
 	m.boxNPCTick(40)
-	if n.picture.action != 4 || n.picture.clock != 0 {
-		t.Fatalf("remote pose did not reset after graphics frame: %+v", n.picture)
+	if n.picture.action != 4 || n.picture.clock != 40 {
+		t.Fatalf("walking picture did not retain its clock: %+v", n.picture)
 	}
 	m.boxNPCTick(60)
-	if n.picture.clock != 40 {
+	if n.picture.clock != 80 {
 		t.Fatal("same interpolation record reset the walking clock again")
 	}
 	// A replay of that record is not a new picture command and must not

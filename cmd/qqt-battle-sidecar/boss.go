@@ -640,7 +640,6 @@ func (match *onlineMatch) bossRemote(sender uint16, event game.GameEvent) ([]bat
 		}
 		rule.seen[key] = true
 	}
-	now := match.engine.ElapsedMS()
 	switch event.Schema {
 	case game.PlayerMoveSchema:
 		movement, err := game.ParsePlayerMove(event.Body)
@@ -649,11 +648,12 @@ func (match *onlineMatch) bossRemote(sender uint16, event game.GameEvent) ([]bat
 		}
 		for _, entry := range movement.Entries {
 			m := entry.Move
-			if entry.PlayerID != b.id || b.netMoveSet && (m.TimeStamp < b.netMove.TimeStamp || int16(m.Sequence-b.netMove.Sequence) < 0) {
+			if entry.PlayerID != b.id {
 				continue
 			}
-			b.netMove, b.netMoveSet, b.sequence, b.speed, b.path = m, true, m.Sequence, m.Speed, nil
-			match.interpolateBoxNPC(&b.boxNPCActor, now)
+			if match.receiveNPCMove(&b.boxNPCActor, m) {
+				b.speed = m.Speed
+			}
 		}
 	case game.PlayerUseBomb, game.NotifyPlayerUseBomb:
 		q, err := game.ParsePlayerUseBombEvent(game.GameEvent{Schema: game.PlayerUseBomb, Body: event.Body})

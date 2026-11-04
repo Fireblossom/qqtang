@@ -188,7 +188,8 @@ func TestBoxNPCOwnerAndReceiverUseTheirDistinctNativeSpeedTables(t *testing.T) {
 		peer := npcTestMatch(t, 2, 1)
 		remote := addTestNPC(t, peer, 20001, row.role)
 		remote.netMoveSet = true
-		remote.netMove = game.PlayerMoveSequence{CurrentPosX: uint16(start.X), CurrentPosY: uint16(start.Y), EndPosX: 420, EndPosY: uint16(start.Y), Speed: remote.speed, WalkAndDirection: 0x10}
+		remote.netMove = game.PlayerMoveSequence{Sequence: 1, TimeStamp: 1, CurrentPosX: uint16(start.X), CurrentPosY: uint16(start.Y), EndPosX: 420, EndPosY: uint16(start.Y), Speed: remote.speed, WalkAndDirection: 0x10}
+		peer.interpolateBoxNPC(remote, 0)
 		peer.interpolateBoxNPC(remote, 1000)
 		if remote.pos.X-start.X != row.peerDX {
 			t.Fatalf("role%d peer travel%d want%d", row.role, remote.pos.X-start.X, row.peerDX)

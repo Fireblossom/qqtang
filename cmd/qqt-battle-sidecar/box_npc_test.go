@@ -156,7 +156,7 @@ func TestBoxNPCInitialNavigatorAndBlockedSubpixelEndpoint(t *testing.T) {
 		t.Fatalf("blocked remainder advertised invalid endpoint: pos%v end%v moving%v", n.pos, n.moveEnd, n.moving)
 	}
 	n.netMoveSet = true
-	n.netMove = game.PlayerMoveSequence{CurrentPosX: 20, CurrentPosY: 60, EndPosX: 20, EndPosY: 60, WalkAndDirection: 0x12, Speed: 1}
+	n.netMove = game.PlayerMoveSequence{Sequence: 1, TimeStamp: 1, CurrentPosX: 20, CurrentPosY: 60, EndPosX: 20, EndPosY: 60, WalkAndDirection: 0x12, Speed: 1}
 	m.interpolateBoxNPC(n, 1000)
 	if !n.moving {
 		t.Fatal("blocked wire walk flag was overwritten by equal endpoint")
@@ -217,6 +217,10 @@ func TestBoxNPCAdvertisesFullFloatForecastAndFollowsCorrectionFirst(t *testing.T
 	remote := addTestNPC(t, peer, 20001, 27)
 	remote.netMoveSet, remote.netMove = true, wire
 	peer.interpolateBoxNPC(remote, 120)
+	if remote.pos != (battleengine.Position{X: 220, Y: 253}) {
+		t.Fatalf("new record did not consume at its reported start: %+v", remote.pos)
+	}
+	peer.interpolateBoxNPC(remote, 140)
 	if remote.pos.X != 220 || remote.pos.Y <= 253 || remote.pos.Y >= 260 {
 		t.Fatalf("peer skipped perpendicular correction: %+v", remote.pos)
 	}

@@ -30,7 +30,6 @@ type boxNPCActor struct {
 	motionKnown                     bool
 	ice                             npcIceState
 	picture                         npcPictureState
-	pictureMovePending              bool
 	facing                          byte
 	moving                          bool
 	dead                            bool
@@ -378,16 +377,6 @@ func (match *onlineMatch) boxNPCTick(now uint32) {
 				n.ice.frame(now - previous)
 			}
 			match.interpolateBoxNPC(n, now)
-			// 005ABE96 updates the picture before the remote interpolator;
-			// a newly consumed move can then reset the pose to frame zero.
-			if n.pictureMovePending && n.netMoveSet && now >= n.netMove.TimeStamp && !n.trapped {
-				action := byte(1)
-				if n.netMove.WalkAndDirection&0x10 != 0 {
-					action = 4
-				}
-				n.picture.set(action, n.netMove.WalkAndDirection&3)
-				n.pictureMovePending = false
-			}
 			if now >= previous {
 				n.lastTick = now
 			}
@@ -405,17 +394,50 @@ func (match *onlineMatch) boxNPCTick(now uint32) {
 	}
 }
 
-// interpolateBoxNPC follows the owner's last PLAYER_MOVE segment.
+func (match *onlineMatch) receiveNPCMove(n *boxNPCActor, movement game.PlayerMoveSequence) bool {
+	if !n.remote.initialized {
+		n.remote.initialize(n.remoteActorPosition(), n.lastTick)
+	}
+	if !n.remote.queue.receive(movement) {
+		return false
+	}
+	n.netMove, n.netMoveSet, n.sequence, n.path = movement, true, movement.Sequence, nil
+	return true
+}
+
+func (n *boxNPCActor) remoteActorPosition() battleengine.NativeNPCPosition {
+	if n.motionKnown && n.motion.Pixels() == n.pos {
+		return n.motion
+	}
+	return battleengine.NativeNPCPosition{X: float32(n.pos.X), Y: float32(n.pos.Y)}
+}
+
+// interpolateBoxNPC executes the received queue after this actor's picture frame.
 func (match *onlineMatch) interpolateBoxNPC(n *boxNPCActor, now uint32) {
-	if !n.netMoveSet || n.trapped || now < n.netMove.TimeStamp {
+	if !n.netMoveSet || n.trapped {
 		return
 	}
-	m := n.netMove
-	pos := n.remote.advance(m, now)
-	n.motion, n.motionKnown = pos, true
-	n.pos = pos.Pixels()
-	n.moving = m.WalkAndDirection&0x10 != 0
-	n.facing = m.WalkAndDirection & 3
+	if !n.remote.initialized {
+		match.receiveNPCMove(n, n.netMove)
+	}
+	// The native controller reads Actor+338/+33C each frame. Keep external
+	// position changes (including ownership changes) in that same actor state.
+	n.remote.queue.held.position = n.remoteActorPosition()
+	consumed := n.remote.frame(now)
+	held := n.remote.queue.held
+	if consumed {
+		action, facing := byte(1), n.facing
+		if held.walking {
+			action, facing = 4, held.direction
+		}
+		n.picture.set(action, facing)
+	}
+	n.motion, n.motionKnown = held.position, true
+	n.pos = held.position.Pixels()
+	n.moving = held.walking
+	if held.walking {
+		n.facing = held.direction
+	}
 	n.lastTick = now
 }
 func (match *onlineMatch) npcOpen(cell battleengine.Cell, origin battleengine.Cell) bool {
@@ -584,7 +606,6 @@ func (match *onlineMatch) moveBoxNPC(n *boxNPCActor, dt uint32) {
 
 func (match *onlineMatch) trapBoxNPC(n *boxNPCActor, now uint32) {
 	n.picture.set(2, 3) // 005B4E7B selects trigger and facing270
-	n.pictureMovePending = false
 	n.trapped = true
 	n.trappedAt = now
 	n.lastTick = now
@@ -767,19 +788,7 @@ func (match *onlineMatch) boxNPCRemote(sender uint16, event game.GameEvent) ([]b
 			if entry.PlayerID != n.id {
 				continue
 			}
-			m := entry.Move
-			if n.netMoveSet && (m.TimeStamp < n.netMove.TimeStamp || int16(m.Sequence-n.netMove.Sequence) < 0) {
-				continue
-			}
-			fresh := !n.netMoveSet || m != n.netMove
-			n.netMove = m
-			n.netMoveSet = true
-			n.pictureMovePending = n.pictureMovePending || fresh
-			n.sequence = m.Sequence
-			// Wire speed is effective (e.g. ice=2), not the permanent stat.
-			// Base speed follows the spawn template and item notifications.
-			n.path = nil
-			match.interpolateBoxNPC(n, match.engine.ElapsedMS())
+			match.receiveNPCMove(n, entry.Move)
 		}
 		return nil, true
 	case game.PlayerUseBomb, game.NotifyPlayerUseBomb:
@@ -802,7 +811,6 @@ func (match *onlineMatch) boxNPCRemote(sender uint16, event game.GameEvent) ([]b
 		q, err := game.ParsePlayerExplodedEvent(event)
 		if err == nil && !n.dead && !q.IsAvatar {
 			n.picture.set(2, 3)
-			n.pictureMovePending = false
 			n.pos = battleengine.Position{X: int32(q.PosX), Y: int32(q.PosY)}
 			n.trapped = true
 			n.trappedAt = q.ClientTime
