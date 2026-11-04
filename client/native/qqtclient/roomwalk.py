@@ -163,7 +163,7 @@ class RoomWalk:
                  font: Callable[[int], pygame.font.Font] | None = None):
         self.runtime, self.session, self.state, self.avatars, self.sprites, self.font = runtime, session, state, avatars, sprites, font
         self.keys: list[int] = []  # the held arrows, latest last (0x005A4BEF)
-        self.names_flag = False  # F8 (0x0045816B)
+        self.name_key_down = False
         self.bombs: dict[tuple[int, int], tuple[int, int]] = {}  # (row, col) -> (placed, style)
         self.flames: list[tuple[int, int, int, int]] = []  # row, col, image, started
         self.clock = 0
@@ -183,6 +183,14 @@ class RoomWalk:
         session.on_disconnected.append(self.close)
 
     # Helpers ----------------------------------------------------------------
+
+    @property
+    def names_flag(self) -> bool:
+        return getattr(self.runtime, "names_flag", False)
+
+    @names_flag.setter
+    def names_flag(self, value: bool) -> None:
+        self.runtime.names_flag = value
 
     def in_room(self) -> bool:
         return self.runtime.current_screen == "room" and self.state.snapshot is not None and self.runtime.activity is None
@@ -227,7 +235,10 @@ class RoomWalk:
     def handle(self, event: pygame.event.Event) -> None:
         if not self.in_room():
             self.keys.clear()
+            self.name_key_down = False
             return
+        if event.type == pygame.KEYUP and event.key == pygame.K_F8:
+            self.name_key_down = False
         if event.type == pygame.KEYUP and event.key in KEY_DIRECTIONS:
             if event.key in self.keys:
                 self.keys.remove(event.key)
@@ -240,7 +251,9 @@ class RoomWalk:
         elif event.key == pygame.K_SPACE:
             self.put_local_bomb()
         elif event.key == pygame.K_F8:
-            self.names_flag = not self.names_flag
+            if not self.name_key_down:
+                self.names_flag = not self.names_flag
+                self.name_key_down = True
 
     def put_local_bomb(self) -> None:
         seat = self.local_seat()

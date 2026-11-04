@@ -388,6 +388,9 @@ class BattleScene:
         self.shown_masks: dict[int, tuple[float, float]] = {}
         self.machine_projectiles: dict[tuple[int, int, bool], MachineGateAnimation] = {}
         self.bomb_pictures: dict[int, BombAnimation] = {}
+        self.names_flag = False
+        self.name_key_down = False
+        self.name_effect_ms = 0
         self.accumulated_ms = 0.0
         self.names = {player["id"]: player.get("name") or f"玩家{player['id']}" for player in players}
         # Room seats 0..7 by PlayerID (online only).
@@ -408,6 +411,7 @@ class BattleScene:
                text: Callable[[str, int, tuple[int, int, int]], pygame.Surface] | None = None) -> None:
         """Prepare UI.game the way the native host does when a match starts."""
         self.runtime, self.font, self.text = runtime, font, text
+        self.names_flag = getattr(runtime, "names_flag", False)
         # Client.exe (0x005A3C7F) hides the replay recorder and player; it
         # shows the player again only when playing a replay back.
         self._script("showRecordRecorder", 0)
@@ -473,7 +477,15 @@ class BattleScene:
 
     def handle(self, event: pygame.event.Event) -> None:
         if event.type == pygame.KEYDOWN:
-            if event.key in EMOTION_KEYS:
+            if event.key == pygame.K_F8:
+                # 00610142 has no chat guard; the keyboard only toggles
+                # on the press edge, not on held-key repeat events.
+                if not getattr(self, "name_key_down", False):
+                    self.names_flag = not getattr(self, "names_flag", False)
+                    self.name_key_down = True
+                    if self.runtime is not None:
+                        self.runtime.names_flag = self.names_flag
+            elif event.key in EMOTION_KEYS:
                 chat_open = self.runtime is not None and self.runtime.namespace["Win_IsVisible"]("UI.game.chat")
                 if not chat_open and not self.over:
                     self.emotion_pressed = EMOTION_KEYS[event.key]
@@ -497,10 +509,13 @@ class BattleScene:
                 self._press_use(self._slots()[SLOT_KEYS[event.key]][0])
             elif event.key in USE_KEYS:
                 self._press_use(self._smart_use())
-        elif event.type == pygame.KEYUP and event.key in KEY_MOVES:
-            move = KEY_MOVES[event.key]
-            if move in self.held:
-                self.held.remove(move)
+        elif event.type == pygame.KEYUP:
+            if event.key == pygame.K_F8:
+                self.name_key_down = False
+            elif event.key in KEY_MOVES:
+                move = KEY_MOVES[event.key]
+                if move in self.held:
+                    self.held.remove(move)
 
     def _local_actor(self) -> dict[str, Any] | None:
         return next((actor for actor in self.state["actors"] if actor["id"] == self.local_id), None)
@@ -592,6 +607,7 @@ class BattleScene:
         previous_clock = self.clock
         tcp, self.pending_tcp = self.pending_tcp, []
         self.state = self.sidecar.step([action], min(ticks, 10), tcp)
+        self.name_effect_ms += self.clock - previous_clock
         self._update_machine_projectiles(self.clock - previous_clock)
         self._update_bomb_pictures(self.clock - previous_clock)
         for packet in self.state.get("tcp_out") or ():
@@ -1376,12 +1392,28 @@ class BattleScene:
         if actor["state"] == ACTOR_TRAPPED:
             self._draw_syrup(surface, trapped_for, x - AVATAR_ANCHOR[0], y - AVATAR_ANCHOR[1])
         self._draw_flash(surface, actor, x, y)
+        self._draw_nameplate(surface, actor, x, y)
         emotions = self.state.get("emotions") or ([self.practice_emotion] if self.practice_emotion else [])
         for emotion in emotions:
             if emotion["player"] == actor["id"] and 0 <= self.clock - emotion["since"] <= 3000:
                 # 0x005D1FFF places the element at raw actor position-(0,85).
                 # SetPos adds (-12,1); viewport conversion subtracts (8,21).
                 self._draw_frames(surface, f"object/misc/misc{499 + emotion['id']}_stand.img", 0, x - 20, y - 105)
+
+    def _draw_nameplate(self, surface: pygame.Surface, actor: dict[str, Any], x: int, y: int) -> None:
+        """005D2F96 / 005D3017: local arrow, or F8's remote name plate."""
+        if actor["id"] == self.local_id:
+            # Native effect point is raw actor+(10,-44), viewport -(8,21).
+            self._effects().draw(surface, "playerArrow.eff", self.name_effect_ms, x + 2, y - 65)
+        elif self.names_flag:
+            self._draw_frames(surface, "object/misc/misc171_stand.img", 0, x - 41, y - 98)
+            if self.text is not None:
+                name = self.names.get(actor["id"], "")
+                left = x - len(name.encode("gbk", "replace")) * 3 + 1
+                local = self._local_actor()
+                color = (0, 255, 0) if local is not None and actor["team"] == local["team"] else (255, 255, 0)
+                surface.blit(self.text(name, 12, (0, 0, 0)), (left + 1, y - 91))
+                surface.blit(self.text(name, 12, color), (left, y - 92))
 
     def _draw_flash(self, surface: pygame.Surface, actor: dict[str, Any], x: int, y: int) -> None:
         """The harm-protection bubble over an actor at field point (x, y)."""

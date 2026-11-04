@@ -1,0 +1,15 @@
+{"kind": "update", "case": "local", "effects": [["position", 110, 156], ["update", 20]]}
+{"kind": "draw", "case": "local", "enabled": 0, "texts": [], "effects": [["draw"]], "images": []}
+{"kind": "draw", "case": "local", "enabled": 1, "texts": [], "effects": [["draw"]], "images": []}
+{"kind": "update", "case": "enemy", "effects": []}
+{"kind": "draw", "case": "enemy", "enabled": 0, "texts": [], "effects": [], "images": []}
+{"kind": "draw", "case": "enemy", "enabled": 1, "texts": [[158, 170, "\u7cd6\u516d", 4278190080, 12], [157, 169, "\u7cd6\u516d", 4294967040, 12]], "effects": [], "images": [{"number": 171, "position": [127, 163]}]}
+{"kind": "draw", "case": "ally", "enabled": 1, "texts": [[158, 170, "\u7cd6\u516d", 4278190080, 12], [157, 169, "\u7cd6\u516d", 4278255360, 12]], "effects": [], "images": [{"number": 171, "position": [127, 163]}]}
+{"kind": "draw", "case": "ascii", "enabled": 1, "texts": [[155, 170, "Bob_7", 4278190080, 12], [154, 169, "Bob_7", 4278255360, 12]], "effects": [], "images": [{"number": 171, "position": [127, 163]}]}
+{"kind": "keyboard", "pressed": false, "flag": 0}
+{"kind": "keyboard", "pressed": true, "flag": 1}
+{"kind": "keyboard", "pressed": true, "flag": 1}
+{"kind": "keyboard", "pressed": false, "flag": 1}
+{"kind": "keyboard", "pressed": true, "flag": 0}
+{"kind": "keyboard", "pressed": false, "flag": 0}
+{"kind": "keyboard_locked", "pressed": true, "flag": 1}

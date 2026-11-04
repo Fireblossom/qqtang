@@ -34,6 +34,7 @@ class UIRuntime:
         self.widgets: dict[str, Widget] = {}
         self.screens: dict[str, str] = {}
         self.current_screen: str | None = None
+        self.names_flag = False  # shared F8 toggle: native keyboard +0x23
         self.focus: Widget | None = None
         self.pressed: Widget | None = None
         self.last_press: tuple[float, tuple[int, int], Widget | None] = (0.0, (0, 0), None)
