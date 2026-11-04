@@ -95,8 +95,12 @@ class Widget:
         # Win_SetDrawTexRect / Win_SetDrawWinRect: draw only this part of the
         # background image, in image coordinates (None draws all of it).
         self.texture_rect: tuple[int, int, int, int] | None = None
-        self.alpha = 1.0
-        self.alpha_speed = 0.0
+        alpha = attr("alphafactor")
+        alpha_speed = attr("alphaspeed")
+        minimum_alpha = attr("minalphafactor")
+        self.alpha = 1.0 if alpha is None else float(alpha)
+        self.alpha_speed = 1.0 if alpha_speed is None else float(alpha_speed)
+        self.alpha_minimum = 0.0 if minimum_alpha is None else float(minimum_alpha)
         self.alpha_direction = 0
         self.hover = False
         self.pressed = False

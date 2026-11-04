@@ -13,6 +13,7 @@ from . import dimg
 from .resources import Resources
 from .script import log
 from .widgets import TEXT_INPUT_TYPES, Widget
+from .ui_alpha import alpha_byte, combined_alpha
 
 DT_CENTER, DT_RIGHT, DT_VCENTER, DT_BOTTOM = 1, 2, 4, 8
 FONT_CANDIDATES = (
@@ -159,7 +160,7 @@ class Renderer:
         if not widget.visible:
             return
         x, y = parent_x + widget.x, parent_y + widget.y
-        alpha = parent_alpha * widget.alpha
+        alpha = combined_alpha(widget.alpha, parent_alpha if widget.parent is not None else None)
         if alpha <= 0:
             return
         if widget.dark_background:
@@ -169,7 +170,7 @@ class Renderer:
         if widget.back_color[3] > 0 and widget.w > 0 and widget.h > 0:
             fill = pygame.Surface((widget.w, widget.h), pygame.SRCALPHA)
             r, g, b, a = widget.back_color
-            fill.fill((r, g, b, int(a * alpha)))
+            fill.fill((r, g, b, alpha_byte(alpha, a)))
             self.screen.blit(fill, (x, y))
         if widget.type == "NUMLABEL":
             self._draw_number(widget, x, y, alpha)
@@ -210,11 +211,14 @@ class Renderer:
             return
         parent = widget.parent
         x, y = parent.absolute() if parent is not None else (0, 0)
-        alpha = 1.0
+        ancestors = []
         while parent is not None:
-            alpha *= parent.alpha
+            ancestors.append(parent)
             parent = parent.parent
-        self._draw(widget, x, y, alpha, None)
+        alpha = None
+        for ancestor in reversed(ancestors):
+            alpha = combined_alpha(ancestor.alpha, alpha)
+        self._draw(widget, x, y, 1.0 if alpha is None else alpha, None)
 
     def _draw_life_strip(self, widget: Widget, x: int, y: int, alpha: float) -> None:
         """1001192F: keep both end thirds and stretch the middle third."""
@@ -236,7 +240,7 @@ class Renderer:
             middle = source.subsurface((cap, 0, cap, source.get_height()))
             image.blit(pygame.transform.scale(middle, (width - 2 * cap, source.get_height())), (cap, 0))
             image.blit(source, (width - cap, 0), (source.get_width() - cap, 0, cap, source.get_height()))
-        image.set_alpha(int(255 * alpha))
+        image.set_alpha(alpha_byte(alpha))
         self.screen.blit(image, (x + ox, y + oy))
 
     def _draw_hotcover(self, widget: Widget, x: int, y: int, alpha: float) -> None:
@@ -249,7 +253,7 @@ class Renderer:
         if surface is None:
             return
         hx, hy = widget.hot_rect[:2] if widget.hot_rect else (0, 0)
-        surface.set_alpha(int(255 * alpha))
+        surface.set_alpha(alpha_byte(alpha))
         self.screen.blit(surface, (x + hx + offset_x, y + hy + offset_y))
         surface.set_alpha(255)
 
@@ -265,7 +269,7 @@ class Renderer:
         visible = max((ch or widget.h) // line_height, 1)
         for number, (line, color) in enumerate(lines[-visible:]):
             rendered = self.text_line(line, size, color)
-            rendered.set_alpha(int(255 * alpha))
+            rendered.set_alpha(alpha_byte(alpha))
             self.screen.blit(rendered, (x + cx + 2, y + cy + number * line_height))
 
     def _draw_glyph_frames(self, widget: Widget, x: int, y: int, alpha: float) -> None:
@@ -279,7 +283,7 @@ class Renderer:
             if not 0 <= glyph < len(frames) or frames[glyph][0] is None:
                 continue
             surface, offset_x, offset_y = frames[glyph]
-            surface.set_alpha(int(255 * alpha))
+            surface.set_alpha(alpha_byte(alpha))
             self.screen.blit(surface, (x + index * (advance or surface.get_width()) + offset_x, y + offset_y))
             surface.set_alpha(255)
 
@@ -299,7 +303,7 @@ class Renderer:
         advance = int(widget.attr("textsize", 0) or 0) or width
         if widget.text_style & DT_CENTER:
             x += (widget.w - len(widget.text) * advance) // 2
-        strip.set_alpha(int(255 * alpha))
+        strip.set_alpha(alpha_byte(alpha))
         for index, char in enumerate(widget.text):
             glyph = NUMBER_GLYPHS.find(char)
             if glyph >= 0:
@@ -336,7 +340,10 @@ class Renderer:
                 draw_y += int((widget.h - canvas_h) / 2)
             else:
                 draw_y += widget.h - canvas_h
-        surface.set_alpha(int(255 * alpha))
+        opacity = alpha_byte(alpha)
+        if opacity == 0:
+            return
+        surface.set_alpha(opacity)
         if widget.texture_rect is not None:
             tx, ty, tw, th = widget.texture_rect
             if tw > 0 and th > 0:
@@ -391,10 +398,10 @@ class Renderer:
             position = (left, top + number * line_height + (size - rendered.get_height()) // 2)
             if edge[3] > 0:
                 outline = self.text_line(line, size, edge[:3])
-                outline.set_alpha(int(255 * alpha))
+                outline.set_alpha(alpha_byte(alpha))
                 for dx, dy in ((-1, 0), (1, 0), (0, -1), (0, 1)):
                     self.screen.blit(outline, (position[0] + dx, position[1] + dy))
-            rendered.set_alpha(int(a * alpha) if a else int(255 * alpha))
+            rendered.set_alpha(alpha_byte(alpha, a) if a else alpha_byte(alpha))
             self.screen.blit(rendered, position)
 
     def _draw_tip_box(self, widget: Widget, x: int, y: int, alpha: float) -> None:
@@ -414,7 +421,7 @@ class Renderer:
         width, source_height = image.get_size()
         third = source_height // 3
         height = max(height, 2 * third)
-        image.set_alpha(int(255 * alpha))
+        image.set_alpha(alpha_byte(alpha))
         self.screen.blit(image, (x, y), pygame.Rect(0, 0, width, third))
         middle = height - 2 * third
         if middle > 0:

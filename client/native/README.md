@@ -307,3 +307,5 @@ Go 的游戏、协议和服务端测试可在 macOS 运行；包含本地 TCP/UD
 - 结算画面已按真实v848控制器执行输出修正：普通misc300、机器/箱子misc290；等待3000ms后700px/s下落至(43,74)，探险横移100px，311/312/313胜负标题在(228,6)，314/315/316为行结果。行距27px，数字301/309/310，数量与每项得分成对显示，等级复用原版UI淡入；生命周期12000ms，见 `docs/results-re.md`。竞技XP条、按Score总和投影的等级、整级边界、Remark荣誉和Identity bit13覆盖见 `docs/result-progress-re.md`；多人列表保留报文原序，见 `docs/result-order-re.md`；探险用pvedata与勇气积分/全部Score计算进度，见 `docs/result-pve-re.md`。完整角色与胜负动作已替代静态头像裁切，保留默认部件、原版画布/阴影位置及200ms独立时钟；150条原版记录、真实211双端及Python192项通过，见 `docs/result-portrait-re.md`。
   - 房间模式分支亦已接通：原版SetGameType经QQTSection getter写入场景+51A4，带道具场1用misc322且普通经验进度0/0；不是free_rule或登录SectionMode。8条接口/场景记录、9条原生绘制、真实214双端与Python197项通过，见 `docs/result-modes-re.md`。
 - 人物部件绘制顺序（由后到前）：npack、foot、leg、body、cloth、head、face、hair；方向帧 0 右、1 上、2 左、3 下。普通图即红队配色；其他队伍用 `_m` 灰度图按 `colorlist.dat` 的色相染色，保持 HLS 亮度。
+
+控件透明度声明、渐变最小值/边界回调及父子ARGB调制已按gameUI实际执行修正，154条独立UI基准和Python200项通过；PVE头像位置保持原脚本，透明度恢复0.8（`docs/ui-alpha-re.md`）。

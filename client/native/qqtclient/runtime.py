@@ -10,14 +10,16 @@ import pygame
 
 from .script import ScriptLoader, call_script, log
 from .widgets import TEXT_INPUT_TYPES, Widget, build
+from .ui_alpha import advance_alpha
 
 EDIT_NUMBER = 1
 EDIT_CHAR_NUMBER = 4
 # Win_SetValue channels used by fade effects (uiLogo): 41 sets the alpha step
-# per 60 Hz frame and 901 selects the direction (1 = fade in, 2 = fade out).
+# per widget update and 901 selects the direction (1 = fade in, 2 = fade out).
 CHANNEL_ALPHA_SPEED = 41
 CHANNEL_ALPHA = 42
 CHANNEL_ALPHA_DIRECTION = 901
+CHANNEL_ALPHA_MINIMUM = 904
 FADE_IN, FADE_OUT = 1, 2
 # Windows defaults: GetDoubleClickTime() and SM_CXDOUBLECLK / 2.
 DOUBLE_CLICK_S = 0.5
@@ -183,7 +185,6 @@ class UIRuntime:
             widget = self.widgets.get(key)
             if widget is not None:
                 self.call(widget, "OnTimer")
-        frames = elapsed_ms / (1000 / 60)
         for widget in list(self.widgets.values()):
             if widget.type == "DYMASK":
                 # 0x10012057: degrees per second, approach destination.
@@ -199,10 +200,10 @@ class UIRuntime:
                     widget.strip_current = min(widget.strip_destination, widget.strip_current + delta)
                 else:
                     widget.strip_current = max(widget.strip_destination, widget.strip_current - delta)
-            if widget.alpha_direction == FADE_IN:
-                widget.alpha = min(1.0, widget.alpha + widget.alpha_speed * frames)
-            elif widget.alpha_direction == FADE_OUT:
-                widget.alpha = max(0.0, widget.alpha - widget.alpha_speed * frames)
+            widget.alpha, widget.alpha_direction, disappeared = advance_alpha(
+                widget.alpha, widget.alpha_speed, widget.alpha_minimum, widget.alpha_direction)
+            if disappeared:
+                self.call(widget, "OnDisappear")
 
     # Input ---------------------------------------------------------------
 
