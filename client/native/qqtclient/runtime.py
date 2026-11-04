@@ -16,6 +16,7 @@ EDIT_CHAR_NUMBER = 4
 # Win_SetValue channels used by fade effects (uiLogo): 41 sets the alpha step
 # per 60 Hz frame and 901 selects the direction (1 = fade in, 2 = fade out).
 CHANNEL_ALPHA_SPEED = 41
+CHANNEL_ALPHA = 42
 CHANNEL_ALPHA_DIRECTION = 901
 FADE_IN, FADE_OUT = 1, 2
 # Windows defaults: GetDoubleClickTime() and SM_CXDOUBLECLK / 2.

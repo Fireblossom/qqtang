@@ -25,7 +25,7 @@ from .sidecar import Sidecar, SidecarError
 
 # The result stays up this long unless Enter, Esc or a click returns to the
 # room earlier.
-RESULT_SHOWN_MS = 10_000
+RESULT_SHOWN_MS = 12_000  # native result controller 00612C86
 SKIP_KEYS = (pygame.K_RETURN, pygame.K_KP_ENTER, pygame.K_ESCAPE)
 HELLO_INTERVAL_MS = 60_000
 
@@ -125,7 +125,7 @@ class OnlineBattle:
             "GetPVEPlayerInfo": lambda: [],
         })
         runtime.goto_screen("game")
-        self.scene.attach(runtime, begin_info["map_id"], renderer.font, renderer.text_line)
+        self.scene.attach(runtime, begin_info["map_id"], renderer.font, renderer.text_line, renderer.draw_widget)
         renderer.underlay, renderer.overlay = self.scene.draw, self.scene.draw_overlay
 
     def on_game_event(self, packet: game.Packet) -> None:
@@ -150,7 +150,8 @@ class OnlineBattle:
         self.scene.over = True
         self.scene.show_results([
             ResultRow(result.player_id, result.result, *(result.counts + [0, 0, 0])[:3], result.point,
-                      self.context.members[result.player_id].points + result.point if result.player_id in self.context.members else result.point)
+                      self.context.members[result.player_id].points + result.point if result.player_id in self.context.members else result.point,
+                      tuple(result.scores), result.counts[3] if len(result.counts) > 3 else 0)
             for result in over.results
         ])
         if self.finish_at is None:

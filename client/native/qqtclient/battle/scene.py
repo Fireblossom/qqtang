@@ -22,6 +22,7 @@ from . import mapfile, prepared
 from .bomb_animation import BombAnimation
 from .effect import EffectPlayer
 from .machine_projectile import MachineGateAnimation
+from .result import ResultDisplay
 from .sculpture_animation import StatueAnimation
 from .sidecar import (ACTOR_ACTIVE, ACTOR_ELIMINATED, ACTOR_TRAPPED, EVENT_ACTOR_ELIMINATED, EVENT_ACTOR_RESPAWNED, EVENT_BOMB_EXPLODED,
                       EVENT_CELL_DAMAGED, EVENT_CELL_DESTROYED, EVENT_MAP_ELEMENT_MOVED, MOVE_DOWN, MOVE_LEFT, MOVE_NONE, MOVE_RIGHT, MOVE_UP, TICK_MS, Sidecar)
@@ -133,23 +134,6 @@ GAME_MODE_NORMAL = 0
 GAME_MODE_PVE = 1
 READY_MS = 3000  # online Ready/Go countdown from GAME_BEGIN
 RESULT_DRAW, RESULT_WIN = 1, 2  # net.match.RESULT_*
-# Result screen (object/misc): a Win/Lose/Draw card, then the result table.
-RESULT_CARDS = {RESULT_WIN: 297, RESULT_DRAW: 295}  # otherwise 296, Lose
-RESULT_WORDS = {RESULT_WIN: 314, RESULT_DRAW: 316}  # otherwise 315, 失败
-RESULT_TABLE = "object/misc/misc300_stand.img"  # 520x438: 胜负 昵称 杀敌数 救人数 等级 特殊荣誉
-RESULT_CARD_MS = 2500
-RESULT_TABLE_SIZE = (520, 438)
-# Inside the Win card (misc297, 594x327): the blank panel for the winners.
-WIN_PANEL = pygame.Rect(130, 135, 370, 175)
-RESULT_ROW_Y = 190  # centre of row 1 in the table image
-RESULT_ROW_STEP = 28
-RESULT_COLUMNS = (75, 139, 208, 285, 355)  # column centres in the table image
-RESULT_TEXT = (16, 62, 112)
-# Top of the table: the local player's head, name and four stat boxes
-# labelled with misc 303 杀敌, 302 救人, 307 得分 and 306 奖励.
-RESULT_HEAD = (16, 15)
-RESULT_NAME = (264, 31)
-RESULT_STATS = ((129, 55, 303), (319, 55, 302), (129, 91, 307), (319, 91, 306))
 # Treasure (rule 5) and wrestle (rule 4) scoreboard, Client.exe 0x005DB0B5
 # and 0x005E1F3A (rule 4 builds it in slot 10, 0x0060B789): per room seat
 # (actor +0x396, which uiGame's ui_NotifyShowLevelIcon passes to
@@ -284,6 +268,8 @@ class ResultRow:
     reward: int
     point: int  # points won in this match
     level_points: int  # total points, for the level icon
+    scores: tuple[int, ...] = ()  # paired per-field scores, retained from GAME_OVER
+    mode_count: int = 0  # fourth extension remains an ordinal, not inferred gameplay state
 
 
 @dataclasses.dataclass
@@ -404,14 +390,19 @@ class BattleScene:
         self.shown_player_icons: dict[int, tuple[int, int]] | None = None
         self.font: Callable[[int], pygame.font.Font] | None = None
         self.text: Callable[[str, int, tuple[int, int, int]], pygame.Surface] | None = None
+        self.draw_widget: Callable[[Any], None] | None = None
+        self.result_display: ResultDisplay | None = None
+        self.result_level_icons: dict[int, tuple[int, int, int]] = {}
         log(f"[battle] map {map_id} {self.map_name} ({self.map.width}x{self.map.height}, rule {self.map.rule})")
 
     # UI.game ------------------------------------------------------------------
 
     def attach(self, runtime: UIRuntime, map_id: int, font: Callable[[int], pygame.font.Font],
-               text: Callable[[str, int, tuple[int, int, int]], pygame.Surface] | None = None) -> None:
+               text: Callable[[str, int, tuple[int, int, int]], pygame.Surface] | None = None,
+               draw_widget: Callable[[Any], None] | None = None) -> None:
         """Prepare UI.game the way the native host does when a match starts."""
         self.runtime, self.font, self.text = runtime, font, text
+        self.draw_widget = draw_widget
         self.names_flag = getattr(runtime, "names_flag", False)
         # Client.exe (0x005A3C7F) hides the replay recorder and player; it
         # shows the player again only when playing a replay back.
@@ -609,6 +600,8 @@ class BattleScene:
 
     def tick(self, elapsed_ms: float) -> None:
         self.now_ms += elapsed_ms
+        if self.result_display is not None:
+            self.result_display.advance(int(elapsed_ms))
         # Online the sidecar still exchanges network traffic after its own
         # engine has ended; the server decides when the match is over.
         if self.outcome["ended"] and not self.realtime or self.over:
@@ -1489,76 +1482,55 @@ class BattleScene:
     def show_results(self, rows: list[ResultRow]) -> None:
         self.result_rows = sorted(rows, key=lambda row: (-row.result, row.player_id != self.local_id))
         self.result_shown_at = self.now_ms
-
-    def _misc(self, number: int) -> pygame.Surface | None:
-        frames = self.sprites.get(f"object/misc/misc{number}_stand.img")
-        return frames[0][0] if frames else None
-
-    def _blit_centered(self, screen: pygame.Surface, image: pygame.Surface | None, center: tuple[int, int]) -> None:
-        if image is not None:
-            screen.blit(image, image.get_rect(center=center))
-
-    def _draw_winners(self, screen: pygame.Surface, card: pygame.Rect) -> None:
-        winners = [row.player_id for row in self.result_rows if row.result == RESULT_WIN]
-        actors = {actor["id"]: actor for actor in self.state["actors"]}
-        panel = WIN_PANEL.move(card.topleft)
-        for index, player_id in enumerate(winners[:4]):
-            actor = actors.get(player_id)
-            image = self.avatars.get(actor["role"], actor["team"] - 1, "stand", wear=self.wear.get(player_id, ())) if actor else None
-            if image is not None:
-                x = panel.left + panel.width * (2 * index + 1) // (2 * min(len(winners), 4))
-                screen.blit(image, image.get_rect(midbottom=(x, panel.bottom)))
+        self.result_display = ResultDisplay(self.map.rule, self.result_rows, self.local_id, self.names)
+        self.result_level_icons = {}
+        for index in range(9):
+            self._script("ui_NotifyShowResultLevelIcon", 0, 0, 0, index, 0)
 
     def _draw_results(self, screen: pygame.Surface) -> None:
-        assert self.font is not None
-        ox, oy = FIELD_ORIGIN
-        center = (ox + self.map.width * CELL // 2, oy + self.map.height * CELL // 2)
-        if self.now_ms - self.result_shown_at < RESULT_CARD_MS:
-            card = self._misc(RESULT_CARDS.get(self.result if self.result is not None else -1, 296))
-            self._blit_centered(screen, card, center)
-            if card is not None and self.result == RESULT_WIN:
-                self._draw_winners(screen, card.get_rect(center=center))
+        display = self.result_display
+        if display is None:
             return
-        frames = self.sprites.get(RESULT_TABLE)
-        if not frames or frames[0][0] is None:
-            return
-        tx, ty = center[0] - RESULT_TABLE_SIZE[0] // 2, center[1] - RESULT_TABLE_SIZE[1] // 2
-        screen.blit(frames[0][0], (tx, ty))
-        font = self.font(12)
-        mine = next((row for row in self.result_rows if row.player_id == self.local_id), None)
+        images, texts = display.plan()
+        for item in images:
+            if item.alpha <= 0:
+                continue
+            frames = self.sprites.get(f"object/misc/misc{item.number}_stand.img") or ()
+            if not frames:
+                continue
+            image, x, y = frames[item.frame % len(frames)]
+            if image is not None:
+                image = image.copy()
+                image.set_alpha(item.alpha)
+                screen.blit(image, (item.x + x, item.y + y))
+        for item in texts:
+            if item.alpha <= 0:
+                continue
+            image = self.text(item.text, 12, (5, 87, 107)).copy() if self.text is not None else self.font(12).render(item.text, True, (5, 87, 107))
+            image.set_alpha(item.alpha)
+            screen.blit(image, (item.x, item.y))
         local = self._local_actor()
-        if local is not None:
-            head = self.avatars.get(local["role"], local["team"] - 1, "stand", wear=self.wear.get(local["id"], ()))
-            if head is not None:
-                screen.blit(head, (tx + RESULT_HEAD[0], ty + RESULT_HEAD[1]))
-        name = self.font(14).render(self.names.get(self.local_id, ""), True, (255, 255, 255))
-        screen.blit(name, name.get_rect(center=(tx + RESULT_NAME[0], ty + RESULT_NAME[1])))
-        if mine is not None:
-            for (x, y, label), value in zip(RESULT_STATS, (mine.kills, mine.rescues, mine.point, mine.reward)):
-                label_image = self._misc(label)
-                if label_image is not None:
-                    screen.blit(label_image, (tx + x + 8, ty + y + 6))
-                text = font.render(str(value), True, (255, 255, 255))
-                screen.blit(text, (tx + x + 60, ty + y + 7))
-        level = self.runtime.namespace.get("Level") if self.runtime else None
-        for index, row in enumerate(self.result_rows[:8]):
-            y = ty + RESULT_ROW_Y + index * RESULT_ROW_STEP
-            columns = [tx + x for x in RESULT_COLUMNS]
-            self._blit_centered(screen, self._misc(RESULT_WORDS.get(row.result, 315)), (columns[0], y))
-            for column, text in zip(columns[1:4], (self.names.get(row.player_id, ""), str(row.kills), str(row.rescues))):
-                rendered = font.render(text, True, RESULT_TEXT)
-                screen.blit(rendered, rendered.get_rect(center=(column, y)))
-            if callable(level):
-                # uiGame's Level (levelCFG.py) names the medal and tie images.
-                _title, main_level, min_level = level().getInfo(row.level_points)
-                for path in (level().getMainLevel(main_level), level().getMinLevel(main_level, min_level)):
-                    icon = self.sprites.get(path)
-                    if icon and icon[0][0] is not None:
-                        screen.blit(icon[0][0], (columns[4] - 20, y - 8))
+        if display.phase == 3 and local is not None and display.alpha > 0:
+            avatar = self.avatars.get(local["role"], local["team"] - 1, "stand", SPRITE_DIRECTION[MOVE_DOWN], wear=self.wear.get(local["id"], ()))
+            if avatar is not None:
+                head = avatar.subsurface(HEAD_CROP).copy()
+                head.set_alpha(display.alpha)
+                # Same native portrait offsets as the player list; raw
+                # portrait placement is (base+70,140), 00613196.
+                screen.blit(head, (display.base + 54, 119 - PLAYER_LIST_ROLE_RAISE.get(local["role"], 0)))
+        if self.runtime is not None:
+            for x, y, points, index, alpha in display.level_icons():
+                value = (x, y, points)
+                if self.result_level_icons.get(index) != value:
+                    self._script("ui_NotifyShowResultLevelIcon", x, y, points, index, 1)
+                    self.result_level_icons[index] = value
+                self._script("ui_NotifyRenderResultLevelIcon", index, alpha)
+            if self.draw_widget is not None:
+                self.draw_widget(self.runtime.find("UI.game.resultDlg"))
 
     def draw_overlay(self, screen: pygame.Surface) -> None:
         """Host-drawn parts above UI.game: the player list and the result
-        banner."""
+        controller's table and title."""
         if self.font is None:
             return
         if self.rule != "adventure":  # ui_SetGameMode(1) hides the player list

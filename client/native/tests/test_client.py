@@ -200,6 +200,14 @@ class RuntimeTest(unittest.TestCase):
         self.natives["Win_SetRect"]("UI.button", 34, 200, 100, 20, 10)
         self.assertEqual(self.natives["Win_GetRect"]("UI.button", 34), (200, 100, 20, 10))
 
+    def test_direct_alpha_channel_controls_the_widget_and_returns_its_current_value(self) -> None:
+        self.natives["Win_SetValue"]("UI.button", 0.25, 42)
+        button = self.runtime.find("UI.button")
+        self.assertEqual(button.alpha, 0.25)
+        self.assertEqual(self.natives["Win_GetValue"]("UI.button", 42), 0.25)
+        button.alpha = 0.1  # a running fade can change it after the setter
+        self.assertEqual(self.natives["Win_GetValue"]("UI.button", 42), 0.1)
+
     def test_list_items(self) -> None:
         self.natives["Win_SetText"]("UI.button", "a", 207)
         self.natives["Win_SetColorText"]("UI.button", "b", 207, 1, 2, 3)

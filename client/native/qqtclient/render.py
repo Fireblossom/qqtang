@@ -204,6 +204,18 @@ class Renderer:
         for child in widget.sorted_children():
             self._draw(child, x, y, alpha, focus)
 
+    def draw_widget(self, widget: Widget | None) -> None:
+        """Paint a UI subtree above the host's result-table overlay."""
+        if widget is None or not widget.shown():
+            return
+        parent = widget.parent
+        x, y = parent.absolute() if parent is not None else (0, 0)
+        alpha = 1.0
+        while parent is not None:
+            alpha *= parent.alpha
+            parent = parent.parent
+        self._draw(widget, x, y, alpha, None)
+
     def _draw_life_strip(self, widget: Widget, x: int, y: int, alpha: float) -> None:
         """1001192F: keep both end thirds and stretch the middle third."""
         if not 0.01 < widget.strip_current <= widget.strip_total or not widget.image:

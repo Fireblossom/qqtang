@@ -14,7 +14,7 @@ from typing import Any, Callable
 import pygame
 
 from .resources import Resources
-from .runtime import CHANNEL_ALPHA_DIRECTION, CHANNEL_ALPHA_SPEED, UIRuntime
+from .runtime import CHANNEL_ALPHA, CHANNEL_ALPHA_DIRECTION, CHANNEL_ALPHA_SPEED, UIRuntime
 from .script import log
 from .widgets import TEXT_INPUT_TYPES, Widget
 
@@ -216,12 +216,16 @@ def build_natives(runtime: UIRuntime, resources: Resources, audio: Audio) -> dic
     def Win_SetValue(widget, value, channel=CHANNEL_VALUE):
         if channel == CHANNEL_ALPHA_SPEED:
             widget.alpha_speed = float(value)
+        elif channel == CHANNEL_ALPHA:
+            widget.alpha = float(value)  # gameUI 10027580 stores the double directly
         elif channel == CHANNEL_ALPHA_DIRECTION:
             widget.alpha_direction = int(value)
         widget.values[channel] = value
 
     @with_widget(0)
     def Win_GetValue(widget, channel=CHANNEL_VALUE):
+        if channel == CHANNEL_ALPHA:
+            return widget.alpha
         return widget.values.get(channel, 0)
 
     @with_widget()

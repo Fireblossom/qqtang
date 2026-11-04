@@ -18,7 +18,7 @@ from win32emu import Win32Emu
 from unicorn.x86_const import UC_X86_REG_ECX
 
 
-def picture_fixture(root):
+def picture_fixture(root, draw_snapshots=None):
     e = Win32Emu(root / "Client.exe", root)
     resources = Resources(root)
 
@@ -43,8 +43,16 @@ def picture_fixture(root):
         table = e.r32(host)
         e.w32(table + 4, 0x42A680)
         e.w32(table + 0xC, 0x42A7E0)
+        e.w32(table + 0x10, 0x42A9E0)  # actual picture render-property setter
         e.handlers[name + "+0x0"] = (lambda e: 0), 1
-        e.handlers[name + "+0x8"] = (lambda e, p=picture: draws.append(p)), 0
+        def draw(e):
+            draws.append(picture)
+            if draw_snapshots is not None:
+                draw_snapshots.append(dict(number=number,
+                    position=[struct.unpack("<i", e.read(host + offset, 4))[0] for offset in (8, 12)],
+                    frame=e.r32(host + 0x2C), property=e.r32(host + 0x24), value=e.r32(host + 0x28)))
+
+        e.handlers[name + "+0x8"] = draw, 0
         e.w32(host + 0x1C, 1)
         e.w32(host + 0x38, 0xFFFFFFFF)
         category = "bomb/bomb" if e.r32(picture + 8) >> 24 == 3 else "misc/misc"
