@@ -211,7 +211,7 @@ class RuntimeTest(unittest.TestCase):
     def test_list_items(self) -> None:
         self.natives["Win_SetText"]("UI.button", "a", 207)
         self.natives["Win_SetColorText"]("UI.button", "b", 207, 1, 2, 3)
-        self.assertEqual(self.runtime.find("UI.button").items, [("a", (0, 0, 0)), ("b", (1, 2, 3))])
+        self.assertEqual(self.runtime.find("UI.button").items, [("a", (255, 255, 255)), ("b", (1, 2, 3))])
         self.natives["Win_SetText"]("UI.button", "", 32)
         self.assertEqual(self.runtime.find("UI.button").items, [])
 

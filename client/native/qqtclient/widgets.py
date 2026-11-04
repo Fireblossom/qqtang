@@ -71,7 +71,9 @@ class Widget:
         self.strip_current = float(attr("curnum", 0) or 0)
         self.strip_destination = float(attr("destnum", 0) or 0)
         self.strip_step = float(attr("stepnum", 0) or 0)
-        self.draw_color = tuple(attr("drawcolor", (0, 0, 0, 255)))
+        # 10026279 -> 1002650D: default drawcolor is opaque white.
+        draw_color = attr("drawcolor")
+        self.draw_color = (255, 255, 255, 255) if draw_color is None else tuple(draw_color)
         self.back_color = tuple(attr("bkcolor", (0, 0, 0, 0)))
         self.edge_color = tuple(attr("textEdgeColor", (0, 0, 0, 0)))
         self.text_size = int(attr("textsize", 12) or 12)
