@@ -232,8 +232,8 @@ func (server *Server) requireCompetitiveBoxObservation(session *connectionSessio
 	if target == 0 || battle.HasParticipant(target) {
 		return battle, false, nil
 	}
-	if schema != game.NotifyPlayerKnocked || !battle.HasNativeNPCEntity(target) {
-		return nil, false, fmt.Errorf("box observation target %d is not a participant or registered knocked NPC", target)
+	if (schema != game.NotifyPlayerKnocked && schema != game.NotifyPlayerTrapped) || !battle.HasNativeNPCEntity(target) {
+		return nil, false, fmt.Errorf("box observation target %d is not a participant or registered box NPC", target)
 	}
 	// HasNativeNPCEntity intentionally survives death: exact TCP/UDP repeats
 	// must be acknowledged without restoring a retired entity's proxy rights.

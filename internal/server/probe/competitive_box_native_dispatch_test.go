@@ -42,6 +42,45 @@ func boxNativePacket(player uint16, schema uint16, body []byte) game.GameplayDat
 	return game.GameplayDataPackage{GameID: 1, PlayerID: player, MessageIndexes: []uint32{1}, Messages: []game.BattleMessageData{{DataID: uint32(schema), Data: body}}}
 }
 
+func TestBoxNPCIceIsAnArbitratorObservationAndNeverRetiresTheEntity(t *testing.T) {
+	server, owner, peer, battle := boxNativeDispatchServer(t, 1401)
+	const npc = 20001
+	if err := battle.RegisterNativeNPCEntities([]uint16{npc}); err != nil {
+		t.Fatal(err)
+	}
+	body := make([]byte, 6)
+	binary.BigEndian.PutUint16(body, npc)
+	ack := sendReliableBossRuleEvent(t, server, owner, 1, game.NotifyPlayerTrapped, body)
+	if len(ack.response) == 0 || !battle.AuthorizesNativeNPCProxy(owner.Profile.PlayerID, npc) {
+		t.Fatal("ice rejected or retired NPC")
+	}
+	denied := sendReliableBossRuleEvent(t, server, peer, 2, game.NotifyPlayerTrapped, body)
+	if len(denied.response) != 0 {
+		t.Fatal("ordinary observer obtained NPC ice authority")
+	}
+	packet := boxNativePacket(owner.Profile.PlayerID, game.NotifyPlayerTrapped, body)
+	if err := validateGameplayFastPackagesWithBattle([]game.GameplayDataPackage{packet}, owner.Profile.PlayerID, 1, battle); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := consumeCompetitiveFastPackages([]game.GameplayDataPackage{packet}, battle); err != nil {
+		t.Fatal(err)
+	}
+	if !battle.AuthorizesNativeNPCProxy(owner.Profile.PlayerID, npc) {
+		t.Fatal("fast ice retired NPC")
+	}
+	packet.PlayerID = peer.Profile.PlayerID
+	if err := validateGameplayFastPackagesWithBattle([]game.GameplayDataPackage{packet}, peer.Profile.PlayerID, 1, battle); err == nil {
+		t.Fatal("own-package shortcut bypassed NPC observation authority")
+	}
+	if _, err := battle.RecordNativeNPCDeath(npc); err != nil {
+		t.Fatal(err)
+	}
+	late := sendReliableBossRuleEvent(t, server, owner, 3, game.NotifyPlayerTrapped, body)
+	if len(late.response) == 0 || battle.AuthorizesNativeNPCProxy(owner.Profile.PlayerID, npc) {
+		t.Fatal("late ice was not harmless or revived NPC")
+	}
+}
+
 func TestBoxKnockAndLaterDeathConsumeExactlyFourLayers(t *testing.T) {
 	server, owner, peer, battle := boxNativeDispatchServer(t, 1401)
 	// 005FED14 does not report a death for a transformed shell.

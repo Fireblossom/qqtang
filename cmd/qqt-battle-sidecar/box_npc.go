@@ -28,6 +28,7 @@ type boxNPCActor struct {
 	pos                             battleengine.Position
 	motion                          battleengine.NativeNPCPosition
 	motionKnown                     bool
+	ice                             npcIceState
 	facing                          byte
 	moving                          bool
 	dead                            bool
@@ -52,6 +53,7 @@ type boxNPCActor struct {
 	lastMoveEnd                     battleengine.Position
 	lastMoveCorner                  battleengine.Position
 	lastMoveFacing                  byte
+	lastMoveSpeed                   byte
 	lastMoveMoving                  bool
 	moveInitialized                 bool
 	moveEnd                         battleengine.Position
@@ -92,6 +94,8 @@ type boxNPCActorView struct {
 	Moving  bool   `json:"moving"`
 	Dead    bool   `json:"dead"`
 	Trapped bool   `json:"trapped"`
+	Speed   byte   `json:"speed"`
+	Iced    bool   `json:"iced"`
 }
 type boxNPCView struct {
 	Actors []boxNPCActorView `json:"actors"`
@@ -320,7 +324,8 @@ func (match *onlineMatch) publishNPCMove(outbox *[]boxNPCOutbound, n *boxNPCActo
 	} else if !n.moveEndValid && len(n.path) > 0 {
 		end = battleengine.PositionAtCellCenter(n.path[0])
 	}
-	if !force && n.moveInitialized && now-n.lastMoveSent < movementHeartbeat && n.moving == n.lastMoveMoving && n.facing == n.lastMoveFacing && end == n.lastMoveEnd && n.moveCorner == n.lastMoveCorner {
+	rate := n.effectiveNPCSpeed()
+	if !force && n.moveInitialized && now-n.lastMoveSent < movementHeartbeat && n.moving == n.lastMoveMoving && n.facing == n.lastMoveFacing && end == n.lastMoveEnd && n.moveCorner == n.lastMoveCorner && rate == n.lastMoveSpeed {
 		return
 	}
 	walk := n.facing
@@ -328,7 +333,7 @@ func (match *onlineMatch) publishNPCMove(outbox *[]boxNPCOutbound, n *boxNPCActo
 		walk |= 0x10
 	}
 	n.sequence++
-	move := game.PlayerMoveSequence{Sequence: n.sequence, TimeStamp: now, CurrentPosX: uint16(n.pos.X), CurrentPosY: uint16(n.pos.Y), EndPosX: uint16(end.X), EndPosY: uint16(end.Y), WalkAndDirection: walk, Speed: n.speed}
+	move := game.PlayerMoveSequence{Sequence: n.sequence, TimeStamp: now, CurrentPosX: uint16(n.pos.X), CurrentPosY: uint16(n.pos.Y), EndPosX: uint16(end.X), EndPosY: uint16(end.Y), WalkAndDirection: walk, Speed: rate}
 	if n.moving {
 		move.CornerPosX, move.CornerPosY = uint16(n.moveCorner.X), uint16(n.moveCorner.Y)
 	}
@@ -341,6 +346,7 @@ func (match *onlineMatch) publishNPCMove(outbox *[]boxNPCOutbound, n *boxNPCActo
 	n.lastMoveEnd = end
 	n.lastMoveCorner = n.moveCorner
 	n.lastMoveFacing = n.facing
+	n.lastMoveSpeed = rate
 	n.lastMoveMoving = n.moving
 	n.moveInitialized = true
 }
@@ -360,7 +366,12 @@ func (match *onlineMatch) boxNPCTick(now uint32) {
 		if match.isArbitrator() {
 			match.advanceBoxNPC(n, now)
 		} else {
+			previous := n.lastTick
 			match.interpolateBoxNPC(n, now)
+			if now >= previous {
+				n.ice.frame(now - previous)
+				n.lastTick = now
+			}
 		}
 		// Each human owns its contact observation; only a live, untrapped NPC
 		// whose centre is strictly within 15px on both axes can knock it.
@@ -491,6 +502,7 @@ func (match *onlineMatch) advanceBoxNPC(n *boxNPCActor, now uint32) {
 		return
 	}
 	dt := now - n.lastTick
+	defer n.ice.frame(dt)
 	// Follow the last authenticated segment when taking over mid-cell.
 	if len(n.path) == 0 && n.netMoveSet && n.moving {
 		n.path = []battleengine.Cell{{Row: int16(n.netMove.EndPosY / 40), Col: int16(n.netMove.EndPosX / 40)}}
@@ -517,14 +529,22 @@ func (match *onlineMatch) advanceBoxNPC(n *boxNPCActor, now uint32) {
 		n.lastTick = now
 		return
 	}
+	iceHit := false
+	for _, effect := range match.box.effects {
+		if effect.Style == 10000 && now >= effect.Start && now < effect.Until && boxAreaContains(effect.Cell, n.pos) {
+			match.iceBoxNPC(n, now)
+			iceHit = true
+			break
+		}
+	}
 	for _, f := range match.engine.Flames() {
-		if f.Cell == n.pos.Cell() && f.ImpactAtMS <= now {
+		if !iceHit && f.Cell == n.pos.Cell() && f.ImpactAtMS <= now {
 			match.trapBoxNPC(n, now)
 			return
 		}
 	}
 	for _, effect := range match.box.effects {
-		if effect.Style != 10000 && now >= effect.Start && now < effect.Until && boxAreaContains(effect.Cell, n.pos) {
+		if !iceHit && effect.Style != 10000 && now >= effect.Start && now < effect.Until && boxAreaContains(effect.Cell, n.pos) {
 			match.trapBoxNPC(n, now)
 			return
 		}
@@ -572,7 +592,7 @@ func (match *onlineMatch) moveBoxNPC(n *boxNPCActor, dt uint32) {
 	}
 	n.facing = n.navigator.direction
 	before := n.nativePosition()
-	speed := float32(bossSpeedTable[min(int(n.speed), len(bossSpeedTable)-1)])
+	speed := float32(bossSpeedTable[min(int(n.effectiveNPCSpeed()), len(bossSpeedTable)-1)])
 	n.motion = match.engine.MoveRuleNPCFloat(n.id, before, battleDirection(n.facing), speed, dt)
 	n.pos = n.motion.Pixels()
 	n.moveBlocked = n.motion == before
@@ -752,6 +772,11 @@ func (match *onlineMatch) boxNPCRemote(sender uint16, event game.GameEvent) ([]b
 		return nil, true
 	}
 	switch event.Schema {
+	case game.NotifyPlayerTrapped:
+		if len(event.Body) == 6 && binary.BigEndian.Uint32(event.Body[2:]) == 0 && !n.dead {
+			n.ice.refresh()
+		}
+		return nil, true
 	case game.PlayerMoveSchema:
 		movement, err := game.ParsePlayerMove(event.Body)
 		if err != nil || n.dead || n.trapped {
@@ -768,7 +793,8 @@ func (match *onlineMatch) boxNPCRemote(sender uint16, event game.GameEvent) ([]b
 			n.netMove = m
 			n.netMoveSet = true
 			n.sequence = m.Sequence
-			n.speed = m.Speed
+			// Wire speed is effective (e.g. ice=2), not the permanent stat.
+			// Base speed follows the spawn template and item notifications.
 			n.path = nil
 			match.interpolateBoxNPC(n, match.engine.ElapsedMS())
 		}
@@ -845,7 +871,7 @@ func (match *onlineMatch) boxNPCView() *boxNPCView {
 		if n.dead && now >= n.deadAt+1000 {
 			continue
 		}
-		view.Actors = append(view.Actors, boxNPCActorView{ID: n.id, Role: n.role, Team: 7, X: n.pos.X, Y: n.pos.Y, Facing: byte(battleDirection(n.facing)), Moving: n.moving, Dead: n.dead, Trapped: n.trapped})
+		view.Actors = append(view.Actors, boxNPCActorView{ID: n.id, Role: n.role, Team: 7, X: n.pos.X, Y: n.pos.Y, Facing: byte(battleDirection(n.facing)), Moving: n.moving, Dead: n.dead, Trapped: n.trapped, Speed: n.effectiveNPCSpeed(), Iced: n.ice.active})
 	}
 	return view
 }

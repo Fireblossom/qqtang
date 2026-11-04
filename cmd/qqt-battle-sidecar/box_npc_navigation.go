@@ -7,7 +7,7 @@ func (match *onlineMatch) chooseBoxNPCDirection(n *boxNPCActor, now, dt uint32) 
 	position := npcFollowPosition{native.X, native.Y}
 	var mask uint32
 	for direction := byte(0); direction < 4; direction++ {
-		speed := float32(bossSpeedTable[min(int(n.speed), len(bossSpeedTable)-1)])
+		speed := float32(bossSpeedTable[min(int(n.effectiveNPCSpeed()), len(bossSpeedTable)-1)])
 		projected := match.engine.MoveRuleNPCFloat(n.id, native, battleDirection(direction), speed, dt)
 		if projected != native {
 			mask |= 1 << (3 - direction)
@@ -19,7 +19,7 @@ func (match *onlineMatch) chooseBoxNPCDirection(n *boxNPCActor, now, dt uint32) 
 	}
 	direction := n.navigator.choose(npcNavigationFrame{
 		position: &position, facing: n.facing, standing: !n.navigator.walking,
-		blocked: n.moveBlocked, danger: danger, mask: mask, now: now, dt: dt, speed: int(n.speed),
+		blocked: n.moveBlocked, danger: danger, mask: mask, now: now, dt: dt, speed: int(n.effectiveNPCSpeed()),
 		random: match.box.rng.Uint32, canPass: canPass,
 		flee: func() byte {
 			radius := 3

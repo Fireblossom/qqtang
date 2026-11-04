@@ -852,6 +852,12 @@ func validateNativeNPCObservationFastMessages(packet game.GameplayDataPackage, a
 		event := game.GameEvent{Schema: uint16(message.DataID), Body: message.Data}
 		var target uint16
 		switch event.Schema {
+		case game.NotifyPlayerTrapped:
+			iced, err := game.ParsePlayerTimedStateEvent(event)
+			if err != nil {
+				return err
+			}
+			target = iced.PlayerID
 		case game.NotifyPlayerKnocked:
 			knocked, err := game.ParsePlayerKnockedEvent(event)
 			if err != nil {

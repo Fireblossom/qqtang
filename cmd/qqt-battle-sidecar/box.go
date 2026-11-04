@@ -324,6 +324,7 @@ func (match *onlineMatch) applyBoxDestroy(notice game.MapElementsExplodedEvent) 
 			}
 			match.box.effects = append(match.box.effects, boxEffect{Cell: b.Position.Cell(), Style: style, Start: b.DestroyAt, Until: b.DestroyAt + 500})
 			match.boxSpecialHit(b.Position.Cell(), style, notice.Time, true)
+			match.boxSpecialNPCHit(b.Position.Cell(), style, notice.Time)
 		}
 	}
 }

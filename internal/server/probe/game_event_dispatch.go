@@ -332,7 +332,7 @@ func (server *Server) handleGameEventMessage(config ListenerConfig, session *con
 						var battle *match.CompetitiveBattle
 						var npc bool
 						battle, npc, relayErr = server.requireCompetitiveBoxObservation(session, event.Schema, referencedPlayerID)
-						if relayErr == nil && npc && !knockedAvatar {
+						if relayErr == nil && npc && event.Schema == game.NotifyPlayerKnocked && !knockedAvatar {
 							_, relayErr = battle.RecordNativeNPCDeath(referencedPlayerID)
 						}
 						// Participant 1162 is only an observation. Its local
