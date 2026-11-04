@@ -107,7 +107,7 @@ func TestBoxNPCBombRequiresEscapeAndDeduplicatesTCPUDP(t *testing.T) {
 	if !m.npcPlace(n, 100) {
 		t.Fatal("open-field NPC did not find safe bubble escape")
 	}
-	if len(m.engine.Bombs()) != 1 || len(n.path) == 0 {
+	if len(m.engine.Bombs()) != 1 || len(n.navigator.path.nodes) == 0 {
 		t.Fatal("bubble placement did not retain escape plan")
 	}
 	peer := npcTestMatch(t, 2, 1)
@@ -131,6 +131,87 @@ func TestBoxNPCBombRequiresEscapeAndDeduplicatesTCPUDP(t *testing.T) {
 	n.capacity = 1
 	if m.npcPlace(n, 120) {
 		t.Fatal("NPC exceeded own bubble capacity")
+	}
+}
+
+func TestBoxNPCInitialNavigatorAndBlockedSubpixelEndpoint(t *testing.T) {
+	m := npcTestMatch(t, 1, 1)
+	n := addTestNPC(t, m, 20001, 25)
+	if !n.navigator.wander.valid || n.navigator.wander.cell != n.pos.Cell() || n.navigator.wander.direction != 3 || n.navigator.lastThink != n.lastTick {
+		t.Fatalf("native NPC birth cache not initialized: %+v", n.navigator)
+	}
+	position := npcFollowPosition{float32(n.pos.X), float32(n.pos.Y)}
+	direction := n.navigator.choose(npcNavigationFrame{position: &position, facing: 3, now: n.lastTick + 500, mask: 15,
+		random: func() uint32 { t.Fatal("birth cache consumed random value"); return 0 }})
+	if direction != 3 {
+		t.Fatalf("birth cache direction%d", direction)
+	}
+	n.pos = battleengine.Position{X: 20, Y: 60}
+	n.navigator.walking, n.navigator.direction = true, 2
+	m.moveBoxNPC(n, 1)
+	if !n.moving || !n.moveBlocked || n.moveEnd != n.pos {
+		t.Fatalf("blocked remainder advertised invalid endpoint: pos%v end%v moving%v", n.pos, n.moveEnd, n.moving)
+	}
+	n.netMoveSet = true
+	n.netMove = game.PlayerMoveSequence{CurrentPosX: 20, CurrentPosY: 60, EndPosX: 20, EndPosY: 60, WalkAndDirection: 0x12, Speed: 1}
+	m.interpolateBoxNPC(n, 1000)
+	if !n.moving {
+		t.Fatal("blocked wire walk flag was overwritten by equal endpoint")
+	}
+}
+
+func TestBoxNPCEnteringExistingBoxFlameIsTrapped(t *testing.T) {
+	m := npcTestMatch(t, 1, 1)
+	n := addTestNPC(t, m, 20001, 25)
+	if _, err := m.engine.PlaceRuleNPCBomb(n.id, n.pos.Cell(), 3, 0, 0); err != nil {
+		t.Fatal(err)
+	}
+	for len(m.engine.Flames()) == 0 {
+		if m.engine.ElapsedMS() > 4000 {
+			t.Fatal("NPC bubble never exploded")
+		}
+		if _, err := m.engine.Step(nil); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := m.engine.Step(nil); err != nil {
+		t.Fatal(err)
+	}
+	n.lastTick = m.engine.ElapsedMS()
+	n.pos = battleengine.PositionAtCellCenter(m.engine.Flames()[0].Cell)
+	if m.engine.Flames()[0].ImpactAtMS >= n.lastTick {
+		t.Fatal("fixture did not enter an existing flame")
+	}
+	m.advanceBoxNPC(n, n.lastTick)
+	if !n.trapped {
+		t.Fatal("NPC ignored an already-burning rule-8 cell")
+	}
+}
+
+func TestBoxNPCSearchAppendsBeforeCapacityFailureAndPreservesRouteOnSearchFailure(t *testing.T) {
+	m := npcTestMatch(t, 1, 1)
+	n := addTestNPC(t, m, 20001, 25)
+	old := []pathNode{{cell: n.pos.Cell(), dir: 2}, {cell: boxStep(n.pos.Cell(), 2), dir: 9, kind: 3}}
+	n.navigator.path.nodes = append([]pathNode(nil), old...)
+	if _, err := m.engine.PlaceRuleNPCBomb(n.id, battleengine.Cell{Row: 1, Col: 1}, 3, 0, 0); err != nil {
+		t.Fatal(err)
+	}
+	if m.npcPlace(n, 100) {
+		t.Fatal("full capacity placed a second bubble")
+	}
+	if len(m.engine.Bombs()) != 1 || len(n.navigator.path.nodes) <= len(old) || n.navigator.path.nodes[len(n.navigator.path.nodes)-1] != old[len(old)-1] {
+		t.Fatal("capacity failure discarded the native escape append")
+	}
+	blocked := npcTestMatch(t, 1, 1)
+	b := addTestNPC(t, blocked, 20001, 25)
+	b.navigator.path.nodes = append([]pathNode(nil), old...)
+	for direction := byte(0); direction < 4; direction++ {
+		if err := blocked.engine.SetNativeBoxCell(boxStep(b.pos.Cell(), direction), battleengine.Tile{Kind: battleengine.CellSolid, MapElementOccupied: true}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if blocked.npcPlace(b, 100) || len(blocked.engine.Bombs()) != 0 || len(b.navigator.path.nodes) != len(old) {
+		t.Fatal("failed search placed or discarded the old route")
 	}
 }
 func TestBoxNPCSyrupTimeoutAndRespawnAreSceneState(t *testing.T) {

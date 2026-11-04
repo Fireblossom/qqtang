@@ -27,6 +27,39 @@ func (engine *Engine) HasRuleNPCOwner(id uint16) bool {
 	return ok
 }
 
+// MoveRuleNPC resolves one default NPC displacement through the same native
+// directional/corner geometry as participants, without inserting a participant
+// or applying player interactions. Transformations and active wall passage are
+// owned separately by the scene controller and are not implied by this API.
+func (engine *Engine) MoveRuleNPC(owner uint16, position Position, direction Direction, distance int) (Position, error) {
+	if !engine.HasRuleNPCOwner(owner) {
+		return position, fmt.Errorf("unregistered NPC movement owner %d", owner)
+	}
+	actor := Actor{Participant: Participant{PlayerID: owner, TeamID: 7, Source: ParticipantVirtualAI},
+		Position: position, Facing: direction, State: ActorActive, nativePreviousPosition: position}
+	engine.resolveNativeMovementDisplacement(&actor, direction, min(distance, int(NativeMaxMovementPixelsPerUpdate)), true)
+	return actor.Position, nil
+}
+
+// RuleNPCPositionPassable is the default-capability 005B7999 predicate used
+// by the scene's path follower. It does not commit movement or traversal state.
+func (engine *Engine) RuleNPCPositionPassable(owner uint16, position Position, direction Direction) bool {
+	if !engine.HasRuleNPCOwner(owner) {
+		return false
+	}
+	actor := Actor{Participant: Participant{PlayerID: owner, TeamID: 7, Source: ParticipantVirtualAI},
+		Position: position, Facing: direction, State: ActorActive}
+	return engine.positionWalkable(&actor, position, direction)
+}
+
+func (engine *Engine) ruleNPCCornerBlocked(actor *Actor, cell Cell) bool {
+	if actor == nil || !engine.rules.NativeBoxPhysics || !engine.HasRuleNPCOwner(actor.PlayerID) {
+		return false
+	}
+	return ((cell.Row == 0 || cell.Row == 12) && (cell.Col == 0 || cell.Col == 1 || cell.Col == 13 || cell.Col == 14)) ||
+		((cell.Row == 1 || cell.Row == 11) && (cell.Col == 0 || cell.Col == 14))
+}
+
 // PlaceRuleNPCBomb is an explicit scene-controller operation. Personal
 // capacity and native AI safety checks belong to that controller; these
 // bubbles never consume a human's placement allowance.

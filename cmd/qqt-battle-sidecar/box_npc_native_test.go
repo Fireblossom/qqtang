@@ -26,6 +26,10 @@ type npcNativeCase struct {
 	Queries   [][2]int16
 	Blocked   [][2]int16
 	Entries   [][5]int
+	Before    [][5]int
+	Checks    []byte
+	Position  [2]float32
+	Points    [][2]int32
 }
 
 func npcNativeCases(t *testing.T) []npcNativeCase {
@@ -174,10 +178,9 @@ func TestBoxNPCMovementAndFollowerUseNPCSpeeds(t *testing.T) {
 		match := npcTestMatch(t, 1, 1)
 		npc := addTestNPC(t, match, 20001, row.role)
 		start := npc.pos
-		npc.path = []battleengine.Cell{{Row: 5, Col: 10}}
-		npc.nextDecision = ^uint32(0)
+		npc.navigator.walking, npc.navigator.direction = true, 0
 		for now := uint32(20); now <= 1000; now += 20 {
-			match.advanceBoxNPC(npc, now)
+			match.moveBoxNPC(npc, 20)
 		}
 		if npc.pos.X-start.X != row.dx {
 			t.Fatalf("role%d arb travel%d want%d", row.role, npc.pos.X-start.X, row.dx)

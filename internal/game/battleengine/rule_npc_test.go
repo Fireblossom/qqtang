@@ -2,6 +2,38 @@ package battleengine
 
 import "testing"
 
+func TestRuleNPCMovementUsesNativeCornerGeometryWithoutAddingActors(t *testing.T) {
+	cfg := testConfig()
+	cfg.Grid = testOpenGrid(15, 13)
+	cfg.Grid.Cells[5*15+6] = Tile{Kind: CellSolid}
+	cfg.Rules.NativeBoxPhysics = true
+	cfg.Rules.ActorHalfSizePixels = NativeActorHalfSizePixels
+	e := mustEngine(t, cfg)
+	if _, err := e.MoveRuleNPC(20001, Position{220, 206}, DirectionRight, 2); err == nil {
+		t.Fatal("unregistered NPC moved")
+	}
+	if err := e.RegisterRuleNPCOwner(20001); err != nil {
+		t.Fatal(err)
+	}
+	before := e.Actors()
+	for _, sample := range []struct{ y, want int32 }{{206, 204}, {207, 207}} {
+		position, err := e.MoveRuleNPC(20001, Position{220, sample.y}, DirectionRight, 2)
+		if err != nil || position != (Position{220, sample.want}) {
+			t.Fatalf("corner y%d: %v %v", sample.y, position, err)
+		}
+	}
+	if got, err := e.MoveRuleNPC(20001, Position{220, 260}, DirectionRight, 999); err != nil || got != (Position{260, 260}) {
+		t.Fatalf("native maximum step: %v %v", got, err)
+	}
+	if e.RuleNPCPositionPassable(20001, Position{20, 60}, DirectionLeft) {
+		t.Fatal("NPC entered native box corner exclusion")
+	}
+	after := e.Actors()
+	if len(after) != len(before) || after[0].Position != before[0].Position || after[1].Position != before[1].Position {
+		t.Fatal("NPC geometry mutated participants")
+	}
+}
+
 func TestRuleNPCOwnerDoesNotConsumeParticipantSlotOrHumanCapacity(t *testing.T) {
 	cfg := testConfig()
 	cfg.Rules.NativeBoxPhysics = true

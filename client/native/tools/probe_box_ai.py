@@ -136,6 +136,25 @@ def run(root):
             result = e.call(0x5B22FC, ecx=actor)
             print(json.dumps(dict(kind="flee", role=role, random=value, result=result,
                                   entries=entries(), calls=rng["calls"])))
+    # Execute 005B214D's fallback after the real safe-cell search fails.
+    collision = dict(mask=0, queries=[])
+
+    def can_pass(e):
+        collision["queries"].append([e.arg(i) for i in range(6)])
+        return int(bool(collision["mask"] & (1 << (e.arg(2) & 255))))
+
+    patch(0x5B7999, "can_pass", can_pass, 6)
+    grid["mode"] = "none"
+    e.write(actor + 0x394, b"\x19")
+    for position in ((220, 260), (229.9, 270.1)):
+        e.write(actor + 0x338, struct.pack("<ff", *position))
+        for mask in range(16):
+            collision.update(mask=mask, queries=[])
+            direction = e.call(0x5B214D, ecx=actor) & 255
+            print(json.dumps(dict(kind="flee_fallback", mask=mask, direction=direction, position=position,
+                                  checks=[query[2] & 255 for query in collision["queries"]],
+                                  points=[query[:2] for query in collision["queries"]],
+                                  queries=collision["queries"])))
 
 
 if __name__ == "__main__":

@@ -372,3 +372,35 @@
 {"kind": "flee", "role": 27, "random": 14, "result": 1, "entries": [[6, 4, 9, 3, 0], [6, 5, 2, 0, 0]], "calls": 1}
 {"kind": "flee", "role": 27, "random": 15, "result": 1, "entries": [[7, 5, 9, 3, 0], [6, 5, 3, 0, 0]], "calls": 1}
 {"kind": "flee", "role": 27, "random": 4294967295, "result": 1, "entries": [[6, 4, 9, 3, 0], [6, 5, 2, 0, 0]], "calls": 1}
+{"kind": "flee_fallback", "mask": 0, "direction": 2, "position": [220, 260], "checks": [0, 1, 2], "points": [[260, 260], [220, 220], [180, 260]], "queries": [[260, 260, 0, 0, 0, 1], [220, 220, 1, 0, 0, 1], [180, 260, 2, 0, 0, 1]]}
+{"kind": "flee_fallback", "mask": 1, "direction": 0, "position": [220, 260], "checks": [0], "points": [[260, 260]], "queries": [[260, 260, 0, 0, 0, 1]]}
+{"kind": "flee_fallback", "mask": 2, "direction": 1, "position": [220, 260], "checks": [0, 1], "points": [[260, 260], [220, 220]], "queries": [[260, 260, 0, 0, 0, 1], [220, 220, 1, 0, 0, 1]]}
+{"kind": "flee_fallback", "mask": 3, "direction": 0, "position": [220, 260], "checks": [0], "points": [[260, 260]], "queries": [[260, 260, 0, 0, 0, 1]]}
+{"kind": "flee_fallback", "mask": 4, "direction": 3, "position": [220, 260], "checks": [0, 1, 2, 3], "points": [[260, 260], [220, 220], [180, 260], [220, 300]], "queries": [[260, 260, 0, 0, 0, 1], [220, 220, 1, 0, 0, 1], [180, 260, 2, 0, 0, 1], [220, 300, 3, 0, 0, 1]]}
+{"kind": "flee_fallback", "mask": 5, "direction": 0, "position": [220, 260], "checks": [0], "points": [[260, 260]], "queries": [[260, 260, 0, 0, 0, 1]]}
+{"kind": "flee_fallback", "mask": 6, "direction": 1, "position": [220, 260], "checks": [0, 1], "points": [[260, 260], [220, 220]], "queries": [[260, 260, 0, 0, 0, 1], [220, 220, 1, 0, 0, 1]]}
+{"kind": "flee_fallback", "mask": 7, "direction": 0, "position": [220, 260], "checks": [0], "points": [[260, 260]], "queries": [[260, 260, 0, 0, 0, 1]]}
+{"kind": "flee_fallback", "mask": 8, "direction": 2, "position": [220, 260], "checks": [0, 1, 2], "points": [[260, 260], [220, 220], [180, 260]], "queries": [[260, 260, 0, 0, 0, 1], [220, 220, 1, 0, 0, 1], [180, 260, 2, 0, 0, 1]]}
+{"kind": "flee_fallback", "mask": 9, "direction": 0, "position": [220, 260], "checks": [0], "points": [[260, 260]], "queries": [[260, 260, 0, 0, 0, 1]]}
+{"kind": "flee_fallback", "mask": 10, "direction": 1, "position": [220, 260], "checks": [0, 1], "points": [[260, 260], [220, 220]], "queries": [[260, 260, 0, 0, 0, 1], [220, 220, 1, 0, 0, 1]]}
+{"kind": "flee_fallback", "mask": 11, "direction": 0, "position": [220, 260], "checks": [0], "points": [[260, 260]], "queries": [[260, 260, 0, 0, 0, 1]]}
+{"kind": "flee_fallback", "mask": 12, "direction": 9, "position": [220, 260], "checks": [0, 1, 2, 3], "points": [[260, 260], [220, 220], [180, 260], [220, 300]], "queries": [[260, 260, 0, 0, 0, 1], [220, 220, 1, 0, 0, 1], [180, 260, 2, 0, 0, 1], [220, 300, 3, 0, 0, 1]]}
+{"kind": "flee_fallback", "mask": 13, "direction": 0, "position": [220, 260], "checks": [0], "points": [[260, 260]], "queries": [[260, 260, 0, 0, 0, 1]]}
+{"kind": "flee_fallback", "mask": 14, "direction": 1, "position": [220, 260], "checks": [0, 1], "points": [[260, 260], [220, 220]], "queries": [[260, 260, 0, 0, 0, 1], [220, 220, 1, 0, 0, 1]]}
+{"kind": "flee_fallback", "mask": 15, "direction": 0, "position": [220, 260], "checks": [0], "points": [[260, 260]], "queries": [[260, 260, 0, 0, 0, 1]]}
+{"kind": "flee_fallback", "mask": 0, "direction": 2, "position": [229.9, 270.1], "checks": [0, 1, 2], "points": [[269, 270], [229, 230], [189, 270]], "queries": [[269, 270, 0, 0, 0, 1], [229, 230, 1, 0, 0, 1], [189, 270, 2, 0, 0, 1]]}
+{"kind": "flee_fallback", "mask": 1, "direction": 0, "position": [229.9, 270.1], "checks": [0], "points": [[269, 270]], "queries": [[269, 270, 0, 0, 0, 1]]}
+{"kind": "flee_fallback", "mask": 2, "direction": 1, "position": [229.9, 270.1], "checks": [0, 1], "points": [[269, 270], [229, 230]], "queries": [[269, 270, 0, 0, 0, 1], [229, 230, 1, 0, 0, 1]]}
+{"kind": "flee_fallback", "mask": 3, "direction": 0, "position": [229.9, 270.1], "checks": [0], "points": [[269, 270]], "queries": [[269, 270, 0, 0, 0, 1]]}
+{"kind": "flee_fallback", "mask": 4, "direction": 3, "position": [229.9, 270.1], "checks": [0, 1, 2, 3], "points": [[269, 270], [229, 230], [189, 270], [229, 310]], "queries": [[269, 270, 0, 0, 0, 1], [229, 230, 1, 0, 0, 1], [189, 270, 2, 0, 0, 1], [229, 310, 3, 0, 0, 1]]}
+{"kind": "flee_fallback", "mask": 5, "direction": 0, "position": [229.9, 270.1], "checks": [0], "points": [[269, 270]], "queries": [[269, 270, 0, 0, 0, 1]]}
+{"kind": "flee_fallback", "mask": 6, "direction": 1, "position": [229.9, 270.1], "checks": [0, 1], "points": [[269, 270], [229, 230]], "queries": [[269, 270, 0, 0, 0, 1], [229, 230, 1, 0, 0, 1]]}
+{"kind": "flee_fallback", "mask": 7, "direction": 0, "position": [229.9, 270.1], "checks": [0], "points": [[269, 270]], "queries": [[269, 270, 0, 0, 0, 1]]}
+{"kind": "flee_fallback", "mask": 8, "direction": 2, "position": [229.9, 270.1], "checks": [0, 1, 2], "points": [[269, 270], [229, 230], [189, 270]], "queries": [[269, 270, 0, 0, 0, 1], [229, 230, 1, 0, 0, 1], [189, 270, 2, 0, 0, 1]]}
+{"kind": "flee_fallback", "mask": 9, "direction": 0, "position": [229.9, 270.1], "checks": [0], "points": [[269, 270]], "queries": [[269, 270, 0, 0, 0, 1]]}
+{"kind": "flee_fallback", "mask": 10, "direction": 1, "position": [229.9, 270.1], "checks": [0, 1], "points": [[269, 270], [229, 230]], "queries": [[269, 270, 0, 0, 0, 1], [229, 230, 1, 0, 0, 1]]}
+{"kind": "flee_fallback", "mask": 11, "direction": 0, "position": [229.9, 270.1], "checks": [0], "points": [[269, 270]], "queries": [[269, 270, 0, 0, 0, 1]]}
+{"kind": "flee_fallback", "mask": 12, "direction": 9, "position": [229.9, 270.1], "checks": [0, 1, 2, 3], "points": [[269, 270], [229, 230], [189, 270], [229, 310]], "queries": [[269, 270, 0, 0, 0, 1], [229, 230, 1, 0, 0, 1], [189, 270, 2, 0, 0, 1], [229, 310, 3, 0, 0, 1]]}
+{"kind": "flee_fallback", "mask": 13, "direction": 0, "position": [229.9, 270.1], "checks": [0], "points": [[269, 270]], "queries": [[269, 270, 0, 0, 0, 1]]}
+{"kind": "flee_fallback", "mask": 14, "direction": 1, "position": [229.9, 270.1], "checks": [0, 1], "points": [[269, 270], [229, 230]], "queries": [[269, 270, 0, 0, 0, 1], [229, 230, 1, 0, 0, 1]]}
+{"kind": "flee_fallback", "mask": 15, "direction": 0, "position": [229.9, 270.1], "checks": [0], "points": [[269, 270]], "queries": [[269, 270, 0, 0, 0, 1]]}

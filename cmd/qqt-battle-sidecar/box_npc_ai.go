@@ -41,13 +41,3 @@ func npcWanderDirection(mask uint32, facing byte, random uint32) byte {
 	}
 	return choices[index]
 }
-
-func npcPathCells(path []pathNode) []battleengine.Cell {
-	var cells []battleengine.Cell
-	for index, node := range path {
-		if index > 0 {
-			cells = append(cells, node.cell)
-		}
-	}
-	return cells
-}

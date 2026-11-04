@@ -794,6 +794,9 @@ func (engine *Engine) nativeCornerSideCellPassable(actor *Actor, direction Direc
 	}
 	source := actor.Position.Cell()
 	side := Cell{Row: source.Row + int16(dy), Col: source.Col + int16(dx)}
+	if engine.ruleNPCCornerBlocked(actor, side) {
+		return false
+	}
 	tile, inside := engine.grid.Cell(side)
 	if !inside {
 		return false
@@ -841,6 +844,9 @@ func (engine *Engine) nativePointCollision(actor *Actor, point Position, directi
 	tile, inside := engine.grid.Cell(cell)
 	capabilities := engine.actorCapabilities(actor, direction)
 	if !inside {
+		return cell, nativeCollisionStatic
+	}
+	if engine.ruleNPCCornerBlocked(actor, cell) {
 		return cell, nativeCollisionStatic
 	}
 	// FUN_005b7dc7 classifies type-1 objects before querying static terrain.
