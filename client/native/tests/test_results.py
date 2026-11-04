@@ -9,7 +9,7 @@ import unittest
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
 from qqtclient.battle.result import ResultDisplay, experience_percent, experience_level, result_points
-from qqtclient.battle.scene import ResultRow
+from qqtclient.battle.scene import BattleScene, ResultRow
 from qqtclient.battle.online import MatchContext, MatchMember, OnlineBattle, RESULT_SHOWN_MS
 from qqtclient.net import match
 
@@ -134,3 +134,22 @@ class ResultsTest(unittest.TestCase):
         payload = struct.pack(">HII", 1, 1, len(body) + 4) + struct.pack("<I", match.SCHEMA_GAME_OVER) + body
         battle.on_game_event(types.SimpleNamespace(payload=payload))
         self.assertEqual(captured, [ResultRow(1, 2, 2, 3, 100, 100, 1010, (10, 20, 30, 40), 7, 950, 101, 0x2000)])
+
+    def test_scene_row_positions_match_native_wire_order(self):
+        rows = self.fixture("result_order_v848.jsonl")
+        self.assertEqual(len(rows), 42)
+        for row in rows:
+            scene = BattleScene.__new__(BattleScene)
+            scene.local_id, scene.now_ms, scene.runtime = row["local_id"], 0, None
+            scene.map = types.SimpleNamespace(rule=row["rule"])
+            scene.names = {player["id"]: str(player["id"]) for player in row["players"]}
+            inputs = [ResultRow(player["id"], player["result"], 2, 0, 0, player["gain"],
+                                result_points(row["rule"], player["points"], player["scores"]),
+                                tuple(player["scores"])) for player in row["players"]]
+            scene.show_results(inputs)
+            scene.result_display.phase = 3
+            native = row["display"]["rows"]
+            with self.subTest(case=row["case"], local=row["local_id"], rule=row["rule"]):
+                self.assertEqual([result.player_id for result in scene.result_rows], [player["player_id"] for player in native])
+                self.assertEqual([(text.text, text.y) for text in scene.result_display.plan()[1] if text.y >= 257],
+                                 [(str(player["player_id"]), 257 + player["index"] * 27) for player in native])

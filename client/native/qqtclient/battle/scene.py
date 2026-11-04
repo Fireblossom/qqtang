@@ -1483,7 +1483,8 @@ class BattleScene:
                     self._draw_frames(screen, digits, digit, x, y)
 
     def show_results(self, rows: list[ResultRow]) -> None:
-        self.result_rows = sorted(rows, key=lambda row: (-row.result, row.player_id != self.local_id))
+        # 00602BAB preserves the wire order and assigns display indices 0..n-1.
+        self.result_rows = list(rows)
         self.result_shown_at = self.now_ms
         levels = self.runtime.namespace.get("LevelCfg") if self.runtime is not None else None
         self.result_display = ResultDisplay(self.map.rule, self.result_rows, self.local_id, self.names,

@@ -1,6 +1,6 @@
 """Execute 00602BAB/00881E00 and capture its 0x293 result-display input.
 
-Controlled dependencies: actor/profile lookup, app singleton and actor result
+Controlled dependencies: profile lookup, app singleton and actor result
 animation transition. Native field projection and experience arithmetic run.
 The display constructor is an observation boundary; no network/server writes.
 """
@@ -14,11 +14,18 @@ import pefile
 from win32emu import EmuStop, Win32Emu
 
 
-def observe(root, points, gain, scores, rule_id=1, section_mode=0, remark=0):
+def observe(root, points, gain, scores, rule_id=1, section_mode=0, remark=0,
+            players=None, local_id=1, name=None):
     e = Win32Emu(root / "Client.exe", root)
     e.handlers["__dllonexit"] = (lambda e: e.arg(0)), 0
     e.w32(0x85DA74, e.r32(0x85DA74) | 1)
     app, scene, handler, actor, data = [e.malloc(n) for n in (0x60000, 0x60000, 0x100, 0x1000, 358)]
+    inputs = players if players is not None else [dict(id=1, result=2, points=points, gain=gain,
+                                                      scores=scores, remark=remark)]
+    actors = {local_id: actor}
+    for player in inputs:
+        if player["id"] not in actors:
+            actors[player["id"]] = e.malloc(0x1000)
 
     def patch(address, name, function, pop):
         stub = e.add_stub(name)
@@ -26,14 +33,15 @@ def observe(root, points, gain, scores, rule_id=1, section_mode=0, remark=0):
         e.write(address, b"\xe9" + struct.pack("<i", stub - address - 5))
 
     patch(0x5A1DE1, "app", lambda e: app, 0)
-    patch(0x5A287F, "actor_lookup", lambda e: actor, 1)
     patch(0x5C09CD, "actor_result_state", lambda e: 0, 0)
+    patch(0x5C0A36, "actor_loss_state", lambda e: 0, 0)
 
     def profile(e):
         destination = e.arg(1)
         e.write(destination, bytes(0x23E0))
         e.w32(destination, 1000005)
-        e.w32(destination + 0x34, points)
+        player = next(player for player in inputs if player["id"] == e.arg(0))
+        e.w32(destination + 0x34, player["points"])
         return 1
 
     patch(0x5A3BE2, "profile", profile, 2)
@@ -43,19 +51,32 @@ def observe(root, points, gain, scores, rule_id=1, section_mode=0, remark=0):
     e.w32(scene + 0x4B34, actor)
     e.w32(scene + 0x4B38, actor)
     e.w32(scene + 0x51A4, section_mode)
-    e.write(actor + 0x328, struct.pack("<H", 1))
-    e.write(actor + 0x394, b"\x01\x01")
+    for index, player in enumerate(inputs):
+        address = actors[player["id"]]
+        e.write(address + 0x328, struct.pack("<H", player["id"]))
+        e.write(address + 0x394, bytes([1, player.get("team", 1), index]))
+    actor_vector = e.malloc(len(inputs) * 4)
+    e.write(actor_vector, struct.pack(f"<{len(inputs)}I", *(actors[player["id"]] for player in inputs)))
+    # 005A287F receives Scene+1310 (actor manager); its vector is +133C.
+    e.w32(scene + 0x264C, actor_vector)
+    e.w32(scene + 0x2650, actor_vector + len(inputs) * 4)
     rule = e.call(0x5F47A9, (scene, rule_id))
     e.w32(scene + 0x4EA4, rule)
-    e.write(data, struct.pack("<IBHBIIB", 1000, 1, 1, 2, remark, gain, len(scores)))
-    e.write(data + 17, struct.pack("<4I", 2, 3, 100, 7))
-    e.write(data + 33, struct.pack("<4I", *(scores + [0] * 4)[:4]))
+    e.write(data, struct.pack("<IB", 1000, len(inputs)))
+    for index, player in enumerate(inputs):
+        offset = data + 5 + index * 44
+        e.write(offset, struct.pack("<HBIIB", player["id"], player["result"], player.get("remark", 0),
+                                    player["gain"], len(player["scores"])))
+        e.write(offset + 12, struct.pack("<4I", 2, 3, 100, 7))
+        e.write(offset + 28, struct.pack("<4I", *(player["scores"] + [0] * 4)[:4]))
     captured = []
 
     def capture(e):
         raw = e.read(e.arg(1), 0x293)
-        row = raw[3:85]
-        captured.append(dict(local_id=struct.unpack_from("<H", raw)[0], count=raw[2],
+        rows = []
+        for index in range(raw[2]):
+            row = raw[3 + index * 82:85 + index * 82]
+            rows.append(dict(
                              player_id=struct.unpack_from("<H", row)[0], result=row[28],
                              remark=struct.unpack_from("<I", row, 29)[0],
                              score_total=struct.unpack_from("<I", row, 33)[0],
@@ -63,6 +84,10 @@ def observe(root, points, gain, scores, rule_id=1, section_mode=0, remark=0):
                              progress=struct.unpack_from("<ff", row, 41), fields=row[49],
                              counts=struct.unpack_from("<4I", row, 50),
                              scores=struct.unpack_from("<4I", row, 66)))
+            if players is not None:
+                rows[-1]["index"] = row[6]
+        header = dict(local_id=struct.unpack_from("<H", raw)[0], count=raw[2])
+        captured.append(header | (dict(rows=rows) if players is not None else rows[0]))
         raise EmuStop("captured")
 
     patch(0x612C86, "capture", capture, 2)
@@ -73,14 +98,38 @@ def observe(root, points, gain, scores, rule_id=1, section_mode=0, remark=0):
             raise
     if len(captured) != 1:
         raise RuntimeError("expected one display constructor")
-    print(json.dumps(dict(points=points, gain=gain, scores=scores, rule=rule_id,
-                          section_mode=section_mode, remark=remark, display=captured[0])))
+    record = dict(points=points, gain=gain, scores=scores, rule=rule_id,
+                  section_mode=section_mode, remark=remark, display=captured[0])
+    if players is not None:
+        record = dict(kind="order", case=name, players=inputs, rule=rule_id,
+                      section_mode=section_mode, local_id=local_id, display=captured[0])
+    print(json.dumps(record))
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("client_root", type=pathlib.Path)
-    root = parser.parse_args().client_root
+    parser.add_argument("--orders", action="store_true")
+    arguments = parser.parse_args()
+    root = arguments.client_root
+    if arguments.orders:
+        players = [dict(id=player, result=result, points=1000 * player, gain=10,
+                        scores=[score], team=team)
+                   for player, result, score, team in ((4, 0, 400, 2), (1, 1, 100, 1),
+                                                        (3, 2, 300, 2), (2, 2, 200, 1))]
+        cases = [("mixed", players), ("reverse", list(reversed(players))),
+                 ("all_win", [p | dict(result=2) for p in players]),
+                 ("all_draw", [p | dict(result=1) for p in players]),
+                 ("tied_scores", [p | dict(scores=[100]) for p in players]),
+                 ("rank_by_score", [p | dict(result=2, scores=[500 - p["scores"][0]]) for p in players]),
+                 ("eight_players", [dict(id=player, result=index % 3, points=player * 1000,
+                                         gain=10, scores=[800 - index * 100], team=index % 2 + 1)
+                                    for index, player in enumerate((8, 3, 7, 1, 6, 2, 5, 4))])]
+        for name, inputs in cases:
+            for local_id in (1, 2, 4):
+                for rule in (1, 8):
+                    observe(root, 0, 0, [], players=inputs, local_id=local_id, rule_id=rule, name=name)
+        raise SystemExit(0)
     pe = pefile.PE(str(root / "Client.exe"))
     thresholds = struct.unpack("<181I", pe.get_data(0x7F7780 - pe.OPTIONAL_HEADER.ImageBase, 724))
     print(json.dumps(dict(kind="thresholds", values=thresholds)))
