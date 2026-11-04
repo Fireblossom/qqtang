@@ -35,6 +35,8 @@ type boxNPCActor struct {
 	lastTick                        uint32
 	nextDecision                    uint32
 	lastDanger                      uint32
+	wander                          npcWanderCache
+	moveBlocked                     bool
 	danger                          battleengine.DangerTimeline
 	path                            []battleengine.Cell
 	fraction                        uint32
@@ -560,7 +562,8 @@ func (match *onlineMatch) advanceBoxNPC(n *boxNPCActor, now uint32) {
 				}
 			}
 			if count > 0 {
-				direction := npcWanderDirection(mask, n.facing, uint32(match.box.rng.Intn(count)))
+				direction := n.wander.choose(n.pos.Cell(), n.moveBlocked, mask, n.facing,
+					func() uint32 { return uint32(match.box.rng.Intn(count)) })
 				n.path = []battleengine.Cell{boxStep(n.pos.Cell(), direction)}
 			}
 		}
@@ -575,6 +578,7 @@ func (match *onlineMatch) advanceBoxNPC(n *boxNPCActor, now uint32) {
 		target := battleengine.PositionAtCellCenter(targetCell)
 		if !match.npcOpen(targetCell, n.pos.Cell()) {
 			n.path = nil
+			n.moveBlocked = true
 			break
 		}
 		dx, dy := target.X-n.pos.X, target.Y-n.pos.Y
@@ -583,6 +587,7 @@ func (match *onlineMatch) advanceBoxNPC(n *boxNPCActor, now uint32) {
 			continue
 		}
 		n.moving = true
+		n.moveBlocked = false
 		if dx != 0 {
 			step := min(travel, abs32(dx))
 			n.facing = 0
