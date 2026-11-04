@@ -98,19 +98,19 @@ class WidgetTest(unittest.TestCase):
 
     def test_framescheme_state_order(self) -> None:
         button = self.make(type="BUTTON", framescheme=[(0, 0, 2, 2, 3, 3, 1, 1)])
-        self.assertEqual(button.frame_range(4), (1, 1))
+        self.assertEqual(button.frame_range(4), (3, 3))
         button.hover = True
         self.assertEqual(button.state(), STATE_HOVER)
         self.assertEqual(button.frame_range(4), (2, 2))
         button.pressed = True
         self.assertEqual(button.state(), STATE_PRESSED)
-        self.assertEqual(button.frame_range(4), (3, 3))
+        self.assertEqual(button.frame_range(4), (0, 0))
         button.enabled = False
         self.assertEqual(button.state(), STATE_DISABLED)
-        self.assertEqual(button.frame_range(4), (0, 0))
+        self.assertEqual(button.frame_range(4), (1, 1))
 
     def test_default_button_frames_and_hidden_states(self) -> None:
-        self.assertEqual(self.make(type="BUTTON").frame_range(3), (0, 0))
+        self.assertEqual(self.make(type="BUTTON").frame_range(3), (2, 2))
         overlay = self.make(type="BUTTON", framescheme=[(0, 0, 0, 0, -1, -1, -1, -1)])
         self.assertEqual(overlay.state(), STATE_NORMAL)
         self.assertIsNone(overlay.frame_range(1))

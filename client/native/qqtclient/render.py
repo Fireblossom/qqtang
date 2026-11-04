@@ -20,7 +20,6 @@ FONT_CANDIDATES = (
     "/System/Library/Fonts/Hiragino Sans GB.ttc",
     "/System/Library/Fonts/STHeiti Light.ttc",
 )
-DEFAULT_FRAME_MS = 100
 # Glyph order of the number*.img strips (verified against number2.img) and of
 # the per-frame PICLABEL fonts (num_player.img: digits, then '/').
 NUMBER_GLYPHS = "0123456789/:-+."
@@ -115,7 +114,6 @@ class Renderer:
         self.font_path = font_path
         self.fonts: dict[int, pygame.font.Font] = {}
         self.text_cache: dict[tuple[str, int, tuple[int, int, int]], pygame.Surface] = {}
-        self.started = time.monotonic()
         # Host drawing for widgets with `callbackdraw` (e.g. SC_room_drawPlayer).
         self.draw_callbacks: dict[str, Callable[[pygame.Surface], None]] = {}
         # Host drawing below and above the widget tree (the battle field and
@@ -315,15 +313,13 @@ class Renderer:
         frames = self.sprites.get(widget.image)
         if not frames:
             return
-        selected = widget.frame_range(len(frames))
-        if selected is None:
+        opacity = alpha_byte(alpha)
+        if opacity == 0:
             return
-        first, last = selected
-        index = first
-        if last > first:
-            interval = DEFAULT_FRAME_MS / widget.frame_speed if widget.frame_speed > 0 else DEFAULT_FRAME_MS
-            elapsed = (time.monotonic() - self.started) * 1000
-            index = first + int(elapsed / interval) % (last - first + 1)
+        first, _ = widget.frame_bounds(widget.animation.state, widget.animation.row)
+        index = widget.animation.draw_frame(len(frames), first, widget.image_flag)
+        if index is None:
+            return
         surface, offset_x, offset_y = frames[index]
         if surface is None:
             return
@@ -341,9 +337,6 @@ class Renderer:
                 draw_y += int((widget.h - canvas_h) / 2)
             else:
                 draw_y += widget.h - canvas_h
-        opacity = alpha_byte(alpha)
-        if opacity == 0:
-            return
         surface.set_alpha(opacity)
         if widget.texture_rect is not None:
             tx, ty, tw, th = widget.texture_rect

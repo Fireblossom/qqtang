@@ -10,19 +10,16 @@ from __future__ import annotations
 
 from typing import Any, Callable, Iterator
 
+from .ui_animation import ImageAnimation
+
 WGTSTYLE_STATIC = 32768
 UI_BTN_STYLE_RADIO = 2
 EDIT_CODER = 2
 
 TEXT_INPUT_TYPES = {"EDIT", "MULTIEDIT", "RICHEDIT", "KEYEDIT"}
 
-# framescheme rows hold four (first, last) frame pairs. Comparing the schemes
-# with the frames of their images shows the state order below: for example
-# btn_cross.img is (dim, normal, highlight, normal) with (0,0,2,2,3,3,1,1),
-# and hover-only overlays use (0,0,0,0,-1,-1,-1,-1).
-STATE_DISABLED, STATE_HOVER, STATE_PRESSED, STATE_NORMAL = range(4)
-# Buttons without a scheme store their frames as normal, hover, pressed, disabled.
-DEFAULT_BUTTON_FRAMES = {STATE_NORMAL: 0, STATE_HOVER: 1, STATE_PRESSED: 2, STATE_DISABLED: 3}
+# 1002A16B: E4 bits 8/2/1 select disabled/pressed/hover respectively.
+STATE_PRESSED, STATE_HOVER, STATE_NORMAL, STATE_DISABLED = range(4)
 
 
 def child_classes(cls: type) -> list[tuple[str, type]]:
@@ -64,7 +61,11 @@ class Widget:
         self.image_offset = tuple(attr("bkimagepos", (0, 0)))
         self.image_flag = int(attr("bkImgFlag", 0) or 0)
         self.framescheme = attr("framescheme", None)
-        self.frame_speed = float(attr("framespeed", 0) or 0)
+        speed = attr("framespeed")
+        loop_speed = attr("loopspeed")
+        self.frame_speed = 0.15 if speed is None else float(speed)
+        self.loop_speed = 0.0 if loop_speed is None else float(loop_speed)
+        self.animation = ImageAnimation()
         # LIFESTRIP / DYLIFESTRIP (gameUI.dll 100117D8, 10011C43).
         self.strip_total = float(attr("totalnum", 0) or 0)
         self.strip_current = float(attr("curnum", 0) or 0)
@@ -153,30 +154,41 @@ class Widget:
     def state(self) -> int:
         if not self.enabled:
             return STATE_DISABLED
-        if self.pressed and self.hover:
+        if self.pressed:
             return STATE_PRESSED
         if self.hover:
             return STATE_HOVER
         return STATE_NORMAL
 
-    def frame_range(self, frame_count: int) -> tuple[int, int] | None:
-        """Frames to show for the current state, or None to draw nothing."""
-        state = self.state()
+    def frame_bounds(self, state: int, row_index: int) -> tuple[int, int]:
+        """Logical scheme bounds, independent of the image's frame count."""
         scheme = self.framescheme
         if scheme:
-            row = scheme[1] if self.checked and len(scheme) > 1 else scheme[0]
+            row = scheme[row_index]
             first, last = row[state * 2], row[state * 2 + 1]
-            if first < 0:
-                return None
-        elif self.type in ("BUTTON", "CHECK"):
-            first = last = DEFAULT_BUTTON_FRAMES[state]
-        elif frame_count > 1:
-            first, last = 0, frame_count - 1
+        elif self.type == "CHECK":
+            first = last = row_index
+        elif self.type in ("BUTTON", "HYPERLINK"):
+            first = last = state
         else:
             first = last = 0
-        if first >= frame_count:
-            first = last = 0
-        return first, min(last, frame_count - 1)
+        return first, last
+
+    def scheme_row(self) -> int:
+        if self.type == "CHECK" and self.checked and (not self.framescheme or len(self.framescheme) > 1):
+            return 1
+        return 0
+
+    def frame_range(self, frame_count: int) -> tuple[int, int] | None:
+        """Current logical bounds; image overflow is handled during drawing."""
+        first, last = self.frame_bounds(self.state(), self.scheme_row())
+        return None if first < 0 else (first, last)
+
+    def advance_animation(self, elapsed_ms: float) -> None:
+        self.animation.row = self.scheme_row()
+        state = self.state()
+        first, last = self.frame_bounds(state, self.animation.row)
+        self.animation.advance(elapsed_ms / 1000, state, first, last, self.frame_speed, self.loop_speed)
 
     def walk(self) -> Iterator["Widget"]:
         yield self

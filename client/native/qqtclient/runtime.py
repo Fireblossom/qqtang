@@ -186,6 +186,7 @@ class UIRuntime:
             if widget is not None:
                 self.call(widget, "OnTimer")
         for widget in list(self.widgets.values()):
+            widget.advance_animation(elapsed_ms)
             if widget.type == "DYMASK":
                 # 0x10012057: degrees per second, approach destination.
                 delta = widget.angle_step * elapsed_ms / 1000

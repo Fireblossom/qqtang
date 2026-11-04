@@ -155,7 +155,12 @@ def build_natives(runtime: UIRuntime, resources: Resources, audio: Audio) -> dic
 
     @with_widget()
     def Win_SetImg(widget, image):
-        widget.image = image or None
+        image = image or None
+        if widget.image != image:
+            # 10028871 preserves clocks but resets a changed background.
+            widget.image = image
+            widget.animation.frame = 0
+            widget.animation.hidden = False
 
     @with_widget()
     def Win_SetStripNum(widget, value):
