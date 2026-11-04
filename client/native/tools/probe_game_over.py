@@ -14,7 +14,7 @@ import pefile
 from win32emu import EmuStop, Win32Emu
 
 
-def observe(root, points, gain, scores, rule_id=1, section_mode=0, remark=0,
+def observe(root, points, gain, scores, rule_id=1, game_type=0, remark=0,
             players=None, local_id=1, name=None, pve_points=None):
     e = Win32Emu(root / "Client.exe", root)
     e.handlers["__dllonexit"] = (lambda e: e.arg(0)), 0
@@ -65,7 +65,7 @@ def observe(root, points, gain, scores, rule_id=1, section_mode=0, remark=0,
     e.w32(scene + 8, app)
     e.w32(scene + 0x4B34, actor)
     e.w32(scene + 0x4B38, actor)
-    e.w32(scene + 0x51A4, section_mode)
+    e.w32(scene + 0x51A4, game_type)
     for index, player in enumerate(inputs):
         address = actors[player["id"]]
         e.write(address + 0x328, struct.pack("<H", player["id"]))
@@ -114,10 +114,10 @@ def observe(root, points, gain, scores, rule_id=1, section_mode=0, remark=0,
     if len(captured) != 1:
         raise RuntimeError("expected one display constructor")
     record = dict(points=points, gain=gain, scores=scores, rule=rule_id,
-                  section_mode=section_mode, remark=remark, display=captured[0])
+                  game_type=game_type, remark=remark, display=captured[0])
     if players is not None:
         record = dict(kind="order", case=name, players=inputs, rule=rule_id,
-                      section_mode=section_mode, local_id=local_id, display=captured[0])
+                      game_type=game_type, local_id=local_id, display=captured[0])
     if pve_points is not None:
         record["pve_points"] = pve_points
     print(json.dumps(record))
@@ -138,9 +138,9 @@ if __name__ == "__main__":
                             if node.tag.startswith("lev_"))
         print(json.dumps(dict(kind="pve_thresholds", values=thresholds)))
         for pve_points in (0, 100, 572, 573, 600, 1288, 1289, 428326798, 428326799):
-            for section_mode in (0, 1, 2):
+            for game_type in (0, 1, 2):
                 observe(root, 950, 50, [10, 20, 30, 40], rule_id=12,
-                        pve_points=pve_points, section_mode=section_mode)
+                        pve_points=pve_points, game_type=game_type)
         for scores in ([], [10], [0, 0, 30, 100]):
             observe(root, 950, 50, scores, rule_id=12, pve_points=100)
         raise SystemExit(0)
@@ -170,5 +170,5 @@ if __name__ == "__main__":
                          (1631150000, 50), (1621150200, 10), (1621151520, 50)):
         observe(root, points, gain, [52, 63, 2000])
     for rule in (1, 2, 3, 4, 5, 6, 7, 8):
-        for section_mode in (0, 1, 2):
-            observe(root, 950, 100, [10, 20, 30, 40], rule, section_mode, 9)
+        for game_type in (0, 1, 2):
+            observe(root, 950, 100, [10, 20, 30, 40], rule, game_type, 9)

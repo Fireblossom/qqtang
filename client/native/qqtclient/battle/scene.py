@@ -23,7 +23,7 @@ from . import mapfile, prepared
 from .bomb_animation import BombAnimation
 from .effect import EffectPlayer
 from .machine_projectile import MachineGateAnimation
-from .result import ResultDisplay
+from .result import ResultDisplay, scene_game_type
 from .result_portrait import ResultPortrait
 from .sculpture_animation import StatueAnimation
 from .sidecar import (ACTOR_ACTIVE, ACTOR_ELIMINATED, ACTOR_TRAPPED, EVENT_ACTOR_ELIMINATED, EVENT_ACTOR_RESPAWNED, EVENT_BOMB_EXPLODED,
@@ -313,10 +313,11 @@ class BattleScene:
 
     def __init__(self, resources: Resources, sprites: SpriteCache, avatars: AvatarCache, sidecar: Sidecar,
                  map_id: int, players: list[dict[str, Any]], local_id: int, state: dict[str, Any], realtime: bool = False,
-                 wear: dict[int, tuple[tuple[str, int], ...]] | None = None):
+                 wear: dict[int, tuple[tuple[str, int], ...]] | None = None, game_type: int = 0):
         """wear: worn costume parts by PlayerID, as the room drew them."""
         self.resources, self.sprites, self.avatars, self.sidecar = resources, sprites, avatars, sidecar
         self.local_id = local_id
+        self.game_type = scene_game_type(game_type)
         self.players = players
         self.wear = wear or {}
         description = mapfile.load_descriptions(resources)[map_id]
@@ -1492,7 +1493,8 @@ class BattleScene:
         levels = self.runtime.namespace.get("LevelCfg") if self.runtime is not None else None
         self.result_display = ResultDisplay(self.map.rule, self.result_rows, self.local_id, self.names,
                                             levels.points if levels is not None else (),
-                                            pve_thresholds=tuple(level.point for level in pve.levels()) if self.map.rule == 12 else ())
+                                            pve_thresholds=tuple(level.point for level in pve.levels()) if self.map.rule == 12 else (),
+                                            game_type=self.game_type)
         local = self._local_actor()
         mine = next((row for row in rows if row.player_id == self.local_id), None)
         if local is not None and mine is not None:

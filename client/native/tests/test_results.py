@@ -8,7 +8,7 @@ import types
 import unittest
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
-from qqtclient.battle.result import ResultDisplay, experience_percent, experience_level, pve_experience_percent, result_points
+from qqtclient.battle.result import ResultDisplay, experience_percent, experience_level, pve_experience_percent, result_points, scene_game_type
 from qqtclient.battle.scene import BattleScene, ResultRow
 from qqtclient.battle.online import MatchContext, MatchMember, OnlineBattle, RESULT_SHOWN_MS
 from qqtclient.net import match
@@ -77,19 +77,24 @@ class ResultsTest(unittest.TestCase):
         for row in rows[1:]:
             native = row["display"]
             points = result_points(row["rule"], row["points"], row["scores"])
-            with self.subTest(points=row["points"], gain=row["gain"], rule=row["rule"], section=row["section_mode"]):
+            with self.subTest(points=row["points"], gain=row["gain"], rule=row["rule"], section=row["game_type"]):
                 self.assertEqual(points - row["points"], native["score_total"])
                 self.assertEqual(experience_level(points, thresholds), native["level"])
-                if row["section_mode"] != 1:
+                if row["game_type"] != 1:
                     self.assertEqual([experience_percent(row["points"], thresholds),
                                       experience_percent(row["points"] + row["gain"], thresholds)], native["progress"])
                     result = ResultRow(1, 2, 2, 3, 100, row["gain"], points, tuple(row["scores"]), points_before=row["points"])
-                    model = ResultDisplay(row["rule"], [result], 1, {}, thresholds)
+                    model = ResultDisplay(row["rule"], [result], 1, {}, thresholds, game_type=row["game_type"])
                     self.assertEqual(model.progress, native["progress"])
                     model.phase = 3
                     icons = model.level_icons()
                     self.assertEqual(icons[0][2], thresholds[native["level"]] - 1)
                 self.assertEqual(native["remark"], row["remark"])
+                if row["game_type"] == 1:
+                    result = ResultRow(1, 2, 2, 3, 100, row["gain"], points,
+                                       tuple(row["scores"]), points_before=row["points"])
+                    self.assertEqual(ResultDisplay(row["rule"], [result], 1, {}, thresholds,
+                                                   game_type=1).progress, native["progress"])
             checked += 1
         self.assertEqual(checked, 36)
 
@@ -141,6 +146,7 @@ class ResultsTest(unittest.TestCase):
         for row in rows:
             scene = BattleScene.__new__(BattleScene)
             scene.local_id, scene.now_ms, scene.runtime = row["local_id"], 0, None
+            scene.game_type = 0
             scene.state = dict(actors=[])
             scene.map = types.SimpleNamespace(rule=row["rule"])
             scene.names = {player["id"]: str(player["id"]) for player in row["players"]}
@@ -167,7 +173,7 @@ class ResultsTest(unittest.TestCase):
             result = ResultRow(1, 2, 2, 3, 100, row["gain"], points,
                                tuple(row["scores"]), pve_points_before=row["pve_points"])
             model = ResultDisplay(12, [result], 1, {}, pve_thresholds=thresholds)
-            with self.subTest(before=row["pve_points"], scores=row["scores"], mode=row["section_mode"]):
+            with self.subTest(before=row["pve_points"], scores=row["scores"], mode=row["game_type"]):
                 self.assertEqual([pve_experience_percent(row["pve_points"], thresholds),
                                   pve_experience_percent(after, thresholds)], native["progress"])
                 self.assertEqual(model.progress, native["progress"])
@@ -186,3 +192,24 @@ class ResultsTest(unittest.TestCase):
         payload = struct.pack(">HII", 1, 1, len(body) + 4) + struct.pack("<I", match.SCHEMA_GAME_OVER) + body
         battle.on_game_event(types.SimpleNamespace(payload=payload))
         self.assertEqual(captured, [ResultRow(1, 2, 2, 3, 100, 50, 1050, (10, 20, 30, 40), 7, 950, 0, 0, 100)])
+
+    def test_game_type_setter_getter_and_scene_clamp_match_native(self):
+        rows = self.fixture("result_modes_v848.jsonl")
+        self.assertEqual(len(rows), 8)
+        for row in rows:
+            with self.subTest(value=row["input"]):
+                self.assertEqual(scene_game_type(row["input"]), row["scene_mode"])
+                self.assertEqual(row["script_value"], row["stored"])
+                self.assertEqual(row["getter"], row["stored"])
+
+    def test_game_type_caption_matches_native_all_draw_commands(self):
+        rows = self.fixture("result_mode_draw_v848.jsonl")
+        self.assertEqual(len(rows), 9)
+        for row in rows:
+            original = self.model(row["rule"], row["outcome"])
+            model = ResultDisplay(row["rule"], original.rows, 1, original.names, game_type=row["game_type"])
+            for _ in range(row["elapsed"] // row["cadence"]):
+                model.advance(row["cadence"])
+            with self.subTest(rule=row["rule"], game_type=row["game_type"]):
+                self.assertEqual([dict(number=i.number, frame=i.frame, position=[i.x, i.y], alpha=i.alpha)
+                                  for i in model.plan()[0] if i.clip_width is None], row["images"])

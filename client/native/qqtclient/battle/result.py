@@ -13,6 +13,11 @@ def f32(value):
     return struct.unpack("<f", struct.pack("<f", value))[0]
 
 
+def scene_game_type(value):
+    value &= 255
+    return value if value <= 2 else 0  # 005C862B..005C864F
+
+
 @dataclasses.dataclass(frozen=True)
 class Image:
     number: int
@@ -71,8 +76,9 @@ def pve_experience_percent(points, thresholds):
 
 
 class ResultDisplay:
-    def __init__(self, rule, rows, local_id, names, thresholds=(), progress=None, pve_thresholds=()):
+    def __init__(self, rule, rows, local_id, names, thresholds=(), progress=None, pve_thresholds=(), game_type=0):
         self.rule, self.rows, self.local_id, self.names = rule, rows, local_id, names
+        self.game_type = scene_game_type(game_type)
         self.base = 130 if rule == 12 else 30
         self.elapsed = 0
         self.phase = 0
@@ -83,6 +89,8 @@ class ResultDisplay:
         self.portrait = None
         self.thresholds = thresholds
         mine = next((row for row in rows if row.player_id == local_id), None)
+        if progress is None and rule != 12 and self.game_type == 1:
+            progress = (0, 0)
         if progress is None and rule != 12 and thresholds and mine is not None and mine.points_before is not None:
             progress = (experience_percent(mine.points_before, thresholds),
                         experience_percent((mine.points_before + mine.point) & 0xFFFFFFFF, thresholds))
@@ -159,7 +167,7 @@ class ResultDisplay:
             elif 0 < mine.remark < 0x80000000:
                 images.append(Image((1000 + mine.remark) & 0xFFFF, 0, b + 443, 91, a))
             images.append(Image({2: 311, 0: 312}.get(mine.result, 313), 0, b + 198, 6))
-        images.append(Image(322 if self.rule == 12 else 321, 0, b + 41, 196))
+        images.append(Image(322 if self.rule == 12 or self.game_type == 1 else 321, 0, b + 41, 196))
         return images, texts
 
     def level_icons(self):

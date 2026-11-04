@@ -15,7 +15,7 @@ from probe_sculpture_animation import picture_fixture
 from win32emu import Win32Emu
 
 
-def run(root, honors=False):
+def run(root, honors=False, modes=False):
     snapshots, texts, portraits = [], [], []
     e, pictures, draws, patch = picture_fixture(root, snapshots)
     code = e.malloc(64)
@@ -55,11 +55,12 @@ def run(root, honors=False):
     def signed(address):
         return struct.unpack("<i", e.read(address, 4))[0]
 
-    def create(rule_id, outcome, remark=0):
+    def create(rule_id, outcome, remark=0, game_type=0):
         world, scene, actor = [e.malloc(n) for n in (0x60000, 0x6000, 0x800)]
         rule = e.call(0x5F47A9, (scene, rule_id))
         e.w32(world + 0x37F8, scene)
         e.w32(scene + 0x4EA4, rule)
+        e.w32(scene + 0x51A4, game_type)
         e.write(actor + 0x394, b"\x01\x01")
         e.w32(world + 0x3824, actor)
         e.w32(world + 0x3828, actor)
@@ -108,6 +109,14 @@ def run(root, honors=False):
             emit(result, 4, 2, 4300, 20, True,
                  dict(kind="honor_draw", remark=remark, profile_flags=flags))
         return
+    if modes:
+        for rule in (4, 8, 12):
+            for game_type in (0, 1, 2):
+                result = create(rule, 2, game_type=game_type)
+                for _ in range(215):
+                    e.call(0x613560, (20,), ecx=result)
+                emit(result, rule, 2, 4300, 20, True, dict(kind="mode_draw", game_type=game_type))
+        return
 
     checkpoints = {0, 3000, 3020, 3040, 3200, 3400, 3600, 3740, 3760, 3800, 4000, 4260}
     for rule in (4, 7, 8, 12):
@@ -149,5 +158,6 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("client_root", type=pathlib.Path)
     parser.add_argument("--honors", action="store_true")
+    parser.add_argument("--modes", action="store_true")
     arguments = parser.parse_args()
-    run(arguments.client_root, arguments.honors)
+    run(arguments.client_root, arguments.honors, arguments.modes)
