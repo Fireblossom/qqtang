@@ -401,6 +401,7 @@ class BattleScene:
         self.shown_tank_hp: dict[int, int] = {}
         self.shown_pve_hp: dict[Any, int] = {}
         self.shown_pve_bosses: tuple[int, ...] = ()
+        self.shown_player_icons: dict[int, tuple[int, int]] | None = None
         self.font: Callable[[int], pygame.font.Font] | None = None
         self.text: Callable[[str, int, tuple[int, int, int]], pygame.Surface] | None = None
         log(f"[battle] map {map_id} {self.map_name} ({self.map.width}x{self.map.height}, rule {self.map.rule})")
@@ -429,6 +430,7 @@ class BattleScene:
         self._script("game_setMapID", map_id)
         self._update_timer()
         self._update_tank_bases()
+        self._update_player_list_icons()
 
     def _pve_player_info(self) -> list[Any]:
         """tagPVEPLAYERINFO for ui_InitPVEPlayer, in GAME_BEGIN order."""
@@ -472,6 +474,23 @@ class BattleScene:
             self.shown_seconds = seconds
             label = "UI.game.pveTime" if self.rule == "adventure" else PLAYER_LIST + ".time"
             self.runtime.namespace["Win_SetText"](label, f"{seconds // 60:02d}:{seconds % 60:02d}")
+
+    def _update_player_list_icons(self) -> None:
+        """005C87B0 dispatches the original level/kin icon script per seat."""
+        if self.runtime is None or self.rule == "adventure":
+            return
+        points = {player["id"]: player.get("points", 0) for player in self.players}
+        current = {self._seat(index, actor): (actor["id"], points.get(actor["id"], 0))
+                   for index, actor in enumerate(self.state["actors"])}
+        previous = self.shown_player_icons
+        if current == previous:
+            return
+        for seat in range(8) if previous is None else previous.keys() - current.keys():
+            self._script("ui_NotifyShowLevelIcon", 0, seat, 0)
+        for seat, entry in current.items():
+            if previous is None or previous.get(seat) != entry:
+                self._script("ui_NotifyShowLevelIcon", entry[1], seat, 1)
+        self.shown_player_icons = current
 
     # Input and stepping -----------------------------------------------------
 
@@ -631,6 +650,7 @@ class BattleScene:
             self._apply(event)
         self._update_timer()
         self._update_status_bar()
+        self._update_player_list_icons()
         self._update_tank_bases()
         self._update_adventure()
         self._update_pig_beds()
