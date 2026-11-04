@@ -50,7 +50,7 @@
 - [x] 带入道具状态栏：按原版房间栏顺序装入并跳过空格，和拾取道具按发放时序合并，用尽后前移；保留超过七种/255个的库存。开局/同Tier冷却及遮罩已实现（`docs/item-slots-re.md`、`docs/prepared-cooldown-re.md`）。原版函数探针与113双客户端乱序/空格/用尽联调通过，零warn/error。
 - [x] 对战表情（`docs/emotion-re.md`）：T～P 六种，misc500～505，2 秒冷却、3 秒显示，聊天框打开时屏蔽；修正服务端 0x1194 首字段为 PlayerID 并校验发送者。211 双客户端各发六种，两端 12 条记录一致、服务端零 warn；定位按原版静态代码，未做录像对照
 - [x] 道具快捷键：数字1～7与Z～M对应当前页，Ctrl按原生状态/持有判断选择页内0～5格首项；准备道具的冷却/模式在选中后检查，失败不续找。Tab切换七格页，修原版getter漏偏移；聊天屏蔽输入，NPC禁道具键保留Tab。原生24条基准及170项Python测试通过，见 `docs/item-slots-re.md`、`docs/item-use-re.md`。
-- [~] 结算控制器代码缺项已补齐：3秒等待/700px/s下落/27px行距/Count-Score/12秒返回（`docs/results-re.md`）；竞技XP、等级积分与荣誉（`docs/result-progress-re.md`）；多行报文原序（`docs/result-order-re.md`）；探险勇气投影（`docs/result-pve-re.md`）；完整角色/胜负动作/200ms独立部件/阴影（`docs/result-portrait-re.md`）；房间GameType与道具场标题/0进度分支（`docs/result-modes-re.md`）。累计461条原版记录，真实竞技/自由场同胜/探险/道具场验收，Python194项通过。历史录像/Windows完整画面对照仍待完成。
+- [~] 结算控制器代码缺项已补齐：3秒等待/700px/s下落/27px行距/Count-Score/12秒返回（`docs/results-re.md`）；竞技XP、等级积分与荣誉（`docs/result-progress-re.md`）；多行报文原序（`docs/result-order-re.md`）；探险勇气投影（`docs/result-pve-re.md`）；完整角色/胜负动作/200ms独立部件/阴影（`docs/result-portrait-re.md`）；房间GameType与道具场标题/0进度分支（`docs/result-modes-re.md`）。累计461条原版记录，真实竞技/自由场同胜/探险/道具场验收，Python197项通过。历史录像/Windows完整画面对照仍待完成。
 - [x] 右侧玩家栏按座位、每行 51 像素排，头像、名字、称号的位置按原版（`0x005E1C24`、`0x005E1E46`）；头像只画头部是推断
 - [~] 礼花效果的画面：按道具表的 `GridsAnim`（如 20058 → `honglihua.eff`）在使用者格子上播放 AffectTime（10 s），已实测能画出来；效果点取格心是推断，画面偏暗，没有原版录像对照
 - [x] 拾取路径的双客户端实测：413、914、820 双 autoplay 局里非仲裁方（2 号）拾取经仲裁方确认被服务端接受（分别 13、9、4 次），零 warn
@@ -97,7 +97,7 @@
   - [x] 九张真实地图构建与隐藏物品保留测试通过；1404保留原始重复出生槽位和抽样权重。
   - [x] 1401/1404双autoplay真实联网局双方同判2队胜，分别在90220/37120ms，服务端零warn/error。1401还验证NPC生成、糖浆6秒死亡和补生；该旧局主动放泡属于宿主偏差。
   - [x] 推/停双端、碰撞阈值、箱内道具随动、发射器奇偶侧挡、再生UID/1500ms保护、49/Scene1含义、RPC/UDP NPC去重/接管均有专项测试。
-  - [~] NPC速度表、WF逃生/避险与候选权重（`docs/box-ai-re.md`）、路径栈追加/消费和两层门控（`docs/npc-follow-re.md`）、默认碰撞/滑角与持续火焰命中均已接入。5807条原版记录、相关Go全套、Python194项及Windows/386交叉编译通过；1401/1404两端实测覆盖角色25/26/27、6秒困泡死亡/补生及自然胜负，服务端零告警；末击与最终死亡通知乱序/重复亦已补幂等回归（`docs/npc-navigation-re.md`）。规则8不派发普通放泡，旧500ms自动放泡已撤下（`docs/npc-rule-dispatch-re.md`）。默认float32位移及完整Corner/End预测已接入（`docs/npc-motion-re.md`）；默认接收端按原版玩家表修正（`docs/npc-remote-re.md`），完整网络队列仍待核对；默认冰箱速度覆盖及同步已接入（`docs/npc-ice-re.md`），默认freeze空槽、命令恢复和阴影已接入（`docs/npc-picture-re.md`）；变身/主动道具等能力仍待完成。
+  - [~] NPC速度表、WF逃生/避险与候选权重（`docs/box-ai-re.md`）、路径栈追加/消费和两层门控（`docs/npc-follow-re.md`）、默认碰撞/滑角与持续火焰命中均已接入。6687条原版记录、相关Go全套、Python197项及Windows/386交叉编译通过；1401/1404两端实测覆盖角色25/26/27、6秒困泡死亡/补生及自然胜负，服务端零告警；末击与最终死亡通知乱序/重复亦已补幂等回归（`docs/npc-navigation-re.md`）。规则8不派发普通放泡，旧500ms自动放泡已撤下（`docs/npc-rule-dispatch-re.md`）。默认float32位移及完整Corner/End预测已接入（`docs/npc-motion-re.md`）；默认接收端已按原版玩家表、逐帧拐角/终点及float32累加修正（`docs/npc-remote-path-re.md`），完整网络队列仍待核对；默认冰箱速度覆盖及同步已接入（`docs/npc-ice-re.md`），默认freeze空槽、命令恢复和阴影已接入（`docs/npc-picture-re.md`）；变身/主动道具等能力仍待完成。
   - [ ] 未做历史录像逐帧画面对照；当前资源无flame10000/10001图片，未补造这两张特效。
 - [~] Boss 叠加层（18 张图，含地图 11、124）：AIType 3 控制器、出生/受伤/掉落/死亡、接触击杀、技能 1 减速胶已接入（`docs/boss-lifecycle-re.md`、`docs/boss-ai-re.md`）。
   - [x] 引擎开关 `NativeBossNPC`、出生格、命中与 3 s 免伤、部分/死亡掉落、接触击杀、寻路、放泡逃生、技能 1 节奏、仲裁接管有专项测试。

@@ -15,7 +15,7 @@ from unicorn.x86_const import UC_X86_REG_FPCW
 from win32emu import Win32Emu
 
 
-def run(root):
+def create_remote_actor(root):
     e = Win32Emu(root / 'Client.exe', root)
     e.uc.reg_write(UC_X86_REG_FPCW, 0x007F)
     e.handlers['__dllonexit'] = (lambda e: e.arg(0)), 0
@@ -43,6 +43,11 @@ def run(root):
     bridge = e.malloc(64)
     e.write(bridge, bytes.fromhex('83 ec 10 d9 3c 24 66 8b 04 24 80 cc 0c 66 89 44 24 02 d9 6c 24 02 df 7c 24 08 d9 2c 24 8b 44 24 08 8b 54 24 0c 83 c4 10 c3'))
     e.write(0x6200CE, b'\xe9'+struct.pack('<i', bridge-0x6200CE-5))
+    return e, scene, actor, rule, controller
+
+
+def run(root):
+    e, scene, actor, rule, controller = create_remote_actor(root)
     rates = list(range(11))+[11, 255]
     output = e.malloc(4)
 

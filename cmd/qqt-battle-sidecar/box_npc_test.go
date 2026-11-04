@@ -221,6 +221,10 @@ func TestBoxNPCAdvertisesFullFloatForecastAndFollowsCorrectionFirst(t *testing.T
 		t.Fatalf("peer skipped perpendicular correction: %+v", remote.pos)
 	}
 	peer.interpolateBoxNPC(remote, 300)
+	if remote.pos.X != 220 || remote.pos.Y != 260 {
+		t.Fatalf("peer spent cross-axis remainder on the final leg: %+v", remote.pos)
+	}
+	peer.interpolateBoxNPC(remote, 320)
 	if remote.pos.X <= 220 || remote.pos.Y != 260 {
 		t.Fatalf("peer did not continue along primary axis: %+v", remote.pos)
 	}

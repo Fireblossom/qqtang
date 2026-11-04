@@ -63,6 +63,7 @@ type boxNPCActor struct {
 	moveCorner                      battleengine.Position
 	netMove                         game.PlayerMoveSequence
 	netMoveSet                      bool
+	remote                          npcRemotePlayback
 }
 type boxNPCOutbound struct {
 	author  uint16
@@ -410,52 +411,7 @@ func (match *onlineMatch) interpolateBoxNPC(n *boxNPCActor, now uint32) {
 		return
 	}
 	m := n.netMove
-	pos := battleengine.NativeNPCPosition{X: float32(m.CurrentPosX), Y: float32(m.CurrentPosY)}
-	end := battleengine.NativeNPCPosition{X: float32(m.EndPosX), Y: float32(m.EndPosY)}
-	speed := nativeNPCRemoteScalar(m.Speed)
-	travel := float32(float32(float32(now-m.TimeStamp)*speed) * float32(.04))
-	if m.WalkAndDirection&0x10 != 0 {
-		// Forecast corner is where perpendicular correction starts. Follow the
-		// initial primary leg, then correction, then the final primary leg.
-		advance := func(target battleengine.NativeNPCPosition) {
-			dx, dy := target.X-pos.X, target.Y-pos.Y
-			remaining := dx
-			if remaining < 0 {
-				remaining = -remaining
-			}
-			vertical := dx == 0
-			if vertical {
-				remaining = dy
-				if remaining < 0 {
-					remaining = -remaining
-				}
-			}
-			used := min(travel, remaining)
-			if vertical {
-				if dy < 0 {
-					pos.Y -= used
-				} else {
-					pos.Y += used
-				}
-			} else {
-				if dx < 0 {
-					pos.X -= used
-				} else {
-					pos.X += used
-				}
-			}
-			travel -= used
-		}
-		if m.CornerPosX != 0 || m.CornerPosY != 0 {
-			advance(battleengine.NativeNPCPosition{X: float32(m.CornerPosX), Y: float32(m.CornerPosY)})
-		}
-		if m.WalkAndDirection&1 == 0 {
-			advance(battleengine.NativeNPCPosition{X: pos.X, Y: end.Y})
-		} else {
-			advance(battleengine.NativeNPCPosition{X: end.X, Y: pos.Y})
-		}
-		advance(end)
-	}
+	pos := n.remote.advance(m, now)
 	n.motion, n.motionKnown = pos, true
 	n.pos = pos.Pixels()
 	n.moving = m.WalkAndDirection&0x10 != 0
@@ -636,6 +592,7 @@ func (match *onlineMatch) trapBoxNPC(n *boxNPCActor, now uint32) {
 	n.moving = false
 	n.navigator.walking = false
 	n.netMoveSet = false
+	n.remote = npcRemotePlayback{}
 	body, _ := (game.PlayerExplodedEvent{PlayerID: n.id, ClientTime: now, PosX: uint16(n.pos.X), PosY: uint16(n.pos.Y)}).MarshalNetworkBinary()
 	match.queueBoxNPC(n.id, game.PlayerBeExploded, now, body)
 	match.mirror(game.PlayerBeExploded, body)
@@ -852,6 +809,7 @@ func (match *onlineMatch) boxNPCRemote(sender uint16, event game.GameEvent) ([]b
 			n.moving = false
 			n.path = nil
 			n.netMoveSet = false
+			n.remote = npcRemotePlayback{}
 		}
 		return nil, true
 	case game.NotifyPlayerKnocked:
