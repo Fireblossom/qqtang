@@ -21,6 +21,7 @@ from ..script import call_script, log
 from . import mapfile, prepared
 from .effect import EffectPlayer
 from .machine_projectile import MachineGateAnimation
+from .sculpture_animation import StatueAnimation
 from .sidecar import (ACTOR_ACTIVE, ACTOR_ELIMINATED, ACTOR_TRAPPED, EVENT_ACTOR_ELIMINATED, EVENT_ACTOR_RESPAWNED, EVENT_BOMB_EXPLODED,
                       EVENT_CELL_DAMAGED, EVENT_CELL_DESTROYED, EVENT_MAP_ELEMENT_MOVED, MOVE_DOWN, MOVE_LEFT, MOVE_NONE, MOVE_RIGHT, MOVE_UP, TICK_MS, Sidecar)
 
@@ -205,9 +206,10 @@ BUN_ICON_STEP = 8
 # misc226..228) or misc229 for a complete one, anchor (11, 104); and when
 # complete a hero, anchor (12, 150): misc239..242 for the first slot of
 # material 13..16, otherwise misc(230 + p) (p < 18) or misc(225 + p), p
-# being the completing player's role (inferred). A deposit or a lost piece
-# plays the stage's _trigger frames for 2000 ms (0x005F634C; the 100 ms
-# frame time is inferred). Loose fragments draw as item{material}
+# being the completing player's role (0060386F reads actor+394). A deposit
+# or a lost piece reconstructs the stage, playing _trigger for 2000 ms
+# (005F634C), 300 ms per frame; the completed hero also advances its clock.
+# Loose fragments draw as item{material}
 # (0x005F750E) and are hidden under a map element (0x005F75A5); a carrier
 # wears cap 101..105 for material 12..16 (0x005AA4EC).
 STATUE_ELEMENTS = (12008, 12009)
@@ -216,7 +218,6 @@ STATUE_STAGES = (("object/misc/misc223", "object/misc/misc224", "object/misc/mis
                  ("object/misc/misc226", "object/misc/misc227", "object/misc/misc228"))
 STATUE_DONE = "object/misc/misc229"
 STATUE_BASE_ANCHOR, STATUE_STAGE_ANCHOR, STATUE_HERO_ANCHOR = (11, 47), (11, 104), (12, 150)
-STATUE_TRIGGER_MS, STATUE_TRIGGER_FRAME_MS = 2000, 100
 STATUE_PIECES = 4
 FRAGMENT_CAP_BASE = 101 - 12  # cap = material + this
 BUN_LOOSE = "object/item/item11_stand.img"
@@ -334,7 +335,7 @@ class BattleScene:
         self._place_statues()
         self._place_tank_bases()
         self._place_boxes()
-        self.statue_changed: dict[tuple[int, int], tuple[int, float]] = {}  # by cell: (progress, now_ms of the change)
+        self.statue_animations: dict[tuple[int, int], StatueAnimation] = {}
         self.realtime = realtime
         begin = state.get("begin") or {}
         self.rule = begin.get("rule") or "ordinary"
@@ -599,7 +600,7 @@ class BattleScene:
                 self.walk_started[actor["id"]] = self.clock
             elif not moved:
                 self.walk_started.pop(actor["id"], None)
-        self._note_statue_changes()
+        self._note_statue_changes(self.clock - previous_clock)
         streak = (self.state.get("streaks") or {}).get(str(self.local_id), 0)
         if self.rule == "wrestle" and streak > self.local_streak and streak >= 2:
             self.streak_badge = (min(streak, 99), self.now_ms)
@@ -1175,14 +1176,13 @@ class BattleScene:
                 if abs(self.map.element(layer, statue["row"], statue["col"])) in STATUE_ELEMENTS:
                     self._set(layer, statue["row"], statue["col"], 0)
 
-    def _note_statue_changes(self) -> None:
+    def _note_statue_changes(self, elapsed_ms: int = 0) -> None:
         for statue in (self.state.get("sculpture") or {}).get("statues") or ():
             cell = (statue["row"], statue["col"])
-            before = self.statue_changed.get(cell)
-            if before is None:
-                self.statue_changed[cell] = (statue["progress"], -STATUE_TRIGGER_MS)
-            elif before[0] != statue["progress"]:
-                self.statue_changed[cell] = (statue["progress"], self.now_ms)
+            if cell not in self.statue_animations:
+                self.statue_animations[cell] = StatueAnimation()
+            hero_frames = len(self.sprites.get(self._statue_hero(statue) + "_stand.img") or ()) if statue["progress"] >= STATUE_PIECES else 1
+            self.statue_animations[cell].advance(statue["progress"], elapsed_ms, hero_frames)
 
     def _statue_hero(self, statue: dict[str, Any]) -> str:
         for material in statue["slots"]:
@@ -1206,12 +1206,17 @@ class BattleScene:
                 layers += [(STATUE_DONE, STATUE_STAGE_ANCHOR), (self._statue_hero(statue), STATUE_HERO_ANCHOR)]
             elif progress > 0:
                 layers.append((STATUE_STAGES[colour][progress - 1], STATUE_STAGE_ANCHOR))
-            changed_at = self.statue_changed.get((statue["row"], statue["col"]), (0, -STATUE_TRIGGER_MS))[1]
+            animation = self.statue_animations.get((statue["row"], statue["col"]))
             for index, (path, (ax, ay)) in enumerate(layers):
-                if index == 1 and self.now_ms - changed_at < STATUE_TRIGGER_MS and self.sprites.get(path + "_trigger.img"):
-                    self._draw_frames(field, path + "_trigger.img", int((self.now_ms - changed_at) // STATUE_TRIGGER_FRAME_MS), x - ax, y - ay)
-                else:
-                    self._draw_frames(field, path + "_stand.img", 0, x - ax, y - ay)
+                action, frame = "stand", 0
+                if animation is not None:
+                    if index == 1 and animation.stage is not None:
+                        frame = animation.stage.frame
+                        if animation.trigger_left > 0:
+                            action = "trigger"
+                    elif index == 2 and animation.hero is not None:
+                        frame = animation.hero.frame
+                self._draw_frames(field, path + f"_{action}.img", frame, x - ax, y - ay)
 
     def _draw_bun_houses(self, field: pygame.Surface, row: int) -> None:
         """The houses anchored on this row, each with its row of small buns."""

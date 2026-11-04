@@ -219,7 +219,10 @@ class StatueTest(unittest.TestCase):
             {"row": 11, "col": 11, "team": 2, "first": False, "progress": 4, "slots": [12, 12, 12, 12], "completed_by": 7}]}}
         scene._place_statues()
         self.assertEqual(top[11 * 15 + 3], 0)
-        scene.statue_changed = {(11, 3): (2, 4500.0)}
+        from qqtclient.battle.sculpture_animation import StatueAnimation
+        stage = StatueAnimation()
+        stage.advance(2, 500)
+        scene.statue_animations = {(11, 3): stage}
         scene.sprites = type("Sprites", (), {"get": staticmethod(lambda path: [(None, 0, 0)] * 3)})()
         drawn: list[tuple[str, int, int, int]] = []
         scene._draw_frames = lambda _screen, path, frame, x, y, additive=False: drawn.append((path, frame, x, y))  # type: ignore[method-assign]
@@ -227,7 +230,7 @@ class StatueTest(unittest.TestCase):
         # Field origin (10, 27); base anchor (11, 47), stage (11, 104), hero (12, 150).
         self.assertEqual(drawn, [
             ("object/misc/misc221_stand.img", 0, 10 + 120 - 11, 27 + 440 - 47),
-            ("object/misc/misc224_trigger.img", 5, 10 + 120 - 11, 27 + 440 - 104),
+            ("object/misc/misc224_trigger.img", 1, 10 + 120 - 11, 27 + 440 - 104),
             ("object/misc/misc222_stand.img", 0, 10 + 440 - 11, 27 + 440 - 47),
             ("object/misc/misc229_stand.img", 0, 10 + 440 - 11, 27 + 440 - 104),
             ("object/misc/misc233_stand.img", 0, 10 + 440 - 12, 27 + 440 - 150)])

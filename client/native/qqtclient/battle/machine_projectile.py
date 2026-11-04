@@ -5,7 +5,7 @@ from __future__ import annotations
 import dataclasses
 import struct
 
-NATIVE_FRAME_MS = 300  # CImageData constructor 00487360; 0042A680 consumes it
+from .animation import FrameLoop, NATIVE_FRAME_MS
 
 
 def f32(value: float) -> float:
@@ -74,22 +74,6 @@ class MachineProjectile:
         else:
             return None
         return number, segment.animation_ms // NATIVE_FRAME_MS, int(segment.x), int(segment.y)
-
-
-@dataclasses.dataclass
-class FrameLoop:
-    frames: int
-    frame: int = 0
-    remainder: int = 0
-
-    def advance(self, milliseconds: int) -> None:
-        self.remainder += milliseconds
-        if self.remainder >= NATIVE_FRAME_MS:
-            self.frame += self.remainder // NATIVE_FRAME_MS
-            self.remainder %= NATIVE_FRAME_MS
-            if self.frame >= self.frames:
-                # 0042A680 resets to zero, rather than preserving overshoot.
-                self.frame = 0
 
 
 class MachineGateAnimation(MachineProjectile):
