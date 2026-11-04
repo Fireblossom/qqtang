@@ -1,4 +1,4 @@
-"""Machine launch pictures: native 005EF91F / 006088EC / 006089C5."""
+"""Machine pictures and launch paths: native 005EF7DE / 005EF91F."""
 
 from __future__ import annotations
 
@@ -6,6 +6,7 @@ import dataclasses
 import struct
 
 NATIVE_FRAME_MS = 300  # CImageData constructor 00487360; 0042A680 consumes it
+
 
 def f32(value: float) -> float:
     return struct.unpack("<f", struct.pack("<f", value))[0]
@@ -73,3 +74,61 @@ class MachineProjectile:
         else:
             return None
         return number, segment.animation_ms // NATIVE_FRAME_MS, int(segment.x), int(segment.y)
+
+
+@dataclasses.dataclass
+class FrameLoop:
+    frames: int
+    frame: int = 0
+    remainder: int = 0
+
+    def advance(self, milliseconds: int) -> None:
+        self.remainder += milliseconds
+        if self.remainder >= NATIVE_FRAME_MS:
+            self.frame += self.remainder // NATIVE_FRAME_MS
+            self.remainder %= NATIVE_FRAME_MS
+            if self.frame >= self.frames:
+                # 0042A680 resets to zero, rather than preserving overshoot.
+                self.frame = 0
+
+
+class MachineGateAnimation(MachineProjectile):
+    def __init__(self, row: int, col: int, first: bool):
+        super().__init__(row, col, first)
+        self.loops = {"idle": FrameLoop(8), "ready": FrameLoop(12), "fire": FrameLoop(24), "arrow": FrameLoop(2)}
+        self.is_ready = False
+        self.arrow_visible = False
+        self.draw_clock = 0
+
+    def advance(self, clock: int, fired: int, milliseconds: int = 0, ready: bool = False, local: bool = False) -> None:
+        # The image updates use the preceding frame's ready/arrow/clock state.
+        if self.arrow_visible:
+            self.loops["arrow"].advance(milliseconds)
+        if self.is_ready:
+            self.loops["ready"].advance(milliseconds)
+        elif not fired or ((self.draw_clock - fired) & 0xFFFFFFFF) >= 800:
+            self.loops["idle"].advance(milliseconds)
+        self.is_ready = ready
+        if not ready:
+            self.arrow_visible = False
+        elif local:
+            self.arrow_visible = True
+        self.draw_clock = clock
+        if ((clock - fired) & 0xFFFFFFFF) < 800:
+            self.arrow_visible = False
+            self.loops["fire"].advance(milliseconds * 3)
+        second_time = self.second.animation_ms
+        super().advance(clock, fired)
+        if self.second.animation_ms != second_time:
+            # 005EF912 writes 1 to the parent's cached drawing clock.
+            self.draw_clock = 1
+
+    def body_layers(self) -> list[tuple[str, int]]:
+        layers = []
+        if self.is_ready:
+            layers.append(("ready", self.loops["ready"].frame))
+        if not self.is_ready and (not self.fired or ((self.draw_clock - self.fired) & 0xFFFFFFFF) >= 800):
+            layers.append(("idle", self.loops["idle"].frame))
+        if self.draw_clock > 3000 and ((self.draw_clock - self.fired) & 0xFFFFFFFF) < 800:
+            layers.append(("fire", self.loops["fire"].frame))
+        return layers

@@ -52,4 +52,4 @@ Python全部162项通过，新增覆盖原生位置/停止帧、700ms等待、�
 
 日志/截图：`/private/tmp/qqt-machine-flight/live/`；原生位置及动画探针为该目录上一层的 `probe.py`、`native.jsonl`、`probe-animation.py`、`animation.txt`。`observer-setup-failure/` 是临时观察器命名空间错误，`live-before-period-fix/` 为100ms周期的中间版本，均不计最终验收。
 
-165/166的代码轨迹和图片推进已核对，Windows原版/历史录像的逐帧画面对照仍未完成。机器本体、入口提示等其他动画的完整起停/帧节奏也仍是独立待办，不能因本轮补了发射物就全部勾选。
+165/166的代码轨迹和图片推进已核对。后续2026-11-04也补齐机器本体、就绪和入口箭头的独立时钟/暂停/发射相位，见 `machine-animation-re.md`。Windows原版/历史录像的逐帧画面对照仍未完成，不能全部勾选为人工验收。

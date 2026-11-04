@@ -20,7 +20,7 @@ from ..runtime import UIRuntime
 from ..script import call_script, log
 from . import mapfile, prepared
 from .effect import EffectPlayer
-from .machine_projectile import MachineProjectile
+from .machine_projectile import MachineGateAnimation
 from .sidecar import (ACTOR_ELIMINATED, ACTOR_TRAPPED, EVENT_ACTOR_ELIMINATED, EVENT_ACTOR_RESPAWNED, EVENT_BOMB_EXPLODED,
                       EVENT_CELL_DAMAGED, EVENT_CELL_DESTROYED, EVENT_MAP_ELEMENT_MOVED, MOVE_DOWN, MOVE_LEFT, MOVE_NONE, MOVE_RIGHT, MOVE_UP, TICK_MS, Sidecar)
 
@@ -384,7 +384,7 @@ class BattleScene:
         self.shown_slots: list[tuple[int, int]] | None = None
         self.item_page = 0
         self.shown_masks: dict[int, tuple[float, float]] = {}
-        self.machine_projectiles: dict[tuple[int, int, bool], MachineProjectile] = {}
+        self.machine_projectiles: dict[tuple[int, int, bool], MachineGateAnimation] = {}
         self.accumulated_ms = 0.0
         self.names = {player["id"]: player.get("name") or f"玩家{player['id']}" for player in players}
         # Room seats 0..7 by PlayerID (online only).
@@ -587,7 +587,7 @@ class BattleScene:
         previous_clock = self.clock
         tcp, self.pending_tcp = self.pending_tcp, []
         self.state = self.sidecar.step([action], min(ticks, 10), tcp)
-        self._update_machine_projectiles()
+        self._update_machine_projectiles(self.clock - previous_clock)
         for packet in self.state.get("tcp_out") or ():
             if self.on_tcp_out is not None:
                 self.on_tcp_out(packet["cmd"], bytes.fromhex(packet["payload"]))
@@ -1068,16 +1068,19 @@ class BattleScene:
         number = 190 + hp if hp <= 5 else 191 + min(hp, 10)
         self._draw_frames(field, f"object/misc/misc{number}_stand.img", 0, actor["x"] - 10, actor["y"] - 42)
 
-    def _update_machine_projectiles(self) -> None:
+    def _update_machine_projectiles(self, elapsed_ms: int = 0) -> None:
+        """Advance the native component once, using the scene's time delta."""
         present = set()
+        local = self._local_actor()
         for gate in (self.state.get("machine") or {}).get("gates") or ():
             if gate.get("destroyed"):
                 continue
             key = (gate["row"], gate["col"], gate["first"])
             present.add(key)
             if key not in self.machine_projectiles:
-                self.machine_projectiles[key] = MachineProjectile(*key)
-            self.machine_projectiles[key].advance(self.clock, gate["fired"])
+                self.machine_projectiles[key] = MachineGateAnimation(*key)
+            self.machine_projectiles[key].advance(self.clock, gate["fired"], elapsed_ms, gate["ready"],
+                                                  local is not None and local["team"] == gate["team"])
         for key in set(self.machine_projectiles) - present:
             del self.machine_projectiles[key]
 
@@ -1087,23 +1090,30 @@ class BattleScene:
             if gate["row"] != row or gate.get("destroyed"):
                 continue
             first = gate["first"]
-            elapsed = self.clock - gate["fired"]
-            firing = gate["fired"] > 0 and 0 <= elapsed < 800
-            number = (167 if first else 168) if firing else (401 if first else 402) if gate["ready"] else (163 if first else 164)
-            frame = elapsed * 3 // 100 if firing else self.clock // 100
+            flight = self.machine_projectiles.get((row, gate["col"], first))
+            local = self._local_actor()
+            if flight is not None:
+                layers = flight.body_layers()
+                arrow = flight.arrow_visible
+                arrow_frame = flight.loops["arrow"].frame
+            else:
+                # A just-created view may draw before its first update.
+                layers = [("ready" if gate["ready"] else "idle", 0)]
+                arrow = gate["ready"] and local is not None and local["team"] == gate["team"]
+                arrow_frame = 0
             x = FIELD_ORIGIN[0] + (gate["col"] - 1) * CELL
             y = FIELD_ORIGIN[1] + (gate["row"] - 2) * CELL
-            self._draw_frames(field, f"object/misc/misc{number}_stand.img", frame, x, y)
-            flight = self.machine_projectiles.get((row, gate["col"], first))
+            for layer, frame in layers:
+                number = {"idle": 163 if first else 164, "ready": 401 if first else 402, "fire": 167 if first else 168}[layer]
+                self._draw_frames(field, f"object/misc/misc{number}_stand.img", frame, x, y)
             if flight is not None and (picture := flight.picture(self.clock)) is not None:
                 number, frame, px, py = picture
                 # Same native SetPos / zero image anchor as the machine body.
                 self._draw_frames(field, f"object/misc/misc{number}_stand.img", frame,
                                   FIELD_ORIGIN[0] + px - 20, FIELD_ORIGIN[1] + py - 20)
-            local = self._local_actor()
-            if gate["ready"] and local is not None and local["team"] == gate["team"]:
+            if arrow:
                 arrow_x = FIELD_ORIGIN[0] + gate["col"] * CELL + (-20 if first else 60)
-                self._draw_frames(field, "object/misc/misc400_stand.img", self.clock // 100, arrow_x, y)
+                self._draw_frames(field, "object/misc/misc400_stand.img", arrow_frame, arrow_x, y)
 
     def _draw_machine_durability(self, screen: pygame.Surface) -> None:
         # 0x005E2093 / 0x005E1E46: no badge, local-team misc460 / other misc461.
