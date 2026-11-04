@@ -21,7 +21,7 @@ from ..script import call_script, log
 from . import mapfile, prepared
 from .effect import EffectPlayer
 from .machine_projectile import MachineGateAnimation
-from .sidecar import (ACTOR_ELIMINATED, ACTOR_TRAPPED, EVENT_ACTOR_ELIMINATED, EVENT_ACTOR_RESPAWNED, EVENT_BOMB_EXPLODED,
+from .sidecar import (ACTOR_ACTIVE, ACTOR_ELIMINATED, ACTOR_TRAPPED, EVENT_ACTOR_ELIMINATED, EVENT_ACTOR_RESPAWNED, EVENT_BOMB_EXPLODED,
                       EVENT_CELL_DAMAGED, EVENT_CELL_DESTROYED, EVENT_MAP_ELEMENT_MOVED, MOVE_DOWN, MOVE_LEFT, MOVE_NONE, MOVE_RIGHT, MOVE_UP, TICK_MS, Sidecar)
 
 CELL = mapfile.CELL
@@ -83,8 +83,8 @@ KEY_MOVES = {pygame.K_UP: MOVE_UP, pygame.K_RIGHT: MOVE_RIGHT, pygame.K_DOWN: MO
 # The battle key table (0x005A4B6E, DirectInput scan codes, read through
 # 0x005A5391): space puts a bubble; 1..7 and Z X C V B N M use held-item
 # slot 0..6; left Ctrl uses the first usable item of slots 0..5
-# (0x006102D9 -> 0x00610516 with -1). Nothing in the battle reads its Tab
-# entry, so Tab does not switch items.
+# (0x006102D9 -> 0x00610516 with -1). Tab pages the seven-slot view
+# (0x0061021C); the host corrects the original getter's missing offset.
 BOMB_KEYS = (pygame.K_SPACE,)
 SLOT_KEYS = {**{pygame.K_1 + index: index for index in range(7)},
              **{key: index for index, key in enumerate((pygame.K_z, pygame.K_x, pygame.K_c, pygame.K_v, pygame.K_b, pygame.K_n, pygame.K_m))}}
@@ -524,15 +524,17 @@ class BattleScene:
         return [tuple(entry) for entry in selected] + [(0, 0)] * (7 - len(selected))
 
     def _smart_use(self) -> int:
-        """Ctrl: the first item of slots 0..5 that can be used now. The
-        native test (0x0087F9A8) is VM-protected; this uses the sidecar's
-        own rule: only the needle while trapped, never the needle otherwise."""
+        """00610516 selects by 0087F9A8's state/ownership predicate.
+
+        Prepared cooldown/mode is checked after selection by 006109E8;
+        an unavailable prepared item does not advance Ctrl to a later slot.
+        """
         actor = self._local_actor()
-        trapped = actor is not None and actor["state"] == ACTOR_TRAPPED
-        for action, _count in self._slots()[:CTRL_SLOTS]:
-            cooldown = next((entry.get("cooldown") for entry in self.state.get("prepared") or () if entry["item"] == action), None)
-            usable = cooldown is None or prepared.ready(cooldown, self.clock)
-            if action and usable and trapped == (action == NEEDLE_ACTION):
+        if actor is None or actor["state"] not in (ACTOR_ACTIVE, ACTOR_TRAPPED):
+            return 0
+        trapped = actor["state"] == ACTOR_TRAPPED
+        for action, count in self._slots()[:CTRL_SLOTS]:
+            if action and count > 0 and trapped == (action == NEEDLE_ACTION):
                 return action
         return 0
 

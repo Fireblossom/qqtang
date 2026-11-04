@@ -53,10 +53,14 @@ class PreparedCooldownTest(unittest.TestCase):
         scene._update_status_bar()
         self.assertEqual(scene.shown_masks[0], (360.0, 0.0))
 
-    def test_ctrl_skips_unavailable_prepared_prop(self):
+    def test_ctrl_selects_prepared_before_its_use_permission_check(self):
         scene, _ = self.scene()
-        self.assertEqual(scene._smart_use(), 64)
+        self.assertEqual(scene._smart_use(), 20020)
         scene.state["clock"] = 20000
         self.assertEqual(scene._smart_use(), 20020)
         scene.state["prepared"][0]["cooldown"]["last_use"] = 20000
+        self.assertEqual(scene._smart_use(), 20020)
+        scene.state["prepared"][0]["cooldown"]["allowed"] = False
+        self.assertEqual(scene._smart_use(), 20020)
+        scene.state["prepared"][0]["count"] = 0
         self.assertEqual(scene._smart_use(), 64)

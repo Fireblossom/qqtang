@@ -1,5 +1,6 @@
 """Native mixed-slot order, paging and key routing."""
 
+import json
 import pathlib
 import sys
 import types
@@ -52,6 +53,17 @@ class ItemSlotsTest(unittest.TestCase):
         scene.state["slots"] = [[64, 3]]
         self.assertEqual(scene._slots(), [(64, 3)] + [(0, 0)] * 6)
         self.assertEqual(scene.item_page, 0)
+
+    def test_ctrl_matches_native_selector_checkpoints(self):
+        path = pathlib.Path(__file__).parent / "fixtures/item_use_v848.jsonl"
+        for row in map(json.loads, path.read_text().splitlines()):
+            if row["kind"] != "ctrl":
+                continue
+            with self.subTest(native_state=row["state"]):
+                scene = self.scene([[63, 1], [20020, 1], [64, 1], [41, 1]])
+                scene.state["actors"][0]["state"] = {1: 0, 3: 1}.get(row["state"], 2)
+                scene.state["clock"] = row["clock"]
+                self.assertEqual(scene._smart_use(), next(iter(row["selected"]), 0))
 
     def test_sidecar_receives_local_bar_with_holes(self):
         sidecar = Sidecar.__new__(Sidecar)

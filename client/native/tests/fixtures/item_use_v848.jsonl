@@ -1,0 +1,24 @@
+{"kind": "predicate", "state": 0, "allowed": {"0": 0, "41": 0, "63": 0, "64": 0, "99": 0, "20020": 0}}
+{"kind": "predicate", "state": 1, "allowed": {"0": 0, "41": 1, "63": 0, "64": 1, "99": 0, "20020": 1}}
+{"kind": "predicate", "state": 2, "allowed": {"0": 0, "41": 0, "63": 0, "64": 0, "99": 0, "20020": 0}}
+{"kind": "predicate", "state": 3, "allowed": {"0": 0, "41": 0, "63": 1, "64": 0, "99": 0, "20020": 0}}
+{"kind": "ctrl", "clock": 3000, "state": 0, "selected": []}
+{"kind": "ctrl", "clock": 3000, "state": 1, "selected": [20020]}
+{"kind": "ctrl", "clock": 3000, "state": 2, "selected": []}
+{"kind": "ctrl", "clock": 3000, "state": 3, "selected": [63]}
+{"kind": "keyboard", "item_keys_enabled": true, "ctrl": 1, "number1": 1, "z": 1, "tab": 1}
+{"kind": "keyboard", "item_keys_enabled": false, "ctrl": 0, "number1": 0, "z": 0, "tab": 1}
+{"kind": "keyboard", "item_keys_enabled": true, "ctrl": 1, "number1": 1, "z": 1, "tab": 1}
+{"kind": "input_lock", "disabled": 0, "enabled": 1}
+{"kind": "prepared", "case": "initial_before", "clock": 19999, "last_use": 0, "mode": 0, "rule": 1, "deny": 0, "allowed": 0}
+{"kind": "prepared", "case": "initial_at", "clock": 20000, "last_use": 0, "mode": 0, "rule": 1, "deny": 0, "allowed": 1}
+{"kind": "prepared", "case": "reuse_before", "clock": 34999, "last_use": 20000, "mode": 0, "rule": 1, "deny": 0, "allowed": 0}
+{"kind": "prepared", "case": "reuse_at", "clock": 35000, "last_use": 20000, "mode": 0, "rule": 1, "deny": 0, "allowed": 1}
+{"kind": "prepared", "case": "adventure_only_reject", "clock": 40000, "last_use": 0, "mode": 2, "rule": 1, "deny": 0, "allowed": 0}
+{"kind": "prepared", "case": "adventure_only_accept", "clock": 40000, "last_use": 0, "mode": 2, "rule": 12, "deny": 0, "allowed": 1}
+{"kind": "prepared", "case": "normal_only_reject", "clock": 40000, "last_use": 0, "mode": 1, "rule": 12, "deny": 0, "allowed": 0}
+{"kind": "prepared", "case": "normal_only_accept", "clock": 40000, "last_use": 0, "mode": 1, "rule": 1, "deny": 0, "allowed": 1}
+{"kind": "prepared", "case": "deny_unrelated", "clock": 40000, "last_use": 0, "mode": 0, "rule": 1, "deny": 20058, "allowed": 1}
+{"kind": "prepared", "case": "deny_specific", "clock": 40000, "last_use": 0, "mode": 0, "rule": 1, "deny": 20020, "allowed": 0}
+{"kind": "prepared", "case": "deny_all", "clock": 40000, "last_use": 0, "mode": 0, "rule": 1, "deny": 4294967295, "allowed": 0}
+{"kind": "prepared", "case": "no_owner", "clock": 40000, "last_use": 0, "mode": 0, "rule": 1, "deny": 0, "allowed": 0}
