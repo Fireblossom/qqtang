@@ -209,6 +209,7 @@ type onlineMatch struct {
 	carryRequest     game.BunActionEvent
 	carryRequestKind uint16
 	carryRequestSent uint32
+	npcMovement      nativeNPCMovePublisher
 	// Rule 6's style-9 bubbles (held item 48) by engine bomb ID.
 	styleNine  map[uint32]bool
 	box        *boxRule

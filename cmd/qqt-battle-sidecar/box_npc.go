@@ -49,14 +49,6 @@ type boxNPCActor struct {
 	basic                           [3]byte
 	sceneFourUntil                  uint32
 	sequence                        uint16
-	lastMoveSent                    uint32
-	lastMovePos                     battleengine.Position
-	lastMoveEnd                     battleengine.Position
-	lastMoveCorner                  battleengine.Position
-	lastMoveFacing                  byte
-	lastMoveSpeed                   byte
-	lastMoveMoving                  bool
-	moveInitialized                 bool
 	moveEnd                         battleengine.Position
 	moveEndValid                    bool
 	moveCorner                      battleengine.Position
@@ -218,7 +210,7 @@ func (match *onlineMatch) boxNPCAcknowledged(event game.GameEvent) {
 	match.queueBoxNPC(match.local, game.CreateNPCBossEvent, now, event.Body)
 	for _, n := range s.ordered() {
 		if !n.dead {
-			match.publishBoxNPCMove(n, now, true)
+			match.publishBoxNPCMove(n, now, false)
 		}
 	}
 }
@@ -329,31 +321,23 @@ func (match *onlineMatch) publishNPCMove(outbox *[]boxNPCOutbound, n *boxNPCActo
 	} else if !n.moveEndValid && len(n.path) > 0 {
 		end = battleengine.PositionAtCellCenter(n.path[0])
 	}
-	rate := n.effectiveNPCSpeed()
-	if !force && n.moveInitialized && now-n.lastMoveSent < movementHeartbeat && n.moving == n.lastMoveMoving && n.facing == n.lastMoveFacing && end == n.lastMoveEnd && n.moveCorner == n.lastMoveCorner && rate == n.lastMoveSpeed {
-		return
-	}
 	walk := n.facing
 	if n.moving {
 		walk |= 0x10
 	}
-	n.sequence++
-	move := game.PlayerMoveSequence{Sequence: n.sequence, TimeStamp: now, CurrentPosX: uint16(n.pos.X), CurrentPosY: uint16(n.pos.Y), EndPosX: uint16(end.X), EndPosY: uint16(end.Y), WalkAndDirection: walk, Speed: rate}
+	move := game.PlayerMoveSequence{TimeStamp: now, CurrentPosX: uint16(n.pos.X), CurrentPosY: uint16(n.pos.Y), EndPosX: uint16(end.X), EndPosY: uint16(end.Y), WalkAndDirection: walk, Speed: n.effectiveNPCSpeed()}
 	if n.moving {
 		move.CornerPosX, move.CornerPosY = uint16(n.moveCorner.X), uint16(n.moveCorner.Y)
+	}
+	move, send := match.npcMovement.update(move, force)
+	n.sequence = move.Sequence
+	if !send {
+		return
 	}
 	body, err := (game.PlayerMove{PlayerID: n.id, Entries: []game.PlayerMoveEntry{{PlayerID: n.id, Move: move}}}).MarshalNetworkBinary()
 	if err == nil {
 		match.queueNPC(outbox, n.id, game.PlayerMoveSchema, now, body)
 	}
-	n.lastMoveSent = now
-	n.lastMovePos = n.pos
-	n.lastMoveEnd = end
-	n.lastMoveCorner = n.moveCorner
-	n.lastMoveFacing = n.facing
-	n.lastMoveSpeed = rate
-	n.lastMoveMoving = n.moving
-	n.moveInitialized = true
 }
 
 func (match *onlineMatch) boxNPCTick(now uint32) {
