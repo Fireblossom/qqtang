@@ -22,11 +22,6 @@ import (
 const (
 	bossFirstID = 30001
 	bossLastID  = 30199
-	// Compatibility birth window. The default native actor controller can
-	// restore mode9 only after its 3000ms counter, with a role-specific
-	// greeting shortcut; Ready-time alignment is still pending. See
-	// docs/boss-birth-controller-re.md. This is not a proven native duration.
-	bossBirthMS = 1000
 	// 0x00601FEC -> 0x005B5202(3000): immunity and flash2 after a hit.
 	bossHitProtectionMS = 3000
 	// 0x005AFDFA drops the whole NormalItems list beyond 10 entries.
@@ -42,10 +37,11 @@ type bossActor struct {
 	info           game.CompetitiveBossInfo
 	hp             int
 	bornAt         uint32
+	birthFrameAt   uint32
+	birth          bossBirthState
 	protectedUntil uint32
 	normal         []game.BossItemInfo // NormalItems still to drop
 	ai             bossController
-	greeted        bool
 	// The demon transformation of skill 3 (item 110): until when, and the
 	// speed/capacity it replaced.
 	avatarUntil              uint32
@@ -118,6 +114,8 @@ type bossActorView struct {
 	HP             int    `json:"hp"`
 	MaxHP          int    `json:"max_hp"`
 	Born           uint32 `json:"born"`
+	BirthAge       uint32 `json:"birth_age"`
+	BirthMode      byte   `json:"birth_mode"`
 	ProtectedUntil uint32 `json:"protected_until"`
 	AvatarRole     uint16 `json:"avatar_role,omitempty"`
 }
@@ -217,7 +215,11 @@ func (match *onlineMatch) createBosses(data game.CreateNPCBoss, now uint32) {
 			}
 		}
 		cell := rule.spawns[at]
-		b := &bossActor{info: info, bornAt: now, normal: append([]game.BossItemInfo(nil), info.NormalItems...)}
+		born := now
+		if match.actorFrameTimeSet {
+			born = match.actorFrameTime
+		}
+		b := &bossActor{info: info, bornAt: born, birthFrameAt: born, birth: newBossBirthState(), normal: append([]game.BossItemInfo(nil), info.NormalItems...)}
 		b.id, b.role, b.pos, b.facing, b.lastTick = info.BossID, uint16(info.RoleID), battleengine.PositionAtCellCenter(cell), 3, now
 		// 0x005AA58D writes nothing when any value is out of range.
 		if info.Bubble <= 8 && info.Power >= 1 && info.Power <= 9 && info.Rate >= 1 && info.Rate <= 8 && info.HP <= 10 {
@@ -282,6 +284,9 @@ func (match *onlineMatch) bossTick(now uint32, events []battleengine.Event) {
 	if rule == nil || len(rule.actors) == 0 {
 		return
 	}
+	if now <= battleengine.NativeRoundStartClockMS {
+		return
+	}
 	match.landBossFlights(now)
 	// Once every player is dead the server concludes the round; a Boss that
 	// kept bombing would only send mirrors that arrive after settlement.
@@ -309,13 +314,9 @@ func (match *onlineMatch) bossTick(now uint32, events []battleengine.Event) {
 			match.interpolateBoxNPC(&b.boxNPCActor, now)
 			continue
 		}
-		if now < b.bornAt+bossBirthMS {
+		if b.birth.mode == 9 {
 			b.lastTick = now
 			continue
-		}
-		if !b.greeted {
-			b.greeted = true
-			match.bossGreeting(b, now)
 		}
 		if now-b.lastTick > 4*tickMS {
 			// A new arbitrator takes the Boss over from its interpolated state.
@@ -386,7 +387,7 @@ func (match *onlineMatch) bossMoveNPC(b *boxNPCActor, now uint32) {
 }
 
 func (b *bossActor) vulnerable(now uint32) bool {
-	return !b.dead && b.hp > 0 && now >= b.bornAt+bossBirthMS && now >= b.protectedUntil
+	return !b.dead && b.hp > 0 && b.birth.mode != 9 && now >= b.protectedUntil
 }
 
 // bossExplosionHit is 0x00607DDC: at least 4 of the 5 sample points (the
@@ -721,7 +722,8 @@ func (match *onlineMatch) bossView() *bossView {
 			continue
 		}
 		view.Actors = append(view.Actors, bossActorView{ID: b.id, Role: b.role, X: b.pos.X, Y: b.pos.Y, Facing: byte(battleDirection(b.facing)),
-			Moving: b.moving, HP: b.hp, MaxHP: int(b.info.HP), Born: b.bornAt, ProtectedUntil: b.protectedUntil, AvatarRole: b.avatarRole()})
+			Moving: b.moving, HP: b.hp, MaxHP: int(b.info.HP), Born: b.bornAt, BirthAge: b.birthFrameAt - b.bornAt, BirthMode: b.birth.mode,
+			ProtectedUntil: b.protectedUntil, AvatarRole: b.avatarRole()})
 	}
 	now := match.engine.ElapsedMS()
 	for id, f := range match.boss.bombFlights {

@@ -430,5 +430,5 @@ repeat n 次: k = RNG() % len(free); single.push(free[k]); free[k] = free[last];
 4. 命令类型 → Gene/SameGrid/DiffGrid 的对应关系（踢泡命令类型 2 被推断为 SameGrid）。
 5. `followPath5` 返回 0 后原版实际下发的方向字节（堆头低字节，> 3），以及 `0x005C07FE` 收到非法方向时怎样表现。
 6. `0x005B429F`/`0x005B438D`（NPC 踢脚下的泡）没有静态引用。全量字节扫描既找不到 call/jmp rel32，也找不到数据指针，推断是死代码，但不能排除加壳区间接调用。
-7. 出生模式：`boss-lifecycle-re.md` §1.5 指出仲裁方对 RoleID 32 不把 `+0x3b7` 恢复为 1。RoleID 35/36 同样不在 24/28/34 之列，**如果模式一直停在 9，移动命令（要求 1/0x0B）和踢泡（要求 1）都不会执行**，Boss 会站着不动。后续默认角色帧执行已确认会经3000ms状态控制器恢复（`boss-birth-controller-re.md`），该段永久停住的猜测不成立；完整Ready时钟与命令顺序的宿主适配仍待完成。
+7. 出生模式：`boss-lifecycle-re.md` §1.5 指出仲裁方对 RoleID 32 不把 `+0x3b7` 恢复为 1。RoleID 35/36 同样不在 24/28/34 之列，**如果模式一直停在 9，移动命令（要求 1/0x0B）和踢泡（要求 1）都不会执行**，Boss 会站着不动。后续默认角色帧执行已确认会经3000ms状态控制器恢复（`boss-birth-controller-re.md`），该段永久停住的猜测不成立；默认Ready时钟与出生帧顺序已接入，完整Windows场景调度仍待对照。
 8. 帧长（决策每 7 帧一次换成毫秒）沿用 `boss-ai-re.md` §11 第 1 条的未决问题。

@@ -73,7 +73,13 @@ func bossMatch(t *testing.T, local uint16) *onlineMatch {
 		BossID: 30001, RoleID: 32, TeamID: 7, AIType: 3, HP: 5, Rate: 8, Bubble: 8, Power: 9,
 		NormalItems: []game.BossItemInfo{{ItemID: 81, ItemCount: 5}, {ItemID: 86, ItemCount: 3}},
 		OutfitItems: []game.BossItemInfo{{ItemID: 450, ItemCount: 1}}, Skills: []uint32{1},
-	}}}, m.engine.ElapsedMS())
+	}}}, 0)
+	// Gameplay fixtures start after Ready and the native birth actor-frame
+	// transition. Birth timing itself is covered independently below.
+	for frame := uint32(20); frame <= 3020; frame += 20 {
+		m.advanceBossBirthFrame(frame)
+	}
+	advanceTo(t, m, 3020)
 	return m
 }
 
@@ -159,10 +165,13 @@ func TestBossIsImmuneWhileBorn(t *testing.T) {
 	m := bossMatch(t, 1)
 	b := m.boss.actors[30001]
 	b.ai = nil
-	if b.vulnerable(m.engine.ElapsedMS() + bossBirthMS - 20) {
+	b.birth, b.bornAt, b.birthFrameAt = newBossBirthState(), 3020, 3020
+	m.advanceBossBirthFrame(6020)
+	if b.vulnerable(6020) {
 		t.Fatal("Boss vulnerable during its birth")
 	}
-	if !b.vulnerable(m.engine.ElapsedMS() + bossBirthMS) {
+	m.advanceBossBirthFrame(6040)
+	if !b.vulnerable(6040) {
 		t.Fatal("Boss still immune after its birth")
 	}
 }
@@ -171,7 +180,6 @@ func TestBossKillsTrappedPlayerItTouches(t *testing.T) {
 	m := bossMatch(t, 1)
 	b := m.boss.actors[30001]
 	b.ai = nil
-	b.bornAt = 0
 	target, _ := actorByID(m.engine.Actors(), 2)
 	if _, _, err := m.runtime.AcceptNativeActorHitFrom(2, 0, target.Position, false); err != nil {
 		t.Fatal(err)
@@ -337,15 +345,14 @@ func TestBossStopsWhenEveryPlayerIsDead(t *testing.T) {
 func TestGriffinGreetsWhenBornButSailorDoesNot(t *testing.T) {
 	m := bossMatch(t, 1)
 	m.boss.actors[30001].ai = nil
-	advanceTo(t, m, m.engine.ElapsedMS()+bossBirthMS)
-	m.bossTick(m.engine.ElapsedMS(), nil)
+	m.advanceBossBirthFrame(m.engine.ElapsedMS() + 20)
 	if len(mirrored(t, m, game.NotifyNPCTalk)) != 0 {
 		t.Fatal("the sailor spoke")
 	}
 	b := m.boss.actors[30001]
-	b.role, b.greeted = 24, false
-	m.bossTick(m.engine.ElapsedMS(), nil)
-	m.bossTick(m.engine.ElapsedMS(), nil)
+	b.role, b.birth = 24, newBossBirthState()
+	m.advanceBossBirthFrame(m.engine.ElapsedMS() + 40)
+	m.advanceBossBirthFrame(m.engine.ElapsedMS() + 60)
 	talks := mirrored(t, m, game.NotifyNPCTalk)
 	if len(talks) != 1 {
 		t.Fatalf("griffin talks %d", len(talks))
@@ -503,7 +510,6 @@ func TestKickBossShieldAndKick(t *testing.T) {
 		t.Fatalf("skill 11 shield until %d", b.protectedUntil)
 	}
 	// A landed airdrop bubble right of the Boss is kicked as it walks in.
-	b.bornAt = 0
 	front := bossStep(b.pos.Cell(), 0)
 	events, err := m.engine.DropRuleBatch(1, m.engine.ElapsedMS()-500, []battleengine.RuleBomb{{Cell: front, Power: 1, FromCol: front.Col}}, nil)
 	if err != nil {
@@ -532,7 +538,7 @@ func TestKickBossStandsStillBeforeTheFirstAirdrop(t *testing.T) {
 func TestGreatNianTransformsAndAHitOnlyRemovesIt(t *testing.T) {
 	owner, peer := bossMatch(t, 1), bossMatch(t, 2)
 	b := owner.boss.actors[30001]
-	b.role, b.info.Skills, b.bornAt = 31, []uint32{1, 3}, 0
+	b.role, b.info.Skills = 31, []uint32{1, 3}
 	ai := b.ai.(*bossGeneral)
 	ai.tick(owner, b, owner.engine.ElapsedMS())
 	ai.last[3] = 0

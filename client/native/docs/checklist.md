@@ -108,7 +108,8 @@
   - [x] 技能 12 的 2×2 大泡（类型 11）；701 实测零 warn。
   - [ ] 技能 2 石化（目录未使用）。
   - [x] 普通规则 1/2 双队地图的出生方式：按原版槽 1 改用交替表（`0x005B653F`），引擎、sidecar、服务端 AI 共用 `NativeSpawnModeForMap`；规则 3 等仍按分队。地图 13 双端实测一致、零 warn。
-  - [~] 默认出生控制器恢复路径已执行68条原版序列（`docs/boss-birth-controller-re.md`），Ready时钟/完整调度适配与历史录像画面对照仍待完成；引信已经确认始终 3000 ms，G+0xF88 的 2500 ms 是 AI 危险表参数。
+  - [x] 默认出生控制器和Ready角色帧时钟已接入，旧1000ms年龄门控删除；AI在Ready结束且上一帧恢复模式后执行。出生图200ms/帧单次播放并停末帧，68条状态序列/15496帧及72条图形记录已对照，Python196项与相关Go全套通过（`docs/boss-birth-controller-re.md`）。
+  - [~] 出生附加对象、Windows完整调度和历史录像画面对照仍待完成。引信已经确认始终3000ms，G+0xF88的2500ms是AI危险表参数。
 - 待定的问题见 `docs/other-rules.md` 第 5 节 4～6。
 
 ## 探险模式（`docs/adventure.md`）

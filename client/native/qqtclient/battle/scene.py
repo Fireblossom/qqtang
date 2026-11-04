@@ -49,9 +49,9 @@ BIG_BOMB_ANCHOR = (45, 70)
 FIELD_LOCK_FLASH_MS = 450
 # Rule 12's camera view (0x005C87B0).
 VIEW_SIZE = (800, 520)
-# Compatibility birth animation window; native actor-state recovery is
-# separate (docs/boss-birth-controller-re.md).
-BOSS_BIRTH_MS = 1000
+# 00425F10 loads birth pictures at 200ms/frame; action14 plays once.
+# Actor mode independently controls when to leave the birth pose.
+BOSS_BIRTH_FRAME_MS = 200
 WALK_FRAME_MS = 100
 FLAME_FRAME_MS = 70
 ITEM_FRAME_MS = 120
@@ -924,7 +924,7 @@ class BattleScene:
 
     def _draw_bosses(self, field: pygame.Surface, row: int) -> None:
         """A Boss overlay's NPCs (docs/boss-lifecycle-re.md): the role's cloth
-        "birth" in the compatibility 1000 ms window, then stand/walk, the HP bar
+        "birth" until native mode9 ends, then stand/walk, the HP bar
         over the head (0x005D2835, every client) and the 3 s flash after a
         hit. A dead Boss disappears at once (0x00606606)."""
         for boss in (self.state.get("boss") or {}).get("actors") or ():
@@ -932,12 +932,13 @@ class BattleScene:
                 continue
             record = {"id": boss["id"], "role": boss["role"], "avatar_role": boss.get("avatar_role", 0), "team": 7, "x": boss["x"], "y": boss["y"],
                       "facing": boss["facing"], "state": 0, "protected_until": boss["protected_until"], "durability": boss["hp"]}
-            born_for = self.clock - boss["born"]
+            born_for = boss.get("birth_age", self.clock - boss["born"])
+            in_birth = boss.get("birth_mode", 1) == 9
             cloth = self.avatars.parts(boss["role"], "stand").get("cloth")
             birth = f"object/cloth/cloth{cloth}_birth.img"
-            if 0 <= born_for < BOSS_BIRTH_MS and cloth and self.sprites.get(birth):
+            if in_birth and cloth and self.sprites.get(birth):
                 frames = len(self.sprites.get(birth) or ()) or 1
-                self._draw_frames(field, birth, min(frames - 1, born_for * frames // BOSS_BIRTH_MS),
+                self._draw_frames(field, birth, min(frames - 1, born_for // BOSS_BIRTH_FRAME_MS),
                                   boss["x"] - AVATAR_ANCHOR[0], boss["y"] - AVATAR_ANCHOR[1])
             else:
                 if boss.get("moving"):

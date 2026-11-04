@@ -1,0 +1,72 @@
+{"kind": "config", "role": 24, "path": "object/cloth/cloth12401_birth.img", "frames": 10, "directions": 1, "period": 200, "action": 14, "facing": 270}
+{"kind": "frame", "role": 24, "case": "sequence", "elapsed": 0, "dt": 0, "frame": 0, "remainder": 0, "loops": 1, "stopped": 0}
+{"kind": "frame", "role": 24, "case": "sequence", "elapsed": 199, "dt": 199, "frame": 0, "remainder": 199, "loops": 1, "stopped": 0}
+{"kind": "frame", "role": 24, "case": "sequence", "elapsed": 200, "dt": 1, "frame": 1, "remainder": 0, "loops": 1, "stopped": 0}
+{"kind": "frame", "role": 24, "case": "sequence", "elapsed": 400, "dt": 200, "frame": 2, "remainder": 0, "loops": 1, "stopped": 0}
+{"kind": "frame", "role": 24, "case": "sequence", "elapsed": 1000, "dt": 600, "frame": 5, "remainder": 0, "loops": 1, "stopped": 0}
+{"kind": "frame", "role": 24, "case": "sequence", "elapsed": 1200, "dt": 200, "frame": 6, "remainder": 0, "loops": 1, "stopped": 0}
+{"kind": "frame", "role": 24, "case": "sequence", "elapsed": 1400, "dt": 200, "frame": 7, "remainder": 0, "loops": 1, "stopped": 0}
+{"kind": "frame", "role": 24, "case": "sequence", "elapsed": 1600, "dt": 200, "frame": 8, "remainder": 0, "loops": 1, "stopped": 0}
+{"kind": "frame", "role": 24, "case": "sequence", "elapsed": 2000, "dt": 400, "frame": 9, "remainder": 0, "loops": 0, "stopped": 1}
+{"kind": "frame", "role": 24, "case": "sequence", "elapsed": 3000, "dt": 1000, "frame": 9, "remainder": 0, "loops": 0, "stopped": 1}
+{"kind": "frame", "role": 24, "case": "long", "elapsed": 4000, "dt": 4000, "frame": 9, "remainder": 0, "loops": 0, "stopped": 1}
+{"kind": "config", "role": 28, "path": "object/cloth/cloth12801_birth.img", "frames": 8, "directions": 1, "period": 200, "action": 14, "facing": 270}
+{"kind": "frame", "role": 28, "case": "sequence", "elapsed": 0, "dt": 0, "frame": 0, "remainder": 0, "loops": 1, "stopped": 0}
+{"kind": "frame", "role": 28, "case": "sequence", "elapsed": 199, "dt": 199, "frame": 0, "remainder": 199, "loops": 1, "stopped": 0}
+{"kind": "frame", "role": 28, "case": "sequence", "elapsed": 200, "dt": 1, "frame": 1, "remainder": 0, "loops": 1, "stopped": 0}
+{"kind": "frame", "role": 28, "case": "sequence", "elapsed": 400, "dt": 200, "frame": 2, "remainder": 0, "loops": 1, "stopped": 0}
+{"kind": "frame", "role": 28, "case": "sequence", "elapsed": 1000, "dt": 600, "frame": 5, "remainder": 0, "loops": 1, "stopped": 0}
+{"kind": "frame", "role": 28, "case": "sequence", "elapsed": 1200, "dt": 200, "frame": 6, "remainder": 0, "loops": 1, "stopped": 0}
+{"kind": "frame", "role": 28, "case": "sequence", "elapsed": 1400, "dt": 200, "frame": 7, "remainder": 0, "loops": 1, "stopped": 0}
+{"kind": "frame", "role": 28, "case": "sequence", "elapsed": 1600, "dt": 200, "frame": 7, "remainder": 0, "loops": 0, "stopped": 1}
+{"kind": "frame", "role": 28, "case": "sequence", "elapsed": 2000, "dt": 400, "frame": 7, "remainder": 0, "loops": 0, "stopped": 1}
+{"kind": "frame", "role": 28, "case": "sequence", "elapsed": 3000, "dt": 1000, "frame": 7, "remainder": 0, "loops": 0, "stopped": 1}
+{"kind": "frame", "role": 28, "case": "long", "elapsed": 4000, "dt": 4000, "frame": 7, "remainder": 0, "loops": 0, "stopped": 1}
+{"kind": "config", "role": 32, "path": "object/cloth/cloth13201_birth.img", "frames": 8, "directions": 1, "period": 200, "action": 14, "facing": 270}
+{"kind": "frame", "role": 32, "case": "sequence", "elapsed": 0, "dt": 0, "frame": 0, "remainder": 0, "loops": 1, "stopped": 0}
+{"kind": "frame", "role": 32, "case": "sequence", "elapsed": 199, "dt": 199, "frame": 0, "remainder": 199, "loops": 1, "stopped": 0}
+{"kind": "frame", "role": 32, "case": "sequence", "elapsed": 200, "dt": 1, "frame": 1, "remainder": 0, "loops": 1, "stopped": 0}
+{"kind": "frame", "role": 32, "case": "sequence", "elapsed": 400, "dt": 200, "frame": 2, "remainder": 0, "loops": 1, "stopped": 0}
+{"kind": "frame", "role": 32, "case": "sequence", "elapsed": 1000, "dt": 600, "frame": 5, "remainder": 0, "loops": 1, "stopped": 0}
+{"kind": "frame", "role": 32, "case": "sequence", "elapsed": 1200, "dt": 200, "frame": 6, "remainder": 0, "loops": 1, "stopped": 0}
+{"kind": "frame", "role": 32, "case": "sequence", "elapsed": 1400, "dt": 200, "frame": 7, "remainder": 0, "loops": 1, "stopped": 0}
+{"kind": "frame", "role": 32, "case": "sequence", "elapsed": 1600, "dt": 200, "frame": 7, "remainder": 0, "loops": 0, "stopped": 1}
+{"kind": "frame", "role": 32, "case": "sequence", "elapsed": 2000, "dt": 400, "frame": 7, "remainder": 0, "loops": 0, "stopped": 1}
+{"kind": "frame", "role": 32, "case": "sequence", "elapsed": 3000, "dt": 1000, "frame": 7, "remainder": 0, "loops": 0, "stopped": 1}
+{"kind": "frame", "role": 32, "case": "long", "elapsed": 4000, "dt": 4000, "frame": 7, "remainder": 0, "loops": 0, "stopped": 1}
+{"kind": "config", "role": 34, "path": "object/cloth/cloth13401_birth.img", "frames": 8, "directions": 1, "period": 200, "action": 14, "facing": 270}
+{"kind": "frame", "role": 34, "case": "sequence", "elapsed": 0, "dt": 0, "frame": 0, "remainder": 0, "loops": 1, "stopped": 0}
+{"kind": "frame", "role": 34, "case": "sequence", "elapsed": 199, "dt": 199, "frame": 0, "remainder": 199, "loops": 1, "stopped": 0}
+{"kind": "frame", "role": 34, "case": "sequence", "elapsed": 200, "dt": 1, "frame": 1, "remainder": 0, "loops": 1, "stopped": 0}
+{"kind": "frame", "role": 34, "case": "sequence", "elapsed": 400, "dt": 200, "frame": 2, "remainder": 0, "loops": 1, "stopped": 0}
+{"kind": "frame", "role": 34, "case": "sequence", "elapsed": 1000, "dt": 600, "frame": 5, "remainder": 0, "loops": 1, "stopped": 0}
+{"kind": "frame", "role": 34, "case": "sequence", "elapsed": 1200, "dt": 200, "frame": 6, "remainder": 0, "loops": 1, "stopped": 0}
+{"kind": "frame", "role": 34, "case": "sequence", "elapsed": 1400, "dt": 200, "frame": 7, "remainder": 0, "loops": 1, "stopped": 0}
+{"kind": "frame", "role": 34, "case": "sequence", "elapsed": 1600, "dt": 200, "frame": 7, "remainder": 0, "loops": 0, "stopped": 1}
+{"kind": "frame", "role": 34, "case": "sequence", "elapsed": 2000, "dt": 400, "frame": 7, "remainder": 0, "loops": 0, "stopped": 1}
+{"kind": "frame", "role": 34, "case": "sequence", "elapsed": 3000, "dt": 1000, "frame": 7, "remainder": 0, "loops": 0, "stopped": 1}
+{"kind": "frame", "role": 34, "case": "long", "elapsed": 4000, "dt": 4000, "frame": 7, "remainder": 0, "loops": 0, "stopped": 1}
+{"kind": "config", "role": 35, "path": "object/cloth/cloth13501_birth.img", "frames": 8, "directions": 1, "period": 200, "action": 14, "facing": 270}
+{"kind": "frame", "role": 35, "case": "sequence", "elapsed": 0, "dt": 0, "frame": 0, "remainder": 0, "loops": 1, "stopped": 0}
+{"kind": "frame", "role": 35, "case": "sequence", "elapsed": 199, "dt": 199, "frame": 0, "remainder": 199, "loops": 1, "stopped": 0}
+{"kind": "frame", "role": 35, "case": "sequence", "elapsed": 200, "dt": 1, "frame": 1, "remainder": 0, "loops": 1, "stopped": 0}
+{"kind": "frame", "role": 35, "case": "sequence", "elapsed": 400, "dt": 200, "frame": 2, "remainder": 0, "loops": 1, "stopped": 0}
+{"kind": "frame", "role": 35, "case": "sequence", "elapsed": 1000, "dt": 600, "frame": 5, "remainder": 0, "loops": 1, "stopped": 0}
+{"kind": "frame", "role": 35, "case": "sequence", "elapsed": 1200, "dt": 200, "frame": 6, "remainder": 0, "loops": 1, "stopped": 0}
+{"kind": "frame", "role": 35, "case": "sequence", "elapsed": 1400, "dt": 200, "frame": 7, "remainder": 0, "loops": 1, "stopped": 0}
+{"kind": "frame", "role": 35, "case": "sequence", "elapsed": 1600, "dt": 200, "frame": 7, "remainder": 0, "loops": 0, "stopped": 1}
+{"kind": "frame", "role": 35, "case": "sequence", "elapsed": 2000, "dt": 400, "frame": 7, "remainder": 0, "loops": 0, "stopped": 1}
+{"kind": "frame", "role": 35, "case": "sequence", "elapsed": 3000, "dt": 1000, "frame": 7, "remainder": 0, "loops": 0, "stopped": 1}
+{"kind": "frame", "role": 35, "case": "long", "elapsed": 4000, "dt": 4000, "frame": 7, "remainder": 0, "loops": 0, "stopped": 1}
+{"kind": "config", "role": 36, "path": "object/cloth/cloth13601_birth.img", "frames": 8, "directions": 1, "period": 200, "action": 14, "facing": 270}
+{"kind": "frame", "role": 36, "case": "sequence", "elapsed": 0, "dt": 0, "frame": 0, "remainder": 0, "loops": 1, "stopped": 0}
+{"kind": "frame", "role": 36, "case": "sequence", "elapsed": 199, "dt": 199, "frame": 0, "remainder": 199, "loops": 1, "stopped": 0}
+{"kind": "frame", "role": 36, "case": "sequence", "elapsed": 200, "dt": 1, "frame": 1, "remainder": 0, "loops": 1, "stopped": 0}
+{"kind": "frame", "role": 36, "case": "sequence", "elapsed": 400, "dt": 200, "frame": 2, "remainder": 0, "loops": 1, "stopped": 0}
+{"kind": "frame", "role": 36, "case": "sequence", "elapsed": 1000, "dt": 600, "frame": 5, "remainder": 0, "loops": 1, "stopped": 0}
+{"kind": "frame", "role": 36, "case": "sequence", "elapsed": 1200, "dt": 200, "frame": 6, "remainder": 0, "loops": 1, "stopped": 0}
+{"kind": "frame", "role": 36, "case": "sequence", "elapsed": 1400, "dt": 200, "frame": 7, "remainder": 0, "loops": 1, "stopped": 0}
+{"kind": "frame", "role": 36, "case": "sequence", "elapsed": 1600, "dt": 200, "frame": 7, "remainder": 0, "loops": 0, "stopped": 1}
+{"kind": "frame", "role": 36, "case": "sequence", "elapsed": 2000, "dt": 400, "frame": 7, "remainder": 0, "loops": 0, "stopped": 1}
+{"kind": "frame", "role": 36, "case": "sequence", "elapsed": 3000, "dt": 1000, "frame": 7, "remainder": 0, "loops": 0, "stopped": 1}
+{"kind": "frame", "role": 36, "case": "long", "elapsed": 4000, "dt": 4000, "frame": 7, "remainder": 0, "loops": 0, "stopped": 1}

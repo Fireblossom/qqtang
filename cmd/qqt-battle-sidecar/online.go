@@ -134,7 +134,10 @@ type onlineMatch struct {
 	virtual    map[uint16]bool // server AIs
 	trapMS     uint32
 	started    time.Time
-	log        io.Writer
+	// Actor frames include Ready; engine time starts at 3000ms instead.
+	actorFrameTime    uint32
+	actorFrameTimeSet bool
+	log               io.Writer
 
 	conn            *net.UDPConn
 	inbound         chan []byte
@@ -632,6 +635,12 @@ func (match *onlineMatch) clientTag() uint32 {
 // UDP socket, advances the engine to the wall clock and publishes the local
 // facts. It returns the engine events of this call.
 func (match *onlineMatch) step(step command) ([]battleengine.Event, error) {
+	frameNow := match.clientTag()
+	match.actorFrameTimeSet = true
+	defer func() {
+		match.advanceBossBirthFrame(frameNow)
+		match.actorFrameTime = frameNow
+	}()
 	for _, packet := range step.TCP {
 		match.handleTCP(packet)
 	}
