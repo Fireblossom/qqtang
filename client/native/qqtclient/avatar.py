@@ -26,7 +26,7 @@ EXTRA_PARTS_AFTER = ("cap", "thadorn", "fhadorn")
 # Trapped (trigger) and dying poses are one full-body image named after the
 # standing cloth, e.g. cloth10101_trigger.img (23 frames) for role 1. The
 # cloth IDs in the ini's [trigger]/[die] sections have no image files.
-FULL_BODY_ACTIONS = ("trigger", "die")
+FULL_BODY_ACTIONS = ("trigger", "die", "win", "lose")
 CANVAS = 100
 DIRECTION_DOWN = 3
 RED_TEAM = 0
@@ -78,7 +78,7 @@ class AvatarCache:
     def __init__(self, resources: Resources):
         self.resources = resources
         self.colors = load_team_colors(resources)
-        self.cache: dict[tuple[int, int, str, int, int], pygame.Surface | None] = {}
+        self.cache: dict[tuple, pygame.Surface | None] = {}
         self.sprites: dict[str, dimg.Sprite | None] = {}
 
     def _sprite(self, path: str) -> dimg.Sprite | None:
@@ -95,6 +95,13 @@ class AvatarCache:
         parser = configparser.ConfigParser()
         parser.read_string(data.decode("gbk", "replace") if data else "")
         stand = dict(parser.items("stand")) if parser.has_section("stand") else {}
+        if action in ("win", "lose"):
+            # 00425D60/00425F10: action INI values enable a part; its image
+            # uses the STAND part number with the requested action suffix.
+            enabled = dict(parser.items(action)) if parser.has_section(action) else {}
+            return {name: int(stand[name]) for name, value in enabled.items()
+                    if value.strip().isdigit() and int(value) > 0
+                    and stand.get(name, "").strip().isdigit()}
         cloth = stand.get("cloth", "").strip()
         if action in FULL_BODY_ACTIONS and cloth.isdigit() and self._sprite(f"object/cloth/cloth{cloth}_{action}.img"):
             return {"cloth": int(cloth)}
@@ -104,13 +111,21 @@ class AvatarCache:
         return {name: int(value) for name, value in parts.items() if value.strip().isdigit()}
 
     def get(self, role_id: int, team: int, action: str = "stand", direction: int = DIRECTION_DOWN,
-            frame: int = 0, wear: tuple[tuple[str, int], ...] = ()) -> pygame.Surface | None:
+            frame: int = 0, wear: tuple[tuple[str, int], ...] = (),
+            part_frames: tuple[tuple[str, int], ...] = ()) -> pygame.Surface | None:
         """One frame of an action (walk has 6 per direction; stand has 1).
         wear replaces parts with worn items, e.g. (("cap", 101),)."""
-        key = (role_id, team, action, direction, frame, wear)
+        key = (role_id, team, action, direction, frame, wear, part_frames)
         if key not in self.cache:
-            self.cache[key] = self._compose(role_id, team, action, direction, frame, wear)
+            self.cache[key] = self._compose(role_id, team, action, direction, frame, wear, part_frames)
         return self.cache[key]
+
+    def part_frame_counts(self, role_id: int, action: str) -> dict[str, int]:
+        counts = {}
+        for name, number in self.parts(role_id, action).items():
+            sprite = self._sprite(f"object/{name}/{name}{number}_{action}.img")
+            counts[name] = len(sprite.frames) // sprite.directions if sprite else 0
+        return counts
 
     @staticmethod
     def part_order(parts: dict[str, int]) -> list[str]:
@@ -122,7 +137,8 @@ class AvatarCache:
         return order
 
     def _compose(self, role_id: int, team: int, action: str, direction: int, frame_index: int,
-                 wear: tuple[tuple[str, int], ...] = ()) -> pygame.Surface | None:
+                 wear: tuple[tuple[str, int], ...] = (),
+                 part_frames: tuple[tuple[str, int], ...] = ()) -> pygame.Surface | None:
         parts = self.parts(role_id, action)
         full_body = action in FULL_BODY_ACTIONS and set(parts) == {"cloth"}
         if not full_body:
@@ -131,12 +147,13 @@ class AvatarCache:
             return None
         canvas = np.zeros((CANVAS, CANVAS, 4), np.float32)
         color = self.colors[team] if team != RED_TEAM and 0 <= team < len(self.colors) else None
+        frames_by_part = dict(part_frames)
         for name in self.part_order(parts):
             if name not in parts:
                 continue
             sprite, masked = None, False
             # Some action sections name parts that only have stand images.
-            for suffix in dict.fromkeys((action, "stand")):
+            for suffix in ((action,) if action in ("win", "lose") else dict.fromkeys((action, "stand"))):
                 base = f"object/{name}/{name}{parts[name]}_{suffix}"
                 if color is not None:
                     sprite, masked = self._sprite(base + "_m.img"), True
@@ -147,7 +164,7 @@ class AvatarCache:
             if sprite is None:
                 continue
             per_direction = len(sprite.frames) // sprite.directions
-            index = min(direction, sprite.directions - 1) * per_direction + frame_index % per_direction
+            index = min(direction, sprite.directions - 1) * per_direction + frames_by_part.get(name, frame_index) % per_direction
             frame = sprite.frames[index]
             if frame.pixels is None:
                 continue

@@ -80,6 +80,7 @@ class ResultDisplay:
         self.y = f32(0)
         self.table_at = (self.base - 12, -514)
         self.alpha = 0
+        self.portrait = None
         self.thresholds = thresholds
         mine = next((row for row in rows if row.player_id == local_id), None)
         if progress is None and rule != 12 and thresholds and mine is not None and mine.points_before is not None:
@@ -92,6 +93,8 @@ class ResultDisplay:
 
     def advance(self, milliseconds):
         self.elapsed += milliseconds
+        if self.portrait is not None:
+            self.portrait.advance(milliseconds)
         if self.phase == 0:
             if self.wait > 0:
                 self.wait -= milliseconds
@@ -148,6 +151,8 @@ class ResultDisplay:
                 images.append(Image(2000, 0, b + 446, y - 9, a))
             elif 0 < row.remark < 0x80000000:
                 images.append(Image((1000 + row.remark) & 0xFFFF, 0, b + 446, y - 4, a))
+        if self.portrait is not None:
+            images.append(Image(131, 0, *self.portrait.shadow_position))
         if mine is not None:
             if mine.identity & 0x2000:
                 images.append(Image(2000, 0, b + 448, 91, a))

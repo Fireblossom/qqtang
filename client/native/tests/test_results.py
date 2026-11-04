@@ -141,6 +141,7 @@ class ResultsTest(unittest.TestCase):
         for row in rows:
             scene = BattleScene.__new__(BattleScene)
             scene.local_id, scene.now_ms, scene.runtime = row["local_id"], 0, None
+            scene.state = dict(actors=[])
             scene.map = types.SimpleNamespace(rule=row["rule"])
             scene.names = {player["id"]: str(player["id"]) for player in row["players"]}
             inputs = [ResultRow(player["id"], player["result"], 2, 0, 0, player["gain"],

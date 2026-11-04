@@ -24,6 +24,7 @@ from .bomb_animation import BombAnimation
 from .effect import EffectPlayer
 from .machine_projectile import MachineGateAnimation
 from .result import ResultDisplay
+from .result_portrait import ResultPortrait
 from .sculpture_animation import StatueAnimation
 from .sidecar import (ACTOR_ACTIVE, ACTOR_ELIMINATED, ACTOR_TRAPPED, EVENT_ACTOR_ELIMINATED, EVENT_ACTOR_RESPAWNED, EVENT_BOMB_EXPLODED,
                       EVENT_CELL_DAMAGED, EVENT_CELL_DESTROYED, EVENT_MAP_ELEMENT_MOVED, MOVE_DOWN, MOVE_LEFT, MOVE_NONE, MOVE_RIGHT, MOVE_UP, TICK_MS, Sidecar)
@@ -1492,6 +1493,13 @@ class BattleScene:
         self.result_display = ResultDisplay(self.map.rule, self.result_rows, self.local_id, self.names,
                                             levels.points if levels is not None else (),
                                             pve_thresholds=tuple(level.point for level in pve.levels()) if self.map.rule == 12 else ())
+        local = self._local_actor()
+        mine = next((row for row in rows if row.player_id == self.local_id), None)
+        if local is not None and mine is not None:
+            action = ResultPortrait.pose(local["role"], mine.result)
+            self.result_display.portrait = ResultPortrait(
+                local["role"], mine.result, self.avatars.part_frame_counts(local["role"], action),
+                self.result_display.base, local["team"] - 1)
         self.result_level_icons = {}
         for index in range(9):
             self._script("ui_NotifyShowResultLevelIcon", 0, 0, 0, index, 0)
@@ -1523,15 +1531,14 @@ class BattleScene:
             image = self.text(item.text, 12, (5, 87, 107)).copy() if self.text is not None else self.font(12).render(item.text, True, (5, 87, 107))
             image.set_alpha(item.alpha)
             screen.blit(image, (item.x, item.y))
-        local = self._local_actor()
-        if display.phase == 3 and local is not None and display.alpha > 0:
-            avatar = self.avatars.get(local["role"], local["team"] - 1, "stand", SPRITE_DIRECTION[MOVE_DOWN], wear=self.wear.get(local["id"], ()))
+        portrait = display.portrait
+        if display.phase == 3 and portrait is not None and display.alpha > 0:
+            avatar = self.avatars.get(portrait.role, portrait.team, portrait.action,
+                                      SPRITE_DIRECTION[MOVE_DOWN], part_frames=portrait.frames())
             if avatar is not None:
-                head = avatar.subsurface(HEAD_CROP).copy()
-                head.set_alpha(display.alpha)
-                # Same native portrait offsets as the player list; raw
-                # portrait placement is (base+70,140), 00613196.
-                screen.blit(head, (display.base + 54, 119 - PLAYER_LIST_ROLE_RAISE.get(local["role"], 0)))
+                avatar = avatar.copy()
+                avatar.set_alpha(display.alpha)
+                screen.blit(avatar, portrait.position)
         if self.runtime is not None:
             for x, y, points, index, alpha in display.level_icons():
                 value = (x, y, points)

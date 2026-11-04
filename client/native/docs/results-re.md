@@ -1,6 +1,6 @@
 # v848结算控制器：入场、表格与Count/Score
 
-2026-11-04。原版 `0x00612C86/0x00612F3B/0x00613560/0x006137BB` 及行/数字/统计组件实际执行；实现为 `battle/result.py`、`BattleScene._draw_results`。后续已补普通竞技XP条、等级投影与特殊荣誉，见 `result-progress-re.md`，探险勇气投影见 `result-pve-re.md`；头像独立部件/胜负动作仍未完成，不把本轮记成整个结算画面全量复刻。
+2026-11-04。原版 `0x00612C86/0x00612F3B/0x00613560/0x006137BB` 及行/数字/统计组件实际执行；实现为 `battle/result.py`、`BattleScene._draw_results`。后续已补普通竞技XP条、等级投影与特殊荣誉（`result-progress-re.md`）、探险勇气投影（`result-pve-re.md`）及完整角色/胜负动作（`result-portrait-re.md`）。特殊场景模式入口及历史录像/Windows完整画面仍待进一步核对。
 
 ## 显示阶段和位置
 
@@ -32,7 +32,7 @@
 - 胜负小字314/315/316：(103,253)。昵称：(166,257)，12px，ARGB为 `alpha<<24 | 0x05576B`。
 - 杀敌/救人数用misc301数字帧，个位右锚分别(251,254)、(312,254)，位距10px。后续行每行加 **27px**。箱子规则8有专用列偏移，已单独按函数和输出接入。
 - 行等级UI位置为(394,250)，每行加27px；本机头部等级为(200,89)。复用原版 `ui_NotifyShowResultLevelIcon` / `ui_NotifyRenderResultLevelIcon`，绘制到表格之上。
-- 本机昵称：(245,95)。头像原生定位接口参数为(100,140)，即base+(70,0)；宿主仍用玩家栏既有头像裁切换算，精确的独立部件与胜负姿势留待核对。
+- 本机昵称：(245,95)。角色原生定位接口参数为(100,140)，即base+(70,0)；后续已按原生完整角色链路换算画布(58,84)，并恢复胜负动作，详见 `result-portrait-re.md`。
 
 本机统计的原生组件按每项成对显示 **Count/Score**：左侧大蓝字是数量，右侧小字是该项得分。协议此前已通过真实客户端差分确认这一含义（`internal/protocol/game/game_result.go`）；它不是累计次数。本轮发现Python解析器已保留 `scores`，但 `OnlineBattle` 构造显示行时丢弃了它们，现已完整传到 `ResultRow`。
 
