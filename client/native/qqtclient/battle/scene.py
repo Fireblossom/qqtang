@@ -49,7 +49,8 @@ BIG_BOMB_ANCHOR = (45, 70)
 FIELD_LOCK_FLASH_MS = 450
 # Rule 12's camera view (0x005C87B0).
 VIEW_SIZE = (800, 520)
-# A named Boss plays its cloth's "birth" for 1000 ms (0x005ACBFC).
+# Compatibility birth animation window; native actor-state recovery is
+# separate (docs/boss-birth-controller-re.md).
 BOSS_BIRTH_MS = 1000
 WALK_FRAME_MS = 100
 FLAME_FRAME_MS = 70
@@ -923,7 +924,7 @@ class BattleScene:
 
     def _draw_bosses(self, field: pygame.Surface, row: int) -> None:
         """A Boss overlay's NPCs (docs/boss-lifecycle-re.md): the role's cloth
-        "birth" for the first 1000 ms (0x005ACBFC), then stand/walk, the HP bar
+        "birth" in the compatibility 1000 ms window, then stand/walk, the HP bar
         over the head (0x005D2835, every client) and the 3 s flash after a
         hit. A dead Boss disappears at once (0x00606606)."""
         for boss in (self.state.get("boss") or {}).get("actors") or ():

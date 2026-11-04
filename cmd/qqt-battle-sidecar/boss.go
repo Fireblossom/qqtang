@@ -22,8 +22,10 @@ import (
 const (
 	bossFirstID = 30001
 	bossLastID  = 30199
-	// 0x005ACBFC: a named Boss is born in mode 9 playing "birth" for 1000 ms
-	// and cannot be hurt meanwhile (0x005AD175).
+	// Compatibility birth window. The default native actor controller can
+	// restore mode9 only after its 3000ms counter, with a role-specific
+	// greeting shortcut; Ready-time alignment is still pending. See
+	// docs/boss-birth-controller-re.md. This is not a proven native duration.
 	bossBirthMS = 1000
 	// 0x00601FEC -> 0x005B5202(3000): immunity and flash2 after a hit.
 	bossHitProtectionMS = 3000
@@ -50,7 +52,7 @@ type bossActor struct {
 	savedSpeed, savedBubbles byte
 }
 
-// bossGreetings are the lines 0x005AE672 sends when the birth ends, as GBK
+// bossGreetings are the lines in 0x005AE672's greeting branch, as GBK
 // bytes from 0x007F2A00/04/10 (the original's four leading spaces kept).
 // 0x005FDA38 shows nothing on receipt; the sailor has no line.
 var bossGreetings = map[uint16]string{
