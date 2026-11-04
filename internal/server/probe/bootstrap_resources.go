@@ -47,8 +47,10 @@ type serverStaticResources struct {
 	petSkillItemByID      map[byte]uint16
 	petFoodsByItem        map[uint16]petcatalog.FoodLink
 	petExperienceTable    []uint32
-	directoryHallPayload  []byte
-	gameSectionID         uint16
+
+	directoryHallPayload    []byte
+	directoryKingdomPayload []byte
+	gameSectionID           uint16
 }
 
 type serverPlayerRuntime struct {
@@ -105,6 +107,10 @@ func loadServerStaticResources(config Config) (serverStaticResources, error) {
 		resources.directoryHallPayload, err = directory.BuildLocalHallPayload(native)
 		if err != nil {
 			return resources, fmt.Errorf("build configured directory hall payload: %w", err)
+		}
+		resources.directoryKingdomPayload, err = directory.BuildLocalKingdomPayload(native)
+		if err != nil {
+			return resources, fmt.Errorf("build configured directory kingdom payload: %w", err)
 		}
 		resources.gameSectionID = native.SectionID
 	}

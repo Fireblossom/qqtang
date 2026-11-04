@@ -276,6 +276,7 @@ func (server *Server) logoutSession(session *connectionSession, connectionID str
 	server.grantAccountNavigation(session.remoteAddress, uin)
 	server.forgetAuthenticatedSession(session.remoteAddress, uin)
 	session.setUIN(0)
+	session.completedLogout.Store(true)
 	server.log(logEvent{
 		Level: "info", Event: "player_logged_out", ConnectionID: connectionID,
 		AccountID: fmt.Sprint(uin), Result: "district_navigation_grant_retained",

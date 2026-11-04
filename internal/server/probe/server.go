@@ -101,6 +101,7 @@ type Server struct {
 	gmHandler                   http.Handler
 	gmHTTPServer                *http.Server
 	directoryHallPayload        []byte
+	directoryKingdomPayload     []byte
 	gameSectionID               uint16
 	sessionPath                 string
 }
@@ -157,6 +158,7 @@ type connectionSession struct {
 	authNonce            []byte
 	authChallengeExpires time.Time
 	authNavigationUIN    atomic.Uint32
+	completedLogout      atomic.Bool
 }
 
 // sessionProjection is a command sent to one connection actor by the room or
@@ -505,8 +507,10 @@ func New(config Config) (*Server, error) {
 		roomPeerRelayStats:    make(map[roomPeerRelayDiagnosticKey]roomPeerRelayDiagnostic),
 		virtualRoomPeerSeq:    make(map[uint32]uint32),
 		virtualRoomPeerSendMu: make(map[uint32]*sync.Mutex),
-		directoryHallPayload:  directoryHallPayload,
-		gameSectionID:         gameSectionID,
+
+		directoryHallPayload:    directoryHallPayload,
+		directoryKingdomPayload: resources.directoryKingdomPayload,
+		gameSectionID:           gameSectionID,
 	}
 	if config.GMHTTPAddress != "" {
 		gm, gmErr := gmserver.New(playerStore, itemEntries, equipmentCatalog, config.ClientRoot, config.playerProfileForUIN,
@@ -853,7 +857,11 @@ func (server *Server) handleTCP(ctx context.Context, connection net.Conn, config
 				server.log(logEvent{Level: "info", Event: "connection_idle_timeout", ConnectionID: id, Result: config.Name})
 				return
 			}
-			server.log(logEvent{Level: "error", Event: "tcp_read_failed", ConnectionID: id, ErrorContext: err.Error()})
+			event := logEvent{Level: "error", Event: "tcp_read_failed", ConnectionID: id, ErrorContext: err.Error()}
+			if session.completedLogout.Load() && isConnectionReset(err) {
+				event.Level, event.Event, event.Result = "info", "connection_reset_after_logout", config.Name
+			}
+			server.log(event)
 			return
 		}
 	}
@@ -1144,7 +1152,12 @@ func (server *Server) attachAccountAuthNavigation(session *connectionSession, re
 		}
 		server.authMu.Unlock()
 		if !ok || !now.Before(expires) {
-			return false
+			// A district logout retains navigation instead of a password
+			// grant. Move that existing capability onto the new selector;
+			// consume clears any previous live selector before rebinding.
+			if !server.consumeAccountAuthNavigation(remote, uin) {
+				return false
+			}
 		}
 	}
 	if !session.authNavigationUIN.CompareAndSwap(0, uin) && session.authNavigationUIN.Load() != uin {

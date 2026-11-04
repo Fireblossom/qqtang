@@ -196,6 +196,7 @@ func (session *connectionSession) setUIN(uin uint32) {
 		session.liveKinIndex.Store(0)
 		session.liveRoleID.Store(0)
 	} else {
+		session.completedLogout.Store(false)
 		session.livePlayerID.Store(uint32(session.Profile.PlayerID))
 		session.liveSectionID.Store(uint32(session.Profile.SectionID))
 		session.liveKinIndex.Store(session.Profile.KinIndex)

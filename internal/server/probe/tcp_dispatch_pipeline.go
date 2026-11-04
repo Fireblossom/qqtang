@@ -248,6 +248,29 @@ func (server *Server) dispatchDirectoryStage(config ListenerConfig, session *con
 	if !config.Response.QQTDirectoryResponse {
 		return
 	}
+	if request, err := game.DecodeLocalKingdomRequest(data); err == nil {
+		navigationOwner := session != nil && session.authNavigationUIN.Load() == request.UIN
+		gameOwner := session != nil && !session.auxiliary && session.UIN == request.UIN && session.liveUIN.Load() == request.UIN
+		if !navigationOwner && !gameOwner {
+			server.log(logEvent{Level: "warn", Event: "unauthenticated_directory_kingdom_rejected", ConnectionID: connectionID,
+				AccountID: fmt.Sprint(request.UIN), MessageID: "0x0131", Result: "connection_closed"})
+			outcome.response, outcome.keepConnection, outcome.handledWithoutResponse = nil, false, true
+			return
+		}
+		if len(server.directoryKingdomPayload) == 0 {
+			server.log(logEvent{Level: "error", Event: "directory_kingdom_unavailable", ConnectionID: connectionID})
+			outcome.response, outcome.keepConnection, outcome.handledWithoutResponse = nil, false, true
+			return
+		}
+		outcome.response, err = game.BuildLocalKingdomResponse(data, server.directoryKingdomPayload)
+		if err != nil {
+			server.log(logEvent{Level: "error", Event: "directory_kingdom_response_build_failed", ConnectionID: connectionID, ErrorContext: err.Error()})
+			outcome.response, outcome.keepConnection, outcome.handledWithoutResponse = nil, false, true
+			return
+		}
+		outcome.result = "qqt_directory_kingdom_response"
+		return
+	}
 	inspection, err := game.InspectLocalPacket(data)
 	if err != nil || !isLocalDirectoryDiscovery(inspection) {
 		outcome.response, outcome.result = nil, "qqt_directory_request_ignored"
