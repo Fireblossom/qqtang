@@ -269,21 +269,25 @@ class FlightTest(unittest.TestCase):
         self.assertEqual(flight_position(down, 40, 600, 520), (200, 496))
         self.assertEqual(flight_position(down, 60, 600, 520), (200, -16))
 
-    def test_normal_and_power_bubbles_use_native_anchor(self) -> None:
+    def test_normal_power_black_and_big_bubbles_use_native_anchors(self) -> None:
         scene = BattleScene.__new__(BattleScene)
+        scene.bomb_pictures = {}
         scene.streak_badge = None
         scene.map = mapfile.MapFile(3, 2, 15, 13, [[0] * 195 for _ in range(3)])
         scene.dying = {}
         scene.state = {"clock": 0, "actors": [], "pickups": [], "flames": [], "bombs": [
-            {"id": 1, "row": 1, "col": 2}, {"id": 2, "row": 2, "col": 3, "style": 2}]}
+            {"id": 1, "row": 1, "col": 2}, {"id": 2, "row": 2, "col": 3, "style": 2},
+            {"id": 3, "row": 3, "col": 4, "style": 9}, {"id": 4, "row": 4, "col": 5, "style": 11}]}
         drawn = []
         scene._draw_frames = lambda _screen, path, frame, x, y: drawn.append((path, x, y))
         scene._draw_element = lambda *_args: None
         scene.draw(pygame.Surface((800, 600)))
         # 0x005DF590 places both at cell centres; 0x005DF6FB subtracts
         # anchor (0,15), as confirmed against the calibrated rule-2 video.
-        self.assertEqual(drawn[:2], [("object/bomb/bomb1_stand.img", 90, 52),
-                                     ("object/bomb/bomb2_stand.img", 130, 92)])
+        self.assertEqual(drawn[:4], [("object/bomb/bomb1_stand.img", 90, 52),
+                                     ("object/bomb/bomb2_stand.img", 130, 92),
+                                     ("object/bomb/bomb9_stand.img", 170, 132),
+                                     ("object/bomb/bomb11_stand.img", 165, 117)])
 
 
 class MachineDrawingTest(unittest.TestCase):

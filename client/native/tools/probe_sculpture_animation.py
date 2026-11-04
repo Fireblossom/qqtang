@@ -18,7 +18,7 @@ from win32emu import Win32Emu
 from unicorn.x86_const import UC_X86_REG_ECX
 
 
-def run(root):
+def picture_fixture(root):
     e = Win32Emu(root / "Client.exe", root)
     resources = Resources(root)
 
@@ -47,19 +47,28 @@ def run(root):
         e.handlers[name + "+0x8"] = (lambda e, p=picture: draws.append(p)), 0
         e.w32(host + 0x1C, 1)
         e.w32(host + 0x38, 0xFFFFFFFF)
+        category = "bomb/bomb" if e.r32(picture + 8) >> 24 == 3 else "misc/misc"
+        canvas = None
         for action, kind in ((1, "stand"), (2, "trigger")):
-            raw = resources.read(f"object/misc/misc{number}_{kind}.img")
+            raw = resources.read(f"object/{category}{number}_{kind}.img")
             if not raw:
                 continue
+            if action == 1:
+                canvas = list(struct.unpack_from("<II", raw, 32))
             data = e.malloc(0x48)
             e.write(data, template)
             counts[data] = struct.unpack_from("<I", raw, 16)[0]
             e.w32(host + 0x40 + action * 4, data)
-        pictures[picture] = dict(number=number, host=host)
+        pictures[picture] = dict(number=number, host=host, canvas=canvas)
         return int(e.r32(host + 0x44) != 0)
 
     patch(0x5C46DB, "initialize_picture", initialize_picture, 0)
     patch(0x427250, "frame_count", lambda e: counts[e.uc.reg_read(UC_X86_REG_ECX)], 0)
+    return e, pictures, draws, patch
+
+
+def run(root):
+    e, pictures, draws, patch = picture_fixture(root)
     patch(0x5C37AF, "unused_config", lambda e: 0, 0)
     patch(0x5C3B44, "unused_element_definition", lambda e: 0, 1)
 

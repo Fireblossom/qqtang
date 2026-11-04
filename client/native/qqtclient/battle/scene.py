@@ -19,6 +19,7 @@ from ..resources import Resources
 from ..runtime import UIRuntime
 from ..script import call_script, log
 from . import mapfile, prepared
+from .bomb_animation import BombAnimation
 from .effect import EffectPlayer
 from .machine_projectile import MachineGateAnimation
 from .sculpture_animation import StatueAnimation
@@ -386,6 +387,7 @@ class BattleScene:
         self.item_page = 0
         self.shown_masks: dict[int, tuple[float, float]] = {}
         self.machine_projectiles: dict[tuple[int, int, bool], MachineGateAnimation] = {}
+        self.bomb_pictures: dict[int, BombAnimation] = {}
         self.accumulated_ms = 0.0
         self.names = {player["id"]: player.get("name") or f"玩家{player['id']}" for player in players}
         # Room seats 0..7 by PlayerID (online only).
@@ -591,6 +593,7 @@ class BattleScene:
         tcp, self.pending_tcp = self.pending_tcp, []
         self.state = self.sidecar.step([action], min(ticks, 10), tcp)
         self._update_machine_projectiles(self.clock - previous_clock)
+        self._update_bomb_pictures(self.clock - previous_clock)
         for packet in self.state.get("tcp_out") or ():
             if self.on_tcp_out is not None:
                 self.on_tcp_out(packet["cmd"], bytes.fromhex(packet["payload"]))
@@ -735,14 +738,12 @@ class BattleScene:
         if aim is not None:
             self._draw_frames(field, "object/misc/misc450_stand.img", self.clock // 100,
                               ox + aim["col"] * CELL, oy + aim["row"] * CELL)
-        flights = dict(kick.get("flights") or {})
-        flights.update((self.state.get("machine") or {}).get("flights") or {})
-        flights.update((self.state.get("boss") or {}).get("bomb_flights") or {})
+        flights = self._bomb_flights()
         for bomb in self.state["bombs"] or ():
             if bomb.get("hidden"):
                 continue
-            # Rule 6's style-9 bubble uses that bubble type's image, placed like
-            # the others (its size was not checked against a recording).
+            # Native 005DF6FB gives style 9 the ordinary (0,15) anchor.
+            # Its DIMG size is preserved; no extra black-bubble scale is set.
             image = f"object/bomb/bomb{bomb['style']}_stand.img" if bomb.get("style") else BOMB_IMAGE
             x, y = bomb["col"] * CELL, bomb["row"] * CELL
             if "x" in bomb:  # carried by a conveyor (CMETransStrip)
@@ -753,7 +754,9 @@ class BattleScene:
             # The 2x2 bubble (type 11) is anchored at (45, 70) on its
             # bottom-right cell (0x005DF70A), covering the whole block.
             anchor = BIG_BOMB_ANCHOR if bomb.get("style") == 11 else BOMB_ANCHOR
-            self._draw_frames(field, image, self.clock // 150, ox + x - anchor[0], oy + y - anchor[1])
+            picture = self.bomb_pictures.get(bomb["id"])
+            self._draw_frames(field, image, picture.frame if picture is not None else 0,
+                              ox + x - anchor[0], oy + y - anchor[1])
         for flame in self.state["flames"] or ():
             self._draw_flame(field, flame)
         actors_by_row: dict[int, list[dict[str, Any]]] = {}
@@ -1070,6 +1073,25 @@ class BattleScene:
             self._draw_frames(field, "object/misc/misc196_stand.img", 0, actor["x"] - 11, actor["y"] - 43)
         number = 190 + hp if hp <= 5 else 191 + min(hp, 10)
         self._draw_frames(field, f"object/misc/misc{number}_stand.img", 0, actor["x"] - 10, actor["y"] - 42)
+
+    def _bomb_flights(self) -> dict:
+        flights = dict((self.state.get("kick") or {}).get("flights") or {})
+        flights.update((self.state.get("machine") or {}).get("flights") or {})
+        flights.update((self.state.get("boss") or {}).get("bomb_flights") or {})
+        return flights
+
+    def _update_bomb_pictures(self, elapsed_ms: int) -> None:
+        flights, present = self._bomb_flights(), set()
+        for bomb in self.state["bombs"] or ():
+            present.add(bomb["id"])
+            if bomb["id"] not in self.bomb_pictures:
+                path = f"object/bomb/bomb{bomb.get('style') or 1}_stand.img"
+                self.bomb_pictures[bomb["id"]] = BombAnimation(max(1, len(self.sprites.get(path) or ())))
+            flight = flights.get(str(bomb["id"]))
+            flying = flight is not None and flight["start"] <= self.clock < flight["until"]
+            self.bomb_pictures[bomb["id"]].advance(elapsed_ms, flying)
+        for identifier in set(self.bomb_pictures) - present:
+            del self.bomb_pictures[identifier]
 
     def _update_machine_projectiles(self, elapsed_ms: int = 0) -> None:
         """Advance the native component once, using the scene's time delta."""
