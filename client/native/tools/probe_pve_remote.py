@@ -15,7 +15,7 @@ from unicorn.x86_const import UC_X86_REG_ECX, UC_X86_REG_FPCW
 from win32emu import Win32Emu
 
 
-def run(root):
+def create_pve_actor(root, initial_cell=(33,12), region_bounds=(0,0,39,39)):
     e = Win32Emu(root / 'Client.exe', root)
     e.uc.reg_write(UC_X86_REG_FPCW, 0x007F)
     e.handlers['__dllonexit'] = (lambda e: e.arg(0)), 0
@@ -58,7 +58,7 @@ def run(root):
     patch(0x5D31BC, 'name_text', lambda e: 1, 0)
 
     def bounds(e):
-        e.write(e.arg(0), struct.pack('<iiii', 0, 0, 39, 39))
+        e.write(e.arg(0), struct.pack('<iiii', *region_bounds))
         return e.arg(0)
 
     patch(0x5E8202, 'region_bounds', bounds, 2)
@@ -74,7 +74,7 @@ def run(root):
     e.call(0x5BA4F2, (world, 30300, 26, 9), ecx=actor)
     entry = e.malloc(0x48)
     values = {0:30300, 4:30047, 8:1, 0x20:26, 0x24:3, 0x28:500, 0x2C:10001,
-              0x30:5, 0x34:401, 0x38:2, 0x3C:33, 0x40:12, 0x44:6}
+              0x30:5, 0x34:401, 0x38:2, 0x3C:initial_cell[0], 0x40:initial_cell[1], 0x44:6}
     for offset, value in values.items():
         e.w32(entry+offset, value)
     e.write(entry+0xC, b'NAME\0')
@@ -88,10 +88,10 @@ def run(root):
     remote = e.r32(actor+0x47C)
     assert result == 1 and remote and calls == [remote]
     assert e.r32(remote+4) == actor and e.r32(remote+8) == world
-    print(json.dumps(dict(kind='init', result=result, actor_vtable=hex(e.r32(actor)),
+    witness=dict(kind='init', result=result, actor_vtable=hex(e.r32(actor)),
                           attributes_vtable=hex(e.r32(e.r32(actor+0x400))),
                           remote_vtable=hex(e.r32(remote)), remote_ctor_calls=len(calls),
-                          owner_matches=True, world_matches=True, strategy=e.r32(actor+0x8A0))))
+                          owner_matches=True, world_matches=True, strategy=e.r32(actor+0x8A0))
     # Motion samples exclude graphics; initialization above has already returned.
     for offset in (0x31C, 0x40C, 0x48C, 0x418):
         e.w32(actor+offset, 0)
@@ -101,6 +101,12 @@ def run(root):
     e.w32(world+0x3830, arb)
     patch(0x534AD0, 'registered_npc', lambda e: 1, 1)
     patch(0x534990, 'remote_owned', lambda e: 0, 1)
+    return e, world, actor, remote, witness, patch
+
+
+def run(root):
+    e, world, actor, remote, witness, patch = create_pve_actor(root)
+    print(json.dumps(witness))
     for rate in list(range(11))+[11, 255]:
         for direction, end in enumerate(((580,260),(300,20),(20,260),(300,500))):
             for dt in (1,17,20,25,100):

@@ -68,14 +68,14 @@ type advNPC struct {
 	bounds         mapdata.AdventureNPCBounds
 	protectedUntil uint32
 	// The controller (docs/adventure-npc-ai-re.md): enmity by player,
-	// battle state, move strategy (saved while fighting), target and the
-	// decision counter of the move command.
+	// battle state, move strategy (saved while fighting), target and route.
+	// Movement command counting belongs to the scene.
 	enmity                  map[uint16]int
 	battle                  bool
 	strategy, savedStrategy int
 	target                  uint16
-	counter                 int
-	route                   []battleengine.Cell // cells from here to the goal
+	route                   pveRoute // col/row/direction nodes from here to goal
+	routeGoal               battleengine.Cell
 	// Skills (adventure_skill.go): when the battle began, the end of the
 	// current prepare stop, the last fire by prop Tier, and the move locks
 	// of CanUseMoveKey=0 effects.
@@ -88,11 +88,12 @@ type advNPC struct {
 }
 
 type adventureRule struct {
-	stage   mapdata.AdventureStage
-	field   mapdata.AdventureBattlefield
-	players map[uint16]*advPlayer
-	bubbles map[uint32]bool // player bubbles already counted for enmity
-	npcs    map[uint16]*advNPC
+	moveCommand npcMoveCommand
+	stage       mapdata.AdventureStage
+	field       mapdata.AdventureBattlefield
+	players     map[uint16]*advPlayer
+	bubbles     map[uint32]bool // player bubbles already counted for enmity
+	npcs        map[uint16]*advNPC
 	// produced marks the stage NPCs (by XML index) already sent in 0x138C.
 	produced []bool
 	fieldIdx int
@@ -672,19 +673,23 @@ func (match *onlineMatch) adventureEnmity() {
 }
 
 // adventureNPCTick is the move command 0x006112AF for a PVE NPC: decide
-// every 7th frame (at once again after a 9), then walk.
+// on the scene command's seventh eligible NPC execution (retry after9),
+// retain the command and run default float movement.
 func (match *onlineMatch) adventureNPCTick(n *advNPC, now uint32) {
-	if n.counter <= bossDecideFrames {
-		n.counter++
-	} else if now < n.preparingUntil || n.moveLocks > 0 {
-		n.path = nil
-	} else if d := match.adventureNPCDecide(n, now); d == bossDirStop {
-		n.path = nil
-	} else {
-		n.counter = 0
-		n.path = []battleengine.Cell{bossStep(n.pos.Cell(), d)}
+	movementMode := byte(2)
+	if n.navigator.walking {
+		movementMode = 3
 	}
-	match.bossMoveNPC(&n.boxNPCActor, now)
+	direction, emitted := match.adventure.moveCommand.tick(12, now, 1, movementMode, func() byte {
+		return byte(match.adventureNPCDecide(n, now))
+	})
+	if emitted {
+		n.navigator.walking = direction != bossDirStop
+		if n.navigator.walking {
+			n.navigator.direction = direction
+		}
+	}
+	match.moveDefaultNPC(&n.boxNPCActor, now-n.lastTick)
 }
 
 // adventureNPCDecide is vtbl+0x70 0x005BAE70: the battle switch, then the
@@ -711,9 +716,12 @@ func (match *onlineMatch) adventureNPCDecide(n *advNPC, now uint32) int {
 	if match.adventureTrySkill(n, now) {
 		return bossDirStop
 	}
+	if now < n.preparingUntil || n.moveLocks > 0 {
+		return bossDirStop
+	}
 	here := n.pos.Cell()
-	if len(n.route) > 1 && match.adventureRouteValid(n, here) {
-		return directionBetween(here, n.route[1])
+	if direction, reused := match.adventureReuseRoute(n); reused {
+		return int(direction)
 	}
 	switch n.strategy {
 	case 4:
@@ -738,7 +746,7 @@ func (match *onlineMatch) adventureNPCDecide(n *advNPC, now uint32) int {
 		n.route = nil
 		return bossDirStop
 	}
-	return directionBetween(here, n.route[1])
+	return int(n.route[0].direction)
 }
 
 // adventureChase is MoveStrategy 4 (0x005BB33A) with the target picked by
@@ -775,37 +783,32 @@ func (match *onlineMatch) adventureChase(n *advNPC, here battleengine.Cell, play
 		n.route = nil
 		return bossDirStop
 	}
-	return directionBetween(here, n.route[1])
+	return int(n.route[0].direction)
 }
 
-// adventureRouteValid is 0x005BB7F6: in battle the target must still stand
-// on the goal; no cell may hold a bubble or a blocking element.
-func (match *onlineMatch) adventureRouteValid(n *advNPC, here battleengine.Cell) bool {
-	for len(n.route) > 0 && n.route[0] != here {
-		n.route = n.route[1:]
-	}
-	if len(n.route) < 2 {
-		return false
-	}
+// adventureReuseRoute is the shared fast path of 005BB1E1/005BB33A.
+func (match *onlineMatch) adventureReuseRoute(n *advNPC) (byte, bool) {
+	targetMatches := true
 	if n.battle {
 		target, ok := actorByID(match.engine.Actors(), n.target)
-		if !ok || target.Position.Cell() != n.route[len(n.route)-1] {
-			return false
-		}
+		targetMatches = ok && target.Position.Cell() == n.routeGoal
 	}
-	for _, c := range n.route[1:] {
-		if !match.npcOpen(c, here) {
-			return false
-		}
+	bombs := map[battleengine.Cell]bool{}
+	for _, bomb := range match.engine.Bombs() {
+		bombs[bomb.Cell] = true
 	}
-	return true
+	return n.route.reuse(n.nativePosition(), targetMatches, func(cell battleengine.Cell) bool { return bombs[cell] }, func(node pveRouteNode) bool {
+		tile, ok := match.engine.TileAt(node.cell)
+		return !ok || tile.Kind != battleengine.CellOpen || tile.MapElementOccupied
+	})
 }
 
 // adventureFindPath is the NPC pathfinder (0x005F10D3) kept inside
 // NPCBounds; bubbles and blocking elements are obstacles, players and NPCs
 // are not. Unit steps, so a breadth-first search finds the same lengths as
 // the original A*; ties may differ.
-func (match *onlineMatch) adventureFindPath(n *advNPC, from, goal battleengine.Cell) []battleengine.Cell {
+func (match *onlineMatch) adventureFindPath(n *advNPC, from, goal battleengine.Cell) pveRoute {
+	n.routeGoal = battleengine.Cell{Row: -1, Col: -1}
 	if from == goal || !n.boundsContain(goal) || !match.npcOpen(goal, from) {
 		return nil
 	}
@@ -819,7 +822,8 @@ func (match *onlineMatch) adventureFindPath(n *advNPC, from, goal battleengine.C
 			for ; c != from; c = previous[c] {
 				path = append([]battleengine.Cell{c}, path...)
 			}
-			return append([]battleengine.Cell{from}, path...)
+			n.routeGoal = goal
+			return pveRouteFromCells(append([]battleengine.Cell{from}, path...))
 		}
 		for _, d := range [4]int{1, 3, 2, 0} { // up, down, left, right (0x005F1410)
 			next := bossStep(c, d)
@@ -920,9 +924,7 @@ func (match *onlineMatch) adventureRemote(sender uint16, event game.GameEvent) (
 			if entry.PlayerID != n.id {
 				continue
 			}
-			if match.receiveNPCMove(&n.boxNPCActor, m) {
-				n.speed = m.Speed
-			}
+			match.receiveNPCMove(&n.boxNPCActor, m)
 		}
 	}
 	return nil, true

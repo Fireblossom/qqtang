@@ -415,13 +415,15 @@ func (match *onlineMatch) interpolateBoxNPC(n *boxNPCActor, now uint32) {
 			action, facing = 4, held.direction
 		}
 		n.picture.set(action, facing)
+		n.moving = held.walking
+		n.navigator.walking = held.walking
+		if held.walking {
+			n.facing = held.direction
+			n.navigator.direction = held.direction
+		}
 	}
 	n.motion, n.motionKnown = held.position, true
 	n.pos = held.position.Pixels()
-	n.moving = held.walking
-	if held.walking {
-		n.facing = held.direction
-	}
 	n.lastTick = now
 }
 func (match *onlineMatch) npcOpen(cell battleengine.Cell, origin battleengine.Cell) bool {

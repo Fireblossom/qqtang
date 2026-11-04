@@ -188,6 +188,8 @@ func (match *onlineMatch) startAdventureCast(n *advNPC, use game.WorldUseItemEve
 	cast := &advCast{npc: n.id, prop: prop, guid: use.ClientTime, since: use.ClientTime, cell: pos.Cell(), pos: battleengine.PositionAtCellCenter(pos.Cell()),
 		dir: int(use.Flag2), hasTarget: use.Flag1 != 0, target: battleengine.Cell{Row: int16(use.Flag3), Col: int16(use.Flag4)}}
 	n.pos, n.path, n.route = cast.pos, nil, nil
+	n.motion, n.motionKnown = battleengine.NativeNPCPosition{X: float32(cast.pos.X), Y: float32(cast.pos.Y)}, true
+	n.facing, n.moving, n.navigator.walking = byte(cast.dir), false, false
 	n.preparingUntil = use.ClientTime + prop.PrepareTime
 	rule.casts = append(rule.casts, cast)
 	match.logf("adventure NPC %d casts %d %s", n.id, prop.ID, prop.Name)
@@ -471,6 +473,7 @@ func (match *onlineMatch) applyAdventureEffects(c *advCast, now uint32) {
 				if n != nil && v == 0 {
 					n.moveLocks++
 					n.path = nil
+					n.navigator.walking, n.moving = false, false
 					c.remember(id, name, 1)
 				} else if p != nil && v == 0 {
 					p.moveLocks++

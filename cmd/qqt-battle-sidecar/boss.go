@@ -652,9 +652,7 @@ func (match *onlineMatch) bossRemote(sender uint16, event game.GameEvent) ([]bat
 			if entry.PlayerID != b.id {
 				continue
 			}
-			if match.receiveNPCMove(&b.boxNPCActor, m) {
-				b.speed = m.Speed
-			}
+			match.receiveNPCMove(&b.boxNPCActor, m)
 		}
 	case game.PlayerUseBomb, game.NotifyPlayerUseBomb:
 		q, err := game.ParsePlayerUseBombEvent(game.GameEvent{Schema: game.PlayerUseBomb, Body: event.Body})
