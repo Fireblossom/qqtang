@@ -742,7 +742,7 @@ func (match *onlineMatch) adventureNPCDecide(n *advNPC, now uint32) int {
 		}
 		n.route = match.adventureFindPath(n, here, goal)
 	}
-	if len(n.route) < 2 {
+	if len(n.route) == 0 {
 		n.route = nil
 		return bossDirStop
 	}
@@ -779,7 +779,7 @@ func (match *onlineMatch) adventureChase(n *advNPC, here battleengine.Cell, play
 	}
 	target, _ := actorByID(match.engine.Actors(), n.target)
 	n.route = match.adventureFindPath(n, here, target.Position.Cell())
-	if len(n.route) < 2 {
+	if len(n.route) == 0 {
 		n.route = nil
 		return bossDirStop
 	}
@@ -803,38 +803,20 @@ func (match *onlineMatch) adventureReuseRoute(n *advNPC) (byte, bool) {
 	})
 }
 
-// adventureFindPath is the NPC pathfinder (0x005F10D3) kept inside
-// NPCBounds; bubbles and blocking elements are obstacles, players and NPCs
-// are not. Unit steps, so a breadth-first search finds the same lengths as
-// the original A*; ties may differ.
+// adventureFindPath runs the native PVE A* with the current world geometry.
 func (match *onlineMatch) adventureFindPath(n *advNPC, from, goal battleengine.Cell) pveRoute {
 	n.routeGoal = battleengine.Cell{Row: -1, Col: -1}
-	if from == goal || !n.boundsContain(goal) || !match.npcOpen(goal, from) {
-		return nil
+	bombs := map[battleengine.Cell]bool{}
+	for _, bomb := range match.engine.Bombs() {
+		bombs[bomb.Cell] = true
 	}
-	previous := map[battleengine.Cell]battleengine.Cell{from: from}
-	queue := []battleengine.Cell{from}
-	for pops := 0; len(queue) > 0 && pops < 500; pops++ {
-		c := queue[0]
-		queue = queue[1:]
-		if c == goal {
-			var path []battleengine.Cell
-			for ; c != from; c = previous[c] {
-				path = append([]battleengine.Cell{c}, path...)
-			}
-			n.routeGoal = goal
-			return pveRouteFromCells(append([]battleengine.Cell{from}, path...))
-		}
-		for _, d := range [4]int{1, 3, 2, 0} { // up, down, left, right (0x005F1410)
-			next := bossStep(c, d)
-			if _, seen := previous[next]; seen || !n.boundsContain(next) || !match.npcOpen(next, from) {
-				continue
-			}
-			previous[next] = c
-			queue = append(queue, next)
-		}
+	route := pveFindRoute(from, goal, func(cell battleengine.Cell, direction byte, checkBombs bool) bool {
+		return match.adventurePathPassable(n, cell, direction, checkBombs, bombs)
+	}, nil)
+	if len(route) != 0 {
+		n.routeGoal = goal
 	}
-	return nil
+	return route
 }
 
 // adventureDoor is 0x00615CAC.
