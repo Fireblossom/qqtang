@@ -14,6 +14,8 @@ import json
 import os
 import pathlib
 import random
+import re
+import subprocess
 import threading
 import types
 from typing import Any, Callable
@@ -94,6 +96,9 @@ class Session:
         except OSError as error:
             log(f"[session] send 0x{command:04X} failed: {error}")
             return False
+
+
+ZONE_TESTING_MS, ZONE_UNKNOWN_MS = 5000, 10000  # uiSelSect setList thresholds
 
 
 def build_session_natives(runtime: UIRuntime, session: Session) -> dict[str, Callable[..., Any]]:
@@ -265,6 +270,52 @@ def build_session_natives(runtime: UIRuntime, session: Session) -> dict[str, Cal
     def LogoutSection(*_args):
         session.disconnect()
 
+    zone_speeds: dict[str, int] = {}
+
+    def ping_ms(ip: str) -> int | None:
+        try:
+            output = subprocess.run(["ping", "-c", "1", "-t", "2", ip], capture_output=True, text=True, timeout=4).stdout
+        except (OSError, subprocess.SubprocessError):
+            return None
+        match = re.search(r"time[=<]([\d.]+) ms", output)
+        return max(int(float(match.group(1))), 1) if match else None
+
+    def SC_PingZones():
+        """Client.exe 0x0052D7F0 starts QQTPing (ICMP echo through
+        IcmpSendEcho) for every zone and later runs the script's
+        NotifyUIRefreshPingZoneResult. The script reads 5000 as "testing",
+        10000 as unknown, and below 400/1000/5000 ms as fast/medium/slow.
+        Which server stands for a zone is inferred: the fastest of the zone's
+        section servers."""
+        hall = session.hall
+        if hall is None:
+            return
+        targets: dict[str, set[str]] = {}
+        for location in hall.locations:
+            zone_speeds[location.name] = ZONE_TESTING_MS
+            servers = targets.setdefault(location.name, set())
+            for channel in hall.channels:
+                for section in channel.sections:
+                    server = hall.server(section.server_id) if section.location_id == location.id else None
+                    if server is not None:
+                        servers.add(server.ip)
+
+        def work() -> None:
+            results = {}
+            for name, addresses in targets.items():
+                times = [ms for ms in (ping_ms(ip) for ip in sorted(addresses)) if ms is not None]
+                results[name] = min(times) if times else ZONE_UNKNOWN_MS
+
+            def done() -> None:
+                zone_speeds.update(results)
+                script("NotifyUIRefreshPingZoneResult")
+            runtime.post(done)
+
+        threading.Thread(target=work, name="zone-ping", daemon=True).start()
+
+    def fetch_ZoneSpeedByZoneName(name):
+        return zone_speeds.get(str(name), ZONE_UNKNOWN_MS)
+
     def pattern_points(uin: Any) -> list[tuple[int, int, int, int]]:
         """PATTERN_POINT records (game mode, points, level, level value).
         Client.exe 0x0054F060/0x0054F0F0 read them through service +0x3A4;
@@ -283,5 +334,5 @@ def build_session_natives(runtime: UIRuntime, session: Session) -> dict[str, Cal
         mode, points, level, level_value = entries[int(index)] if 0 <= int(index) < len(entries) else (0, 0, 0, 0)
         return types.SimpleNamespace(m_byGameMode=mode, m_dwPatternPoint=points, m_wPatternLevel=level, m_dwLevelValue=level_value)
 
-    excluded = ("script", "notify", "zone_sections", "on_packet", "on_closed", "on_login", "pattern_points")
+    excluded = ("script", "notify", "zone_sections", "on_packet", "on_closed", "on_login", "pattern_points", "ping_ms")
     return {name: value for name, value in locals().items() if callable(value) and name not in excluded and not name.startswith("_")}

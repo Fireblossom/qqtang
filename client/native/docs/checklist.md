@@ -27,6 +27,7 @@
 ## 登录、选区、大厅
 
 - [x] 账号密码登录、目录、选区、进区
+- [x] 选区测速：`SC_PingZones` 用系统 ping 测各区服务器（原版 ICMP），按原版阈值显示快/中/慢/未知并排序（`docs/chat-faces-re.md`）
 - [x] 房间格子分页、玩家列表、快速加入、建房
 - [x] 大厅聊天、悄悄话、小喇叭
 - [x] 聊天表情（`docs/chat-faces-re.md`）：`initFaceIconList` 代码表按原版匹配、宽度、位置和 333 ms 动画画成图标，覆盖聊天记录 TEXTLIST、输入框和头顶气泡 RICHEDIT 及 MULTIEDIT/DYLABEL；TEXTLIST 行距改为 textsize+rowspace 并裁剪。`/<c=…>` 等格式标记未做

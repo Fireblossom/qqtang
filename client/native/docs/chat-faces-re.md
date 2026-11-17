@@ -38,3 +38,11 @@
 - 以前宿主没有注册这个绘制回调，资料框右下角一直是空的。代码在 `qqtclient/profile_avatar.py`。
 - 服务端的找人回复已经按装备记录给道具填了角色字节（`projectProfileEquipment`）。当前测试库里没有任何装备记录，所以实跑的两个账号都显示不穿装备的角色 1；穿戴规则由 `tests/test_profile_avatar.py` 覆盖。
 - 顺带修复：自己的婚姻信息早于找人回复到达时，`ui_UpdateMyMarriageInfo` 会读到空详情并报错。现在 `GetPlayerDetail` 在没有查询结果时返回全零结构，和原版的全零初值一致。
+
+## 选区测速（`SC_PingZones` `0x0052D7F0`、`fetch_ZoneSpeedByZoneName` `0x0052D780`）
+
+- 打开“区域选择”时，脚本调用 `SC_PingZones`。原版经服务 `0x007974E0`（虚表 +0x84）用 QQTPing.dll 的 ICMP 回显（`IcmpSendEcho`）测各区，测完回调脚本 `NotifyUIRefreshPingZoneResult`；脚本再逐区取 `fetch_ZoneSpeedByZoneName`（虚表 +0x88），按速度排序后刷新列表。
+- 脚本对数值的解读：10000 为未知，5000 为测试中，1000～5000 为慢，400～1000 为中，400 以下为快。
+- 宿主做法：每区测速期间先报 5000，后台线程对该区各小区所在服务器各执行一次系统 `ping`（macOS 普通权限可用），取最快的毫秒数，失败则报 10000，完成后回调脚本。原版用哪台服务器代表一个区没有追，取最快一台是推断。
+- 实跑：本地只有“东部电信”一个区，测得 1 ms，显示“快>>>”。
+- `LoadShopKeyboardLayout`（`0x0047D990`）只是让当前场景重读键位；商店 1～7 这几个键在最终版里没有任何地方读取，宿主维持空函数。
