@@ -105,7 +105,7 @@ def main() -> int:
     from .render import Renderer
     from .resources import Resources
     from .runtime import UIRuntime
-    from .script import MissingReport, ScriptLoader, new_namespace
+    from .script import MissingReport, ScriptLoader, call_script, new_namespace
     from .chat import build_chat_natives
     from .props import build_props_natives
     from .friend import build_friend_natives
