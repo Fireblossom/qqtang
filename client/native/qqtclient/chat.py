@@ -2,19 +2,21 @@
 broadcasts and whispers.
 
 The lobby chat list shows public lines and whispers; the whisper tab shows
-whispers only. Bugle messages go to the scripts' NotifyBroadcast, which runs
-the scrolling banner on the lobby, room and game screens. Lobby chat that
-arrives while the player is in a room is not shown, as in the original.
+whispers only. Bugle messages wait in the section timer's queue
+(section_timer.py), which hands them to the scripts' NotifyBroadcast for the
+banner on the lobby, room and game screens. Lobby chat that arrives while the
+player is in a room is not shown, as in the original.
 """
 
 from __future__ import annotations
 
 from typing import Any, Callable
 
-from . import slash
+from . import slash, textlist
 from .net import chat
 from .runtime import UIRuntime
 from .script import call_script, log
+from .section_timer import Bugle, split_bugle
 from .session import Session
 
 LOBBY_CHAT = "UI.selRoom.chatArea.chatPanel.chatList"
@@ -41,14 +43,15 @@ def build_chat_natives(runtime: UIRuntime, session: Session) -> dict[str, Callab
             if runtime.find(widget) is not None:
                 runtime.namespace["Win_SetColorText"](widget, text, CHANNEL_ITEMTEXT, *color)
 
-    def show_whisper(text: str) -> None:
+    def show_whisper(text: str, markup: str = "") -> None:
+        """markup: a /<name=..> tag the chat lists put before text."""
         screen = runtime.current_screen
         if screen == "selRoom":
-            show((LOBBY_CHAT, LOBBY_WHISPERS), text, WHISPER_COLOR)
+            show((LOBBY_CHAT, LOBBY_WHISPERS), markup + text, WHISPER_COLOR)
         elif screen == "room":
-            show((ROOM_CHAT, ROOM_WHISPERS), text, WHISPER_COLOR)
+            show((ROOM_CHAT, ROOM_WHISPERS), markup + text, WHISPER_COLOR)
         elif screen == "game":
-            show((GAME_CHAT,), text, WHISPER_COLOR)
+            show((GAME_CHAT,), markup + text, WHISPER_COLOR)
         elif screen == "shop":
             # The shop has no chat list. Do not discard a gift note/private
             # message merely because its recipient is browsing the shop.
@@ -123,9 +126,14 @@ def build_chat_natives(runtime: UIRuntime, session: Session) -> dict[str, Callab
         message = chat.parse_section_message(packet.payload)
         log(f"[chat] {'bugle' if message.bugle else 'lobby'} {message.nickname}: {message.text} (screen {runtime.current_screen})")
         if message.bugle:
-            script("NotifyBroadcast", message.nickname + chat.SAID, message.uin, message.text)
+            # 0x1001F3D6 -> 0x10008A0F: queued, shown by the 500 ms timer.
+            timer = getattr(session, "section_timer", None)
+            if timer is not None:
+                identity = session.profile.identity if session.profile else 0
+                name, text = split_bugle(message.line, message.uin, identity)
+                timer.bugles.push(Bugle(message.uin, name, text, message.effect))
         elif runtime.current_screen == "selRoom":
-            show((LOBBY_CHAT,), message.nickname + chat.SAID + message.text, CHAT_COLOR)
+            show((LOBBY_CHAT,), textlist.lobby_line(message), CHAT_COLOR)
 
     def on_whisper_result(packet) -> None:
         name, text = pending_whispers.pop(0) if pending_whispers else ("", "")
@@ -142,7 +150,8 @@ def build_chat_natives(runtime: UIRuntime, session: Session) -> dict[str, Callab
             # /M shield list, which is client-side, so the receiver drops it.
             log(f"[chat] across-section message from {whisper.source_uin} handled: {whisper.text!r}")
             return
-        show_whisper(f"{whisper.nickname}悄悄对你说:{text}")
+        # QQTSection 0x10026EFF marks the sender's name for OnClickName.
+        show_whisper(f"{whisper.nickname}悄悄对你说:{text}", textlist.name_tag(whisper.nickname, whisper.source_uin))
 
     session.handlers.update({
         chat.SECTION_CHAT_COMMAND: on_section_result,

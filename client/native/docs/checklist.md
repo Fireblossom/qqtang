@@ -19,6 +19,7 @@
 - [x] 控件未声明drawcolor时恢复原生默认白色；4个真实构造和12次文字ARGB入口观测、202项Python测试及房间流程通过（`docs/ui-text-defaults-re.md`）。
 - [x] 自定义键位（`docs/keylayout-re.md`）：设置框 KEYEDIT 按原版捕获/闪烁/键名，`sc_keyLayout_save/restore` 按号码存 26 字节键位（原版“系统设置”键存不住的 bug 已修正），在线和练习对战开局按本人键位读方向、放泡、道具 1～7、使用道具和切换键。设置框实跑改键、保存、重开通过；在线对战自定义键只有单元测试
 - [x] 每帧 `OnFrame` 回调与 `sc_getDeltaTick`：对战聊天框按原版从下往上滑入
+- [x] 滚动条（`docs/scrollbar-re.md`）：SCROLLBAR 的位置/范围、`Win_SetPos` 即回调 `OnPosChange`、按原版方向摆滑块、点轨道翻 pagesize 并在 0.4 秒后连发、拖动滑块吸附、SPIN 箭头；聊天记录 TEXTLIST 按原版贴底排版，可用滚动条和滚轮（跟随焦点）往回看。选地图翻页选第二屏地图、大厅聊天翻看、录像浏览实测通过；TEXTLIST 键盘翻页未做
 - [x] 探险路线新建已替换为原版A*，包含同代价取舍、open目标提前终止、方向通行、脚下泡和500次展开边界；106条完整搜索基准及相关Go全套通过（`docs/pve-astar-re.md`）。
 - [x] 探险旧路线复用适配真实基础地图元素方向位，保留原版与寻路相反的判定及末节点方向9行为；197条原版记录经正式入口回放通过（`docs/pve-route-elements-re.md`）。
 - [x] 探险视野改为原生像素差，恢复BattleStrategy2的场景种子选敌；985条视野/目标/仇恨切换记录及相关Go全套通过，1602角色69使用该策略（`docs/pve-perception-re.md`）。
@@ -30,7 +31,12 @@
 - [x] 选区测速：`SC_PingZones` 用系统 ping 测各区服务器（原版 ICMP），按原版阈值显示快/中/慢/未知并排序（`docs/chat-faces-re.md`）
 - [x] 房间格子分页、玩家列表、快速加入、建房
 - [x] 大厅聊天、悄悄话、小喇叭
-- [x] 聊天表情（`docs/chat-faces-re.md`）：`initFaceIconList` 代码表按原版匹配、宽度、位置和 333 ms 动画画成图标，覆盖聊天记录 TEXTLIST、输入框和头顶气泡 RICHEDIT 及 MULTIEDIT/DYLABEL；TEXTLIST 行距改为 textsize+rowspace 并裁剪。`/<c=…>` 等格式标记未做
+- [x] 小喇叭排队、显示时长和气泡（`docs/section-timer-re.md`，`qqtclient/section_timer.py`）：按 QQTSection 500 ms 定时器排队显示，`NotifyRemoveMsg`/`NotifyAddPopo`/`NotifyRemovePopo` 照原版时序调用，名字按“说:”拆分；大厅和房间双客户端实测。本地服务端不填喇叭特效号，只能看到默认气泡
+- [x] 分区定时器每秒执行 `updatePlayer()`、`updatePlayer2()`（`0x10016FC2`）；家族成员每 10 s 重排（`0x10017041`）没做
+- [x] 登出：`LogoutSection` 发 REQUEST_LOGOUT 0x0065 后断开，服务端记录 `qqt_logout_success`；关窗口、Cmd+Q、Alt+F4 先执行 `leaveSection()`（窗口关闭只有单元测试）
+- [x] 右键事件（`docs/rbutton-textlist-re.md`）：`OnRClick` 改为按下时发，抬起时按钮类发 `OnRBtnUp((x, y))`、其他控件交给父控件；右键按下也先关弹窗。大厅/引导栏玩家列表右键菜单、家族成员菜单（提升/下调/开除入口）可用，双客户端和族长账号实测发送密语、查看资料、职位提升再下调；开除未实测
+- [x] 聊天记录里的名字和链接（`docs/rbutton-textlist-re.md`，`qqtclient/textlist.py`）：`/<name=…>`、`/<kin=…>`、`/<level=…>`、`/<H>…/<~H>` 按原版解析、排版和命中；`OnClickName`/`OnRClickName`/`OnClickHLink`、名字双击插入号码、`Win_GetRect(…, 906)` 鼠标位置；大厅聊天按原版带家族旗和等级图标，悄悄话和家族聊天带名字标记。原版链接重复补 `http://` 的 bug 已修正；名字上的手形光标没做
+- [x] 聊天表情（`docs/chat-faces-re.md`）：`initFaceIconList` 代码表按原版匹配、宽度、位置和 333 ms 动画画成图标，覆盖聊天记录 TEXTLIST、输入框和头顶气泡 RICHEDIT 及 MULTIEDIT/DYLABEL；TEXTLIST 行距改为 textsize+rowspace 并裁剪。TEXTLIST 只启用链接，`/<c=…>` 等在原版也按原文显示（`docs/rbutton-textlist-re.md`）
 - [~] 分模式等级（包子/比武/雕像）：`GetPlayerModeInfo*` 已按原版读自己的 PATTERN_POINT，但本地服务端从不填，全部显示 0；需要服务端记录积分（原版规则无资料）
 - [x] 玩家资料里的人物（`docs/chat-faces-re.md`）：找人回复后按对方角色重建，经脚本 `playerInfo_useCommItem` → `selRoom_playerWear` 穿上该角色的装备（帽子/头发互斥规则按原版），资料框右下角绘制；同时修复自己婚姻信息先到时 `ui_UpdateMyMarriageInfo` 报错
 - [x] 好友：名单、上下线、资料、加好友、同意或拒绝、删除、信封消息
@@ -53,6 +59,7 @@
 - [x] 改房间属性（`sc_modifyRoom`）：双客户端实测改名、加密码后大厅卡片更新并显示锁，不带密码进房被拒、带对密码可进
 - [x] 聊天室背景：背景列表 0x00FF、换背景 0x0100、通知 0x0101 后按原版（`0x0052D3D0`）执行 `setChatBackground(id)`；双客户端实测换背景两端同步
 - [x] 房间里人物走动/放泡（`docs/chatroom-move-re.md`，`qqtclient/roomwalk.py`；原版所有房间都能走，聊天房间默认显示名牌）：方向键 0.26 px/ms、可走范围、空格放装饰泡（3 秒、连锁、十字火 400 ms）、F8 名牌；经 TCP 0x0065 发出、服务端转 Type-2，进房先 UDP Type-1 登记，收到后照原版调用脚本 `remotePlayerMove/remotePlayerPutBomb`，远端按"先横后纵"走到每个点。双客户端实测对方走动、放泡和爆炸都同步；打完一局回到房间后会重新登记 UDP（211 双 autoplay 实测，零 warn）。原版之间明文 Type-2 能否被 QQTPPP 接受未验证
+- [x] 聊天房间点人物（`0x00457AE0`，`docs/section-timer-re.md` §3）：右键按下 `ShowKickoutDlg(座位)`、左键双击 `chatWithPlayerInChatRoom(座位)`，在控件之前取走事件；双客户端实测弹出“查看/踢人/取消”（非房主踢人禁用）、双击设悄悄话对象、房主踢人请求到达服务端。“查看”（`UserClickSeatInRoom(座位, 1)`，原版 `0x1000CF2B` 用座位数据走找人回包处理）宿主未实现，所以还不能从房间座位打开资料、加好友
 - [x] 婚礼房间（服务端支持）：婚礼模式面板、牧师问答、烟花、情侣爱心
 
 ## 对战：普通规则
@@ -148,6 +155,7 @@
 - [x] 探险NPC远端初始化成功路径与260个保持单步已对照，统一使用原版玩家接收表，接收队列与快慢回正也已对照（`docs/npc-remote-queue-re.md`），共享发送历史/序列及无固定心跳也已对照（`docs/npc-publish-re.md`），完整Win32实局仍待核对（`docs/pve-remote-re.md`）。
 - [x] 探险三字节路线消费、目标格停止、场景共享移动计数、默认float32物理及施法停止/禁走技能顺序已接入；1036条原版记录、1152个物理帧逐位对照。完整A*随后另补106条搜索基准和1601→1602双端验收，服务端1200条info、零warn/error（`docs/pve-motion-re.md`、`docs/pve-astar-re.md`）。
 - [~] 多人同局：两个本客户端同局已实测；随后原版补丁客户端在Wine下与Mac客户端实际完成1601→1602、NPC生成/死亡和仲裁移交，180秒采集零warn/error。Windows实机混合及全路线仍未验收（`docs/wine-reference.md`）。
+- [x] 探险界面回调：队友中途离开调用 `ui_DisposePVEPlayerLeave` 隐藏其行并清 NPC 仇恨（`0x005BA327`）；本机放泡后 `ui_SetBaseItemTimeCur(0)`/`Speed(100/resspeed)` 重启状态栏回复圈（`0x005BA3CB`，0.5 s 以下的原版 bug 已修正）。`NotifyAddHint` 查明只属于新手任务，探险不调用（`docs/pve-panel-re.md`）
 - [x] 双人同时进门的明确重复目标按最近成功地图边只返回确认，保留正常清怪和目录跳号校验；合成目录回归可独立运行（`docs/pve-doorway-re.md`）。
 
 ## 商城

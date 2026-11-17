@@ -19,7 +19,7 @@ import pygame
 
 from .battle.effect import EffectPlayer
 from .net import roompeer
-from .runtime import TEXT_INPUT_TYPES, UIRuntime
+from .runtime import DOUBLE_CLICK_PX, DOUBLE_CLICK_S, TEXT_INPUT_TYPES, UIRuntime
 from .script import call_script, log
 from .session import Session
 
@@ -36,6 +36,7 @@ FLAME_PARTS = ((0, 0, 1), (-1, 0, 7), (1, 0, 9), (0, -1, 8), (0, 1, 6))  # (drow
 WALK_FRAMES, WALK_FRAME_MS = 6, 100
 FLAME_FRAME_MS = 50
 CHAT_ROOM_TYPE = 4
+AVATAR_HALF_WIDTH, AVATAR_HEIGHT = 0x19, 0x41  # the avatar click box (0x00457AE0)
 PRESENCE_RETRY_MS = 1000
 NAME_COLOR_SELF, NAME_COLOR_OTHER = (0, 255, 0), (255, 255, 0)
 
@@ -164,6 +165,7 @@ class RoomWalk:
         self.runtime, self.session, self.state, self.avatars, self.sprites, self.font = runtime, session, state, avatars, sprites, font
         self.keys: list[int] = []  # the held arrows, latest last (0x005A4BEF)
         self.name_key_down = False
+        self.last_left: tuple[float, tuple[int, int]] = (0.0, (0, 0))  # for WM_LBUTTONDBLCLK
         self.bombs: dict[tuple[int, int], tuple[int, int]] = {}  # (row, col) -> (placed, style)
         self.flames: list[tuple[int, int, int, int]] = []  # row, col, image, started
         self.clock = 0
@@ -232,18 +234,23 @@ class RoomWalk:
 
     # Input ------------------------------------------------------------------
 
-    def handle(self, event: pygame.event.Event) -> None:
+    def handle(self, event: pygame.event.Event) -> bool:
+        """Returns True when the event is used up here and must not reach
+        the widgets (an avatar click, see click())."""
         if not self.in_room():
             self.keys.clear()
             self.name_key_down = False
-            return
+            self.last_left = (0.0, (0, 0))
+            return False
+        if event.type == pygame.MOUSEBUTTONDOWN and event.button in (1, 3):
+            return self.click(event.button, event.pos)
         if event.type == pygame.KEYUP and event.key == pygame.K_F8:
             self.name_key_down = False
         if event.type == pygame.KEYUP and event.key in KEY_DIRECTIONS:
             if event.key in self.keys:
                 self.keys.remove(event.key)
         if event.type != pygame.KEYDOWN or self.typing():
-            return
+            return False
         if event.key in KEY_DIRECTIONS:
             if event.key in self.keys:
                 self.keys.remove(event.key)
@@ -254,6 +261,49 @@ class RoomWalk:
             if not self.name_key_down:
                 self.names_flag = not self.names_flag
                 self.name_key_down = True
+        return False
+
+    def avatar_at(self, x: int, y: int) -> int | None:
+        """0x00457AE0: the first seat (0..7) whose avatar holds the point,
+        x-25 < mx < x+25 and y-65 < my < y around the avatar's foot point."""
+        for seat in range(len(self.state.avatars)):
+            avatar = self.avatar(seat)
+            if avatar is not None and avatar.x - AVATAR_HALF_WIDTH < x < avatar.x + AVATAR_HALF_WIDTH \
+                    and avatar.y - AVATAR_HEIGHT < y < avatar.y:
+                return seat
+        return None
+
+    def click(self, button: int, pos: tuple[int, int]) -> bool:
+        """0x00457AE0, run each frame by the room scene (0x00457740) in chat
+        rooms only (+0x315 == 4). The scene updates before the widgets drain
+        the input queue (0x00431ED0), so it sees the press first: a right
+        press (event 0xC, WM_RBUTTONDOWN) on an avatar runs the script's
+        ShowKickoutDlg(seat), a left double click (0xB, WM_LBUTTONDBLCLK)
+        chatWithPlayerInChatRoom(seat), and the event is removed. The original
+        tests the mouse position kept by the input object (+0x504/+0x508);
+        that is where the press happened."""
+        double = False
+        if button == 1:
+            # Windows turns the second press into WM_LBUTTONDBLCLK by time
+            # and distance alone, whatever lies under it.
+            now = time.monotonic()
+            last_time, last_pos = self.last_left
+            double = now - last_time <= DOUBLE_CLICK_S and abs(pos[0] - last_pos[0]) <= DOUBLE_CLICK_PX \
+                and abs(pos[1] - last_pos[1]) <= DOUBLE_CLICK_PX
+            self.last_left = (0.0, (0, 0)) if double else (now, pos)
+        snapshot = self.state.snapshot
+        if snapshot is None or snapshot.game_type != CHAT_ROOM_TYPE or (button == 1 and not double):
+            return False
+        seat = self.avatar_at(*pos)
+        if seat is None:
+            return False
+        name = "ShowKickoutDlg" if button == 3 else "chatWithPlayerInChatRoom"
+        function = self.runtime.namespace.get(name)
+        if callable(function):
+            call_script(function, seat)
+        if double:
+            self.runtime.last_press = (0.0, (0, 0), None)  # the widgets never saw this press
+        return True
 
     def put_local_bomb(self) -> None:
         seat = self.local_seat()

@@ -154,9 +154,10 @@ Go 的游戏、协议和服务端测试可在 macOS 运行；包含本地 TCP/UD
 - `NUMLABEL`（`gameUI.dll` `0x10018CFC`）用单帧数字条图绘制，字形顺序为 `0123456789/:-+.`：第 i 个字形是条图上 `x = i × textwidth` 处 `textwidth × textheight` 的格子（不是图宽均分），每个字符（包括不画的空格）前进 `textsize`，`textstyle` 含 `dt_center` 时整串水平居中。`PICLABEL` 每帧一个字形，顺序相同，字距为 `textsize`。
 - 文字排版按宋体点阵（`0x10021E86`、折行 `0x10021C74`；宽度为 0 的标签一行都画不出，例如资料框里暂存号码的 `avtUin`）：GBK 单字节字符宽为字号的一半，双字节字符为两倍于此；每行最多 `控件宽 ÷ (字号 ÷ 2)` 个字节，逐字符折行；行距为 `textsize + rowspace`（默认 12 和 0）；超出控件高度的行不画，宽度容不下一个汉字的控件什么都不画。宿主用系统字体画字，比宋体宽时把整行水平压缩到宋体宽度。所以价格框（48 像素宽）里的"1000 糖块"只显示"1000 糖"，原版用这份商品表也是如此。`textLineType` 是线型（原价的删除线），与折行无关。
 - `TABWIN`（`0x10004C98`）：控件本身 1×1，`hotrect` 是点击区，`hotcover` 总是画在 `hotrect` 处，未选中画第 0 帧、选中画第 1 帧；点击后同组（`groupid`）其他标签取消选中。未选中的标签不画子控件（虚表 `+0x80` 的覆盖 `0x10004D27` 只在状态位 `0x10` 置位时画），但子控件仍然可见、可以被点到。例如大厅切到探险模式后，竞技模式下的三个子标签都不再显示。
-- 消息分发每处理一条消息就把计数加 1（`[0x10049928]`，`Win_GetEventCnt` 读取它）。按下左键时，如果有打开的弹窗（`wgtstyle_popup`），而点在弹窗外，就先隐藏它（`0x10030916`）。界面类的 `accel` 表是（回调名、虚拟键码、修饰键码……），宿主从焦点控件沿父链往上找匹配的条目；在 Mac 上把 Cmd 也当作 Ctrl，这是宿主自己加的。
+- 消息分发每处理一条消息就把计数加 1（`[0x10049928]`，`Win_GetEventCnt` 读取它）。按下左键或右键时，如果有打开的弹窗（`wgtstyle_popup`），而点在弹窗外，就先隐藏它（`0x10030916`）。右键按下时命中的控件发 `OnRClick`（基类 `0x1002ADEB` case 9），抬起时按钮类发 `OnRBtnUp((x, y))`（`0x10004321`），其他控件把抬起交给父控件；TEXTLIST 的左键按下、右键按下、双击自己处理名字和链接（`docs/rbutton-textlist-re.md`）。界面类的 `accel` 表是（回调名、虚拟键码、修饰键码……），宿主从焦点控件沿父链往上找匹配的条目；在 Mac 上把 Cmd 也当作 Ctrl，这是宿主自己加的。
 - `Win_SetFocus`（重载 `0x1001C69E`、`0x1001C6AC`）最终调用 `0x1003027D`，直接把控件记为焦点（管理器 `+0x2AC`），不会转给子控件。`ui_setCapture` 把焦点给整个对话框之后，按键怎样送到对话框里的输入框还没有追到；目前加好友对话框要先点一下输入框才能打字。
 - Static 控件把点击交给最近的可见、启用、非 Static 祖先（`0x10027269`）。宿主在找到的是界面（SCREEN）或根控件时返回空，让点击落到下面的兄弟控件。这是推断的：TPoser 默认是全屏的 Static 容器，大厅的 `chatArea` 就盖在模式标签上；如果把点击交给界面，原版的这些标签就点不动了。界面的状态位没有追到。
+- 滚动条 `SCROLLBAR`（构造 `0x100088AC`，见 `docs/scrollbar-re.md`）：`Win_SetPos`/`Win_SetScrollPos` 夹取后摆滑块，有滑块就回调 `OnPosChange`（位置没变也回调）；`Win_SetRange` 不动位置和滑块。点轨道时竖向“点在滑块上方加 pagesize”，不看方向，所以自上而下的列表把 pagesize 写成负数。聊天记录 `TEXTLIST` 的偏移以像素计、0 为最新行贴底，滚轮发给焦点控件再往父控件传，只有 `TEXTLIST` 处理。
 - 底图对齐 `bkImgFlag`（存于控件 `+0xC4`，绘制在 `0x10029A37`）只看低 3 位：等于 1（`dt_center`）时按 DIMG 画布尺寸（不是帧尺寸）水平、竖直都居中，等于 5（`dt_center|dt_vcenter`）时只把底边对齐控件底边，其余不移动；帧偏移照常另加。道具箱的 `picture` 是放在格子中心的 1×1 控件，靠这条规则把图标居中。
 - 房间人物服装（`Client.exe` `room_changePlayer` → `0x00458240`）：队伍和角色都没变时什么都不做；否则重建人物，再取座位信息（`+0x54` 物品个数，`+0x56` 起每项 0x12 字节的物品结构），对角色字节（+7）等于新角色的每件物品回调脚本 `useCommItem(座位号, 物品编号, 特效, 颜色)`，脚本再对人物部件调用 `room_playerWear`。不看物品状态，未装备的物品角色字节为 0，不会匹配。角色为 -1 表示清空座位。
 - 探险关卡数据是先 zlib 压缩、再做相邻字节异或。解密（`QQTSection.dll` `0x1000BEC8`）：先 `b[n-1] ^= b[0]`，再从 n−2 倒序到 0 做 `b[i] ^= b[i+1]`。读取函数是房间模块虚表 `0x1005419C` 的 `+0x64`（`0x1000E38E` → `0x1002BCDF` → `0x10035AE4`），形式为 `bool ReadCfg(path, size, out)`：解密、解压到 `size` 字节、把 CRLF 和 CR 换成 LF。`size` 来自 `config/GameCFG.ini` 的 `mapCfgSize`、`pvedataCfgSize`。Client.exe 的 `CBattleFieldMgr` 加载函数（`0x00892588`）通过应用对象 `+0x7D0` 调用它，再交给 TinyXML。过关门格子存在 `+0x8C`（LevelRow）、`+0x90`（LevelCol）。目录里没有 1647，1646 的下一关却写着 1647。
@@ -283,11 +284,15 @@ Go 的游戏、协议和服务端测试可在 macOS 运行；包含本地 TCP/UD
 - 建房成功只返回房间号，客户端随后用该房间号发 `EnterRoom` 取得完整房间快照（服务端按"已在房间中"处理）。脚本给的房间名为空时，宿主使用"一起来玩吧"。
 - `GetSeatInfo().seatStatus` 在脚本中是 0 空位、1 关闭（显示 STOP）、2 有人，与两种协议编码都不同。
 - 玩家列表刷新：`Client.exe` 的 `NotifyPlayerUpdate`（`0x0048ED30`）只在当前界面是 selRoom 时调用 `ui_NotifyPlayerUpdate()`，它同时重画引导栏列表（`updatePlayer`）和大厅右侧列表（`updatePlayer2`）。之前宿主只调用 `updatePlayer`，大厅列表进入后不再刷新。
+- 分区定时器（`docs/section-timer-re.md`）：进区成功（`0x1001B2EA`）后 QQTSection 开一个 500 ms 的窗口定时器（`0x10021094`），`XSection::OnTimer`（`0x1002120A`）每次推进小喇叭队列（`0x10008FD8`），每两次（1 s）由 `0x10016FC2` 执行脚本 `updatePlayer()` 和 `updatePlayer2()`，所以两个玩家列表每秒重画一次，与好友是否变化无关。
+- 小喇叭（`docs/section-timer-re.md`）：收到后先排队（`0x10008A0F`，最多 50 条，按“说:”拆成名字和以“说:”开头的正文，名字限 19 字节），不是马上显示。积压 10 条以上时每 500 ms 显示一条，否则每 1000 ms 一条；每条依次执行 `NotifyRemovePopo()`、`NotifyBroadcast(名字, 号码, 正文)`、`NotifyAddPopo(特效号)`（`0x10008D7E`，特效号是 0x0092 的 XEffectID）。队列空后 2.5 s 去掉气泡，27.5/28.5/29.5 s 各执行一次 `NotifyRemoveMsg()` 清掉三行。
+- 聊天房间（类型 4）里，房间场景每帧在控件处理输入之前（`0x00431ED0`）查看输入队列的第一个事件（`0x00457AE0`）：落在某个人物 `x±25`、`y-65..y`（不含边界，按座位顺序取第一个）的右键按下执行 `ShowKickoutDlg(座位)`，左键双击执行 `chatWithPlayerInChatRoom(座位)`，事件被取走，控件收不到。别的房间不处理。
+- 关窗口：Alt+F4 执行脚本 `leaveSection()` 后退出；标题栏关闭按钮执行 `leaveSection()` 后缩到托盘（`0x0042F140`）。`leaveSection()` 点大厅的离开按钮，其中的 `LogoutSection` 先执行 `NotifyRemoveMsg()`，再发 REQUEST_LOGOUT 0x0065（`u32 号码, u32 时间, u8 统计项数, 项`，`0x10019E0D`/`0x1001C23E`），然后不等回包就断开。宿主没有托盘，关窗口和 Cmd+Q 也是 `leaveSection()` 后退出。
 - 好友的逻辑在 `QQTSection.dll` 的 `CFriendHandler`，宿主函数都转到 `XSection` 接口（`Client.exe` 中 `DoFriendTask` `0x0054DCC0` 调 `+0x274`，`GetAttribute` 调 `+0x27C`，`GetValidFriendsCount` 调 `+0x280`）：
   - `DoFriendTask(文字, 长度, QQ号, 操作)`：0 取名单，1 加好友，2 删除，3 追踪，5/7 屏蔽/取消屏蔽（发 `/m 号码`、`/u 号码`），6 应答（文字为 y/Y 时结果 0，n/N 时 0x33）。
   - 加好友（`0x1000F51E`）：自己或已是好友时不发；附言前面放 21 字节的自己的昵称，长度加 0x15。收到申请时（`0x10017FCA`）前 20 字节是昵称，第 21 字节起是附言。
   - 主分发（`0x100189CE`）只把 0xA2～0xA5 交给好友处理（`0x1000FAAA`）；0xA6 不处理。未关联请求的 0xA3 是别人的申请，关联请求的 0xA3 是自己申请的结果：0 成功，0x2C 消息失败，0x33 被拒绝，0x34 对方下线，0x35 名单已满，0x36 已是好友。本服务端改用 0xA6 回结果，宿主按这些含义显示。
-  - 0xA5（`0x10010EBD`）只更新名单里已有的号码；上线的好友移到最前，下线的移到最后。原版只在上线时更新昵称、性别、身份，其余从 `./data/<号码>-Friends.dat` 读；宿主没有这个缓存，每次都更新。名单变化后执行 `updatePlayer()`（`0x100110A9`），大厅列表要等下一次 `ui_NotifyPlayerUpdate` 才重画。
+  - 0xA5（`0x10010EBD`）只更新名单里已有的号码；上线的好友移到最前，下线的移到最后。原版只在上线时更新昵称、性别、身份，其余从 `./data/<号码>-Friends.dat` 读；宿主没有这个缓存，每次都更新。名单变化后执行 `updatePlayer()`（`0x100110A9`），大厅右侧列表由分区定时器每秒重画（下一条）。
   - `fetch_PlayerInfoInPlayerList(i, 1)`（`0x10010558`）：`m_nPlayerStatus` 是在线标志，家族字段取自大厅玩家列表。脚本不用这个状态，所以好友标签页里在线和离线看起来一样，只有顺序不同；在线状态在玩家资料里显示。
   - `GetValidFriendsCount`（`0x10011154`）是 `min(名单上限, 当前人数)`，灰色遮罩盖住的是超过上限的好友，不是离线好友。`GetAttribute(号码, 0)` 是否好友，1 是否屏蔽，2 自己身份是否含 0x2000。
   - `GetPlayerNickNamebyUin`（`0x1002D7DF`）查大厅玩家列表，查不到返回号码本身。
