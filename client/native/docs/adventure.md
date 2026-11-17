@@ -65,7 +65,7 @@
 - `ui_SetGameMode(1)` 隐藏右侧的竞技玩家栏，改为显示左侧的 `pvePlayerList`（4 人，头像、名字、等级、血量数字和血条）、右下的 `pveFuncDlg`（仓库按钮 + 离开按钮）和 `pveTime` 计时（`uiGame.py:129-141,566-683`）。
 - `ui_InitPVEPlayer()` 调用 `GetPVEPlayerInfo()`，期望返回一个列表，每项有 `m_nPlayerID, m_nRoleID, m_szNickName, m_nPoints, m_nHP`（`uiGame.py:195-219`）。
 - `ui_InitPVEBoss()` 调用 `GetPVEBossInfo()`，期望返回场上**Boss**的列表（最多 3 个），每项有 `m_iNPCID, m_iImageID, m_iHP`；头像为 `object/ui/room/char/icon_<ImageID>.img`（`uiGame.py:150-185`）。原版实现在 `0x534240`：规则号不是 12 时返回空列表；是 12 时遍历场景中的 NPC，只取 IsBoss 为真的（虚函数 +0x4c）。
-- 原版还会回调 `ui_UpdatePVEPlayerLife(id, hp)`、`ui_UpdatePVEBossLife(id, hp)`、`ui_DisposePVEPlayerLeave(id)`，NPC 说话时回调 `NotifyAddHint(flag, x, y, text)` / `NotifyRemoveHint()`（格式串在 `0x7f30ec`、`0x7f3264`、`0x7f3134`、`0x7f2e8c`）。血条控件类型是 `DYLIFESTRIP`，宿主还缺 `Win_SetStripNum`、`Win_SetStripTotalNum`、`Win_SetStripDestNum`。[代码] native_coverage 报告
+- 原版还会回调 `ui_UpdatePVEPlayerLife(id, hp)`、`ui_UpdatePVEBossLife(id, hp)`、`ui_DisposePVEPlayerLeave(id)`（队友中途离开）和 `ui_SetBaseItemTimeCur/Speed`（本机放泡后的回复圈），格式串在 `0x7f30ec`、`0x7f3264`、`0x7f3134`、`0x7f30d0`。更正（2026-11-17）：`NotifyAddHint`/`NotifyRemoveHint`（`0x7f2e8c`）只由新手任务控制器调用，探险里 NPC 说话（0x116A）原版不显示，见 `pve-panel-re.md`。血条控件类型是 `DYLIFESTRIP`，宿主还缺 `Win_SetStripNum`、`Win_SetStripTotalNum`、`Win_SetStripDestNum`。[代码] native_coverage 报告
 
 ### 1.4 对局中：仲裁方要产生的消息
 
@@ -162,7 +162,7 @@
 | 血条 | `object/ui/game/img_lifenull.img`、`img_lifered.img`（Boss），`img_playerlife*.img`（玩家） | [验证]；`DYLIFESTRIP` 控件宿主未实现 |
 | PVE 功能栏、仓库按钮 | `object/ui/game/dlg_pvefunc.img`、`btn_storage.img` | [验证] |
 | 过关门 | `effect/transdoor.eff`、`transdoor_enter.eff`、`transdoor_trans.eff`（散放在磁盘上），类名 `CMETransDoor`（`0x613c2c`） | [验证]；**.eff 格式宿主未实现** |
-| 关卡提示、NPC 对话 | `NotifyAddHint` 使用 `object/ui/game/chatpopo{1,2,3}.img` | [代码] `uiGame.py:8-29` |
+| 关卡提示、NPC 对话 | `NotifyAddHint` 使用 `object/ui/game/chatpopo{1,2,3}.img`；更正：只用于新手任务，探险不调用（`pve-panel-re.md`） | [代码] `uiGame.py:8-29` |
 | 计时 | `object/ui/common/number3.img`（NUMLABEL，已实现） | [代码] |
 | 大厅、房间图标 | `map/bigicon/pve.img`、`map/pve1..12.img`（路线缩略图）、`res/uires/icon/npcicon/npcicon1..7.img` | [验证] |
 | 关卡数据 | `config/battlefield_map1601..1650.dat`（加密，437～1033 字节）。解开后是 XML，字段名可从 `Client.exe` 字符串看出：`BattleFields/BattleMap{map, mapCfgSize, ContinueID, NextMapIndex, LevelRow, LevelCol}`、`BattleNum`、`NPCs/NPCInfo{NPCID, NickName, ImageID, IsBoss, MoveStrategy, Defense, Speed, Harm, BattleStrategy, BornRow, BornCol, View, NPCNum, NPCBounds{BeginRow, BeginCol, EndRow, EndCol}, NPCSkillInfo{SkillNums, SkiLLID, SkillTrigger, HP/Time/Enmity/GEnmity 的 Upper/Lower/Trigger}}` | [代码] 字符串表 `0x7f5e3c-0x7f6050`；解密函数在 TP 段 |

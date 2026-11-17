@@ -9,7 +9,7 @@ from typing import Callable
 
 import pygame
 
-from . import dimg
+from . import dimg, scrollbar, textlist
 from .resources import Resources
 from .script import log
 from .keylayout import keyedit_text
@@ -128,6 +128,13 @@ class Renderer:
         self.overlay: Callable[[pygame.Surface], None] | None = None
         # initFaceIconList (gameUI.dll 0x10018ECF): the face codes, in order.
         self.face_codes: list[str] = []
+        # TEXTLIST /<level=P> icons: the scripts' ui_GetLevelMainPath(P) and
+        # ui_GetLevelSubPath(P) (0x10022CA3), set by the host; cached per P.
+        self.level_images: Callable[[int], list[str]] | None = None
+        self.level_paths: dict[int, list[str]] = {}
+        # The runtime's script dispatcher, for OnPosChange when a TEXTLIST's
+        # layout moves its scroll bar (set by the entry point).
+        self.ui_call: Callable[[Widget, str], object] = lambda widget, name: None
 
     def font(self, size: int) -> pygame.font.Font:
         if size not in self.fonts:
@@ -201,11 +208,13 @@ class Renderer:
         else:
             if widget.image:
                 self._draw_image(widget, x, y, alpha)
-            if widget.text or (widget.type in TEXT_INPUT_TYPES and widget is focus):
+            # A TEXTLIST's text is the uin a name double click stores
+            # (0x10024D10); only its lines are drawn.
+            if (widget.text and widget.type != "TEXTLIST") or (widget.type in TEXT_INPUT_TYPES and widget is focus):
                 self._draw_text(widget, x, y, alpha, widget is focus)
         if widget.type == "TABWIN":
             self._draw_hotcover(widget, x, y, alpha)
-        if widget.items:
+        if widget.items or widget.type == "TEXTLIST":
             self._draw_items(widget, x, y, alpha)
         callback = self.draw_callbacks.get(widget.attr("callbackdraw", ""))
         if callback is not None:
@@ -283,6 +292,10 @@ class Renderer:
         if widget.type == "TEXTLIST":
             # 0x10025083 clips to the text area, so tall faces are cut off.
             self.screen.set_clip(pygame.Rect(x + cx, y + cy, cw or widget.w, ch or widget.h).clip(clip))
+            for line, color, row_y in self.list_rows(widget):
+                self._draw_list_line(line, color, (x + cx + 2, y + cy + row_y), size, alpha)
+            self.screen.set_clip(clip)
+            return
         lines: list[tuple[str | list[str | int], tuple[int, int, int]]] = []
         wrap_width = max((cw or widget.w) - 16, 0)
         for text, color in widget.items:
@@ -292,13 +305,67 @@ class Renderer:
                 lines.extend((line, color) for line in self._wrap(text, size, wrap_width))
         visible = max((ch or widget.h) // line_height, 1)
         for number, (line, color) in enumerate(lines[-visible:]):
-            if isinstance(line, list):
-                self.blit_tokens(line, (x + cx + 2, y + cy + number * line_height), size, color, alpha_byte(alpha))
-                continue
-            rendered = self.text_line(line, size, color)
-            rendered.set_alpha(alpha_byte(alpha))
-            self.screen.blit(rendered, (x + cx + 2, y + cy + number * line_height))
+            self._draw_list_line(line, color, (x + cx + 2, y + cy + number * line_height), size, alpha)
         self.screen.set_clip(clip)
+
+    def _draw_list_line(self, line: str | list[str | int] | textlist.Row, color: tuple[int, int, int],
+                        position: tuple[int, int], size: int, alpha: float) -> None:
+        if isinstance(line, textlist.Row):
+            self.blit_row(line, position, size, color, alpha_byte(alpha))
+            return
+        if isinstance(line, list):
+            self.blit_tokens(line, position, size, color, alpha_byte(alpha))
+            return
+        rendered = self.text_line(line, size, color)
+        rendered.set_alpha(alpha_byte(alpha))
+        self.screen.blit(rendered, position)
+
+    def list_rows(self, widget: Widget) -> list[tuple[textlist.Row, tuple[int, int, int], int]]:
+        """A TEXTLIST's rows that reach into its client area, with their top
+        relative to the client top.
+
+        Items stack from the top with rowspace above each and below the last
+        (0x10025472); an item of n rows is (n - 1) * (textsize + rowspace) +
+        textsize tall (0x10023856). The whole text is drawn at client top +
+        height - total + offset (0x10025083), so it sits at the bottom until
+        it fills the area, and the offset (pixels, 0 = newest at the bottom)
+        scrolls back. Laying out also updates the list's scroll bar."""
+        size = max(widget.text_size, 9)
+        rowspace = int(widget.attr("rowspace", 0) or 0)
+        line_height = size + rowspace
+        _, _, cw, ch = scrollbar.list_client_rect(widget)
+        wrap_width = max(cw - 16, 0)
+        items = []
+        total = rowspace
+        for text, color in widget.items:
+            # Names, links, kin/level icons and faces (textlist.py).
+            elements = textlist.parse(text, self.face_codes)
+            rows = [textlist.Row(elements, cells)
+                    for cells in textlist.layout(elements, size, wrap_width, lambda face: self.face_size(face)[0])]
+            rows = [row for row in rows if row.cells] if not text else rows
+            height = (len(rows) - 1) * line_height + size if rows else 0
+            items.append((rows, color, total))
+            total += height + rowspace
+        offset = scrollbar.list_layout(widget, total, getattr(self, "ui_call", lambda widget, name: None))
+        top = ch - total + offset
+        placed = []
+        for rows, color, item_y in items:
+            for index, row in enumerate(rows):
+                row_y = top + item_y + index * line_height
+                if -line_height < row_y < ch:
+                    placed.append((row, color, row_y))
+        return placed
+
+    def textlist_hit_rows(self, widget: Widget) -> list[tuple[int, int, int, textlist.Row]]:
+        """Screen (left, top, height, row) of the TEXTLIST rows the click
+        handlers look at: those wholly inside the client area, each spanning
+        textsize + rowspace (0x10024190 checks top >= client top and
+        bottom <= client bottom)."""
+        cx, cy, _, ch = scrollbar.list_client_rect(widget)
+        x, y = widget.absolute()
+        height = max(widget.text_size, 9) + int(widget.attr("rowspace", 0) or 0)
+        return [(x + cx + 2, y + cy + row_y, height, row) for row, _, row_y in self.list_rows(widget)
+                if 0 <= row_y and row_y + height <= ch]
 
     def _draw_glyph_frames(self, widget: Widget, x: int, y: int, alpha: float) -> None:
         """PICLABEL text uses one sprite frame per glyph (selRoom/num.img: digits, then '/')."""
@@ -546,6 +613,53 @@ class Renderer:
                     self.screen.blit(surface, (x + offset_x, top + offset_y))
                     surface.set_alpha(255)
             x += advance
+
+    def blit_row(self, row: textlist.Row, position: tuple[int, int], size: int, color: tuple[int, int, int],
+                 opacity: int) -> None:
+        """One TEXTLIST row: character runs and faces as blit_tokens draws
+        them, kin and level icons at (x + 2, y - 5) animating every 150 ms
+        (0x10023551)."""
+        x, y = position
+        tokens: list[str | int] = []
+        run_left = x
+        for index, left, _advance in row.cells:
+            element = row.elements[index]
+            if element.kind in (textlist.CHAR, textlist.FACE):
+                if not tokens:
+                    run_left = x + left
+                if element.kind == textlist.FACE:
+                    tokens.append(element.value)
+                elif tokens and isinstance(tokens[-1], str):
+                    tokens[-1] += element.text
+                else:
+                    tokens.append(element.text)
+                continue
+            if tokens:
+                self.blit_tokens(tokens, (run_left, y), size, color, opacity)
+                tokens = []
+            images: list[str] = []
+            if element.kind == textlist.KIN and element.value >= 0:
+                images = [textlist.KIN_TOTEM % element.value]
+            elif element.kind == textlist.LEVEL:
+                images = self.level_icon_paths(element.value)
+            for image in images:
+                frames = self.sprites.get(image)
+                if frames:
+                    surface, offset_x, offset_y = frames[int(time.monotonic() * 1000) // 150 % len(frames)]
+                    if surface is not None:
+                        surface.set_alpha(opacity)
+                        self.screen.blit(surface, (x + left + 2 + offset_x, y - 5 + offset_y))
+                        surface.set_alpha(255)
+        if tokens:
+            self.blit_tokens(tokens, (run_left, y), size, color, opacity)
+
+    def level_icon_paths(self, points: int) -> list[str]:
+        if points not in self.level_paths:
+            paths = self.level_images(points) if self.level_images is not None else None
+            if paths is None:
+                return []
+            self.level_paths[points] = [path for path in paths if path]
+        return self.level_paths[points]
 
     def has_faces(self, widget: Widget, text: str) -> bool:
         return bool(self.face_codes) and widget.type in FACE_TYPES and "/" in text

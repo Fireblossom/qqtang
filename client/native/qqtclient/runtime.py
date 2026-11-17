@@ -8,7 +8,7 @@ from typing import Any, Callable
 
 import pygame
 
-from . import keylayout
+from . import keylayout, scrollbar, textlist
 from .script import ScriptLoader, call_script, log
 from .widgets import TEXT_INPUT_TYPES, Widget, build
 from .ui_alpha import advance_alpha
@@ -28,6 +28,10 @@ DOUBLE_CLICK_PX = 2
 DRAG_THRESHOLD_PX = 4
 WGTSTYLE_POPUP = 0x400
 VK_SHIFT, VK_CONTROL, VK_MENU = 16, 17, 18
+# Widget classes whose input method (vtable +0x18) is 0x10004321 or calls it
+# for a right button release: BUTTON, SPIN and MENUITEM directly, CHECK
+# (0x10004A03) and CHANGEBAR (0x100082BE). They raise OnRBtnUp((x, y)).
+RBTNUP_TYPES = ("BUTTON", "SPIN", "MENUITEM", "CHECK", "CHANGEBAR")
 
 
 class UIRuntime:
@@ -47,6 +51,10 @@ class UIRuntime:
         self.press_pos = (0, 0)
         self.mouse_pos = (0, 0)
         self.dragging: Widget | None = None
+        # A moveable widget (a scroll bar's thumb) following the mouse, and
+        # its top-left minus the press point (dispatcher +0x2B8, +0x70C/+0x710).
+        self.moving: Widget | None = None
+        self.move_offset = (0, 0)
         self.drag_image = ""  # Win_SetDragImg; drawn at the mouse while dragging
         # gameUI.dll counts the messages it dispatches ([0x10049928], read by
         # Win_GetEventCnt) and hides the open popup widget on a press outside it.
@@ -58,6 +66,10 @@ class UIRuntime:
         self.unknown_paths: set[str] = set()
         self.msgbox_target: tuple[str, Any] | None = None
         self.capture: Widget | None = None
+        # A TEXTLIST's rows on screen for the name/link hit test, as
+        # (left, top, height, textlist.Row); the entry point sets it to
+        # Renderer.textlist_hit_rows, the layout drawing uses.
+        self.textlist_rows: Callable[[Widget], list[Any]] = lambda widget: []
         self.main_thread_calls: queue.SimpleQueue[Callable[[], None]] = queue.SimpleQueue()
         self.periodic: dict[str, tuple[float, float, Callable[[], None]]] = {}
         self.quit_requested = False
@@ -209,6 +221,10 @@ class UIRuntime:
                     widget.angle_cur = min(widget.angle_dest, widget.angle_cur + delta)
                 elif widget.angle_cur > widget.angle_dest:
                     widget.angle_cur = max(widget.angle_dest, widget.angle_cur - delta)
+            if widget.type in ("SCROLLBAR", "SPIN"):
+                # 0x10008B13 / 0x10004811: holding the track or a spin repeats.
+                held = widget.pressed and self.pressed is widget and self.hovered is widget
+                scrollbar.tick(widget, elapsed_ms / 1000, held, self.mouse_pos, self.call)
             if widget.type == "DYLIFESTRIP":
                 # 10011D9A: approach destination at stepnum units/second.
                 delta = widget.strip_step * elapsed_ms / 1000
@@ -273,10 +289,20 @@ class UIRuntime:
 
     def handle(self, event: pygame.event.Event) -> None:
         self.event_count += 1
+        if event.type in (pygame.MOUSEBUTTONDOWN, pygame.MOUSEBUTTONUP):
+            # A real button press always follows a WM_MOUSEMOVE to the same
+            # point; scripted clicks (--click) do not move the mouse first.
+            self.mouse_pos = event.pos
         if event.type == pygame.QUIT:
             self.quit_requested = True
         elif event.type == pygame.MOUSEMOTION:
             self.mouse_pos = event.pos
+            if self.moving is not None:
+                # 0x100304C8: while a widget is moved it gets event 0x19 and
+                # nothing is hovered.
+                ox, oy = self.move_offset
+                scrollbar.move(self.moving, event.pos[0] + ox, event.pos[1] + oy, self.call)
+                return
             self._hover(self.hit_test(event.pos))
             self._maybe_begin_drag(event.pos)
         elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
@@ -292,7 +318,9 @@ class UIRuntime:
             if (target is not None and target is last_target and now - last_time <= DOUBLE_CLICK_S
                     and abs(event.pos[0] - last_pos[0]) <= DOUBLE_CLICK_PX and abs(event.pos[1] - last_pos[1]) <= DOUBLE_CLICK_PX):
                 self.last_press = (0.0, (0, 0), None)
-                if target.enabled:
+                if target.enabled and target.type == "TEXTLIST":
+                    self._textlist_press(target, event.pos, double=True)
+                elif target.enabled:
                     self.call(target, "OnDBClick")
                 return
             self.pressed = target
@@ -304,6 +332,18 @@ class UIRuntime:
                 # their own index through Win_GetFocusPath.
                 if target.enabled:
                     self.set_focus(target)
+                if target.enabled and target.type == "TEXTLIST":
+                    self._textlist_press(target, event.pos)
+                if scrollbar.moveable(target):
+                    tx, ty = target.absolute()
+                    self.moving, self.move_offset = target, (tx - event.pos[0], ty - event.pos[1])
+                elif target.type == "SCROLLBAR":
+                    scrollbar.press_track(target, event.pos, self.call)
+        elif event.type == pygame.MOUSEBUTTONUP and event.button == 1 and self.moving is not None:
+            # The moved widget only gets the release; nothing is clicked.
+            moved, self.moving = self.moving, None
+            moved.pressed = False
+            self.pressed = None
         elif event.type == pygame.MOUSEBUTTONUP and event.button == 1:
             target = self.hit_test(event.pos)
             pressed, self.pressed = self.pressed, None
@@ -315,18 +355,90 @@ class UIRuntime:
                 if target is not None and target.enabled and target.drag_type:
                     self.call(target, "OnDragItemDrop")
                 self.call(dragged, "OnEndItemDrag")
-            elif pressed is not None and pressed is target and target.enabled:
+            elif pressed is not None and pressed is target and target.enabled and target.type != "TEXTLIST":
+                # A TEXTLIST answers the press itself (0x10023F0A); its
+                # release only clears the pressed state (0x1002ADEB case 7).
                 self.click(target)
-        elif event.type == pygame.MOUSEBUTTONUP and event.button == 3:
+        elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 3:
+            # 0x100304C8 WM_RBUTTONDOWN: close a popup pressed outside, then
+            # send input code 9 to the widget under the mouse. The base
+            # method (0x1002ADEB) hides the widget's infowgt buddy (none is
+            # declared by the scripts) and raises OnRClick; a TEXTLIST raises
+            # OnRClickName instead (0x1002495A).
+            self._close_popup(event.pos)
             target = self.hit_test(event.pos)
             if target is not None and target.enabled:
-                if target.type == "KEYEDIT":
-                    keylayout.keyedit_click(target, right=True)
-                self.call(target, "OnRClick")
+                if target.type == "TEXTLIST":
+                    self._textlist_press(target, event.pos, right=True)
+                else:
+                    self.call(target, "OnRClick")
+        elif event.type == pygame.MOUSEBUTTONUP and event.button == 3:
+            self._right_release(event.pos)
+        elif event.type == pygame.MOUSEWHEEL:
+            # WM_MOUSEWHEEL goes to the focus, else the capture, else the
+            # hovered widget, and bubbles up to a TEXTLIST (0x100304C8).
+            target = self.focus or (self.capture if self.capture is not None and self.capture.shown() else None) or self.hovered
+            scrollbar.wheel(target, int(event.y), self.call)
         elif event.type == pygame.TEXTINPUT:
             self._type_text(event.text)
         elif event.type == pygame.KEYDOWN:
             self._key(event)
+
+    def _right_release(self, position: tuple[int, int]) -> None:
+        """0x100304C8 WM_RBUTTONUP: input code 10 to the widget under the
+        mouse; there is no press tracking. Button classes raise
+        OnRBtnUp("(x,y)") (0x10004321, the "(%d,%d)" at 0x10046210), a
+        KEYEDIT takes it as the right mouse key (0x10014AC9); the base
+        method (0x1002ADEB default) passes the code to the parent, so a
+        release over a button's static child still reaches the button."""
+        widget = self.hit_test(position)
+        if widget is None or not widget.enabled:
+            return
+        while widget is not None:
+            if widget.type == "KEYEDIT":
+                keylayout.keyedit_click(widget, right=True)
+                return
+            if widget.type in RBTNUP_TYPES:
+                self.call(widget, "OnRBtnUp", (int(position[0]), int(position[1])))
+                return
+            widget = widget.parent
+
+    def _textlist_press(self, widget: Widget, position: tuple[int, int], *, right: bool = False,
+                        double: bool = False) -> None:
+        """A TEXTLIST's own press handlers (textlist.py). Each first clears
+        the list's text, which a name double click sets to the uin.
+
+        - Left (0x10024190): on a link, OnClickHLink(url) and nothing else;
+          on a name, OnClickName(name, uin) and then OnClick; on any other
+          element, nothing; off every element, OnClick.
+        - Right (0x1002495A): on a name, OnRClickName(name, uin).
+        - Double (0x10024D10): on a name, the text becomes the uin and
+          OnDBClick runs.
+        """
+        widget.text = ""
+        hit = textlist.element_under(self.textlist_rows(widget), position)
+        if hit is None:
+            if not right and not double:
+                self.call(widget, "OnClick")
+            return
+        row, index = hit
+        if not right and not double:
+            url = textlist.link_at(row.elements, index)
+            if url is not None:
+                self.call(widget, "OnClickHLink", url)
+                return
+        marker = textlist.name_at(row.elements, index)
+        if marker is None:
+            return
+        name, uin = textlist.name_text(row.elements, marker), row.elements[marker].value
+        if double:
+            widget.text = str(uin)
+            self.call(widget, "OnDBClick")
+        elif right:
+            self.call(widget, "OnRClickName", name, uin)
+        else:
+            self.call(widget, "OnClickName", name, uin)
+            self.call(widget, "OnClick")
 
     def show(self, widget: Widget, shown: bool) -> None:
         if widget.visible != shown:
@@ -416,6 +528,8 @@ class UIRuntime:
         else:
             self.select(widget)
         self.call(widget, "OnClick")
+        if widget.type == "SPIN":
+            scrollbar.spin_step(widget, self.call)  # 0x10004879: after OnClick
 
     def select(self, widget: Widget) -> None:
         """Radio checks and tabs (TABWIN) are exclusive among their siblings
