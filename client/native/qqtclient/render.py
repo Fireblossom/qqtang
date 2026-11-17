@@ -26,6 +26,11 @@ FONT_CANDIDATES = (
 NUMBER_GLYPHS = "0123456789/:-+."
 TEXT_CACHE_LIMIT = 4096
 WRAPPED_TYPES = ("LABEL", "DYLABEL", "MESSAGEBOX")
+# Widgets whose text layout turns face codes into icons (gameUI.dll: RICHEDIT
+# 0x1001975A, MULTIEDIT 0x10016736, DYLABEL 0x10010B26, TEXTLIST 0x10022CA3).
+FACE_TYPES = ("RICHEDIT", "MULTIEDIT", "DYLABEL", "TEXTLIST")
+FACE_IMAGE = "res/uiRes/face/faces/%03d.img"  # 0x10018F4F, by list position
+FACE_FRAME_MS = 333  # 0x100191F7: timeGetTime() / 0x14D
 
 
 def remaining_angle_image(source: pygame.Surface, angle: float) -> pygame.Surface:
@@ -121,6 +126,8 @@ class Renderer:
         # its player rows around UI.game).
         self.underlay: Callable[[pygame.Surface], None] | None = None
         self.overlay: Callable[[pygame.Surface], None] | None = None
+        # initFaceIconList (gameUI.dll 0x10018ECF): the face codes, in order.
+        self.face_codes: list[str] = []
 
     def font(self, size: int) -> pygame.font.Font:
         if size not in self.fonts:
@@ -267,16 +274,31 @@ class Renderer:
         """List lines, newest at the bottom; older lines scroll off the top."""
         size = max(widget.text_size, 9)
         line_height = self.font(size).get_linesize()
+        if widget.type == "TEXTLIST":
+            # 0x100236F0: rows are textsize + rowspace apart, faces or not.
+            line_height = size + int(widget.attr("rowspace", 0) or 0)
         # value_channel_clientrect (35) is the text area inside the list.
         cx, cy, cw, ch = widget.values.get(35) or widget.caption_rect or (0, 0, widget.w, widget.h)
-        lines: list[tuple[str, tuple[int, int, int]]] = []
+        clip = self.screen.get_clip()
+        if widget.type == "TEXTLIST":
+            # 0x10025083 clips to the text area, so tall faces are cut off.
+            self.screen.set_clip(pygame.Rect(x + cx, y + cy, cw or widget.w, ch or widget.h).clip(clip))
+        lines: list[tuple[str | list[str | int], tuple[int, int, int]]] = []
+        wrap_width = max((cw or widget.w) - 16, 0)
         for text, color in widget.items:
-            lines.extend((line, color) for line in self._wrap(text, size, max((cw or widget.w) - 16, 0)))
+            if self.has_faces(widget, text):
+                lines.extend((line, color) for line in self.wrap_faces(text, size, wrap_width))
+            else:
+                lines.extend((line, color) for line in self._wrap(text, size, wrap_width))
         visible = max((ch or widget.h) // line_height, 1)
         for number, (line, color) in enumerate(lines[-visible:]):
+            if isinstance(line, list):
+                self.blit_tokens(line, (x + cx + 2, y + cy + number * line_height), size, color, alpha_byte(alpha))
+                continue
             rendered = self.text_line(line, size, color)
             rendered.set_alpha(alpha_byte(alpha))
             self.screen.blit(rendered, (x + cx + 2, y + cy + number * line_height))
+        self.screen.set_clip(clip)
 
     def _draw_glyph_frames(self, widget: Widget, x: int, y: int, alpha: float) -> None:
         """PICLABEL text uses one sprite frame per glyph (selRoom/num.img: digits, then '/')."""
@@ -390,7 +412,20 @@ class Renderer:
         r, g, b, a = widget.draw_color
         color = (r, g, b)
         edge = widget.edge_color
+        faces = self.has_faces(widget, text)
         for number, line in enumerate(lines):
+            if faces:
+                tokens = self.face_tokens(line)
+                line_width = self.tokens_width(tokens, size)
+                left = box.left
+                if style & DT_CENTER:
+                    left = box.left + (box.width - line_width) // 2
+                elif style & DT_RIGHT:
+                    left = box.right - line_width
+                opacity = alpha_byte(alpha, a) if a else alpha_byte(alpha)
+                self.blit_tokens(tokens, (left, top + number * line_height + (size - self.font(size).get_height()) // 2),
+                                 size, color, opacity, edge)
+                continue
             rendered = self.text_line(line, size, color)
             left = box.left
             if style & DT_CENTER:
@@ -431,6 +466,89 @@ class Renderer:
             self.screen.blit(pygame.transform.scale(strip, (width, middle)), (x, y + third))
         self.screen.blit(image, (x, y + height - third), pygame.Rect(0, source_height - third, width, third))
         image.set_alpha(255)
+
+    # Face icons -------------------------------------------------------------
+
+    def face_tokens(self, text: str) -> list[str | int]:
+        """Text runs and face indexes. At each '/', the first code in list
+        order that the text starts with is a face (0x10019149)."""
+        tokens: list[str | int] = []
+        run, index = "", 0
+        while index < len(text):
+            code = next((i for i, value in enumerate(self.face_codes) if text.startswith(value, index)), None) \
+                if text[index] == "/" else None
+            if code is None:
+                run += text[index]
+                index += 1
+                continue
+            if run:
+                tokens.append(run)
+                run = ""
+            tokens.append(code)
+            index += len(self.face_codes[code])
+        if run:
+            tokens.append(run)
+        return tokens
+
+    def face_size(self, index: int) -> tuple[int, int]:
+        """Advance and height: the image's size, but at least 20 wide when it
+        is narrower than 25 (0x10019149)."""
+        width, height = self.sprites.canvas(FACE_IMAGE % index)
+        return (width if width >= 25 else 20), height
+
+    def tokens_width(self, tokens: list[str | int], size: int) -> int:
+        return sum(cell_width(token, size) if isinstance(token, str) else self.face_size(token)[0] for token in tokens)
+
+    def wrap_faces(self, text: str, size: int, width: int) -> list[list[str | int]]:
+        """_wrap with each face as one unbreakable glyph."""
+        lines: list[list[str | int]] = []
+        for paragraph in text.split("\n"):
+            line: list[str | int] = []
+            used = 0
+            for token in self.face_tokens(paragraph):
+                for glyph in ([token] if isinstance(token, int) else list(token)):
+                    advance = self.face_size(glyph)[0] if isinstance(glyph, int) else cell_width(glyph, size)
+                    if width > 0 and line and used + advance > width:
+                        lines.append(line)
+                        line, used = [], 0
+                    if isinstance(glyph, str) and line and isinstance(line[-1], str):
+                        line[-1] += glyph
+                    else:
+                        line.append(glyph)
+                    used += advance
+            lines.append(line)
+        return lines
+
+    def blit_tokens(self, tokens: list[str | int], position: tuple[int, int], size: int, color: tuple[int, int, int],
+                    opacity: int, edge: tuple[int, ...] = (0, 0, 0, 0)) -> None:
+        """Faces sit on the text line: top at y - height + 16, or y - 4 when
+        shorter than 26 pixels, and animate every 333 ms (0x100191F7)."""
+        x, y = position
+        for token in tokens:
+            if isinstance(token, str):
+                rendered = self.text_line(token, size, color)
+                if edge[3] > 0:
+                    outline = self.text_line(token, size, edge[:3])
+                    outline.set_alpha(opacity)
+                    for dx, dy in ((-1, 0), (1, 0), (0, -1), (0, 1)):
+                        self.screen.blit(outline, (x + dx, y + dy))
+                rendered.set_alpha(opacity)
+                self.screen.blit(rendered, (x, y))
+                x += cell_width(token, size)
+                continue
+            advance, height = self.face_size(token)
+            frames = self.sprites.get(FACE_IMAGE % token)
+            if frames:
+                surface, offset_x, offset_y = frames[int(time.monotonic() * 1000) // FACE_FRAME_MS % len(frames)]
+                if surface is not None:
+                    top = y - 4 if height < 26 else y - height + 16
+                    surface.set_alpha(opacity)
+                    self.screen.blit(surface, (x + offset_x, top + offset_y))
+                    surface.set_alpha(255)
+            x += advance
+
+    def has_faces(self, widget: Widget, text: str) -> bool:
+        return bool(self.face_codes) and widget.type in FACE_TYPES and "/" in text
 
     @staticmethod
     def _wrap(text: str, size: int, width: int) -> list[str]:

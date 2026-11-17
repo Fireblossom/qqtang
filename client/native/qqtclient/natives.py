@@ -437,5 +437,13 @@ def build_natives(runtime: UIRuntime, resources: Resources, audio: Audio) -> dic
         "SC_ClickExitBtnInSection": lambda: None,
         # 0x0054E420 opens the http.ini url10 page; there is no embedded web.
         "InvalidOperation": lambda: None,
+        # 0x0048B410 routes the answer to a box Client.exe raised by the
+        # handle's top byte (1..3: services; 0x14..0x16: quit flows). Host
+        # boxes use handle 0, which the original ignores too.
+        "OnMsgBoxResult": lambda handle, ok: None,
+        # 0x0056ADB0 builds an "operate item" request (delete, from the shop's
+        # confirm box) and returns without sending it, so deleting an item
+        # never did anything; the server has no such command either.
+        "OperateItem": lambda item_id, operation: None,
     })
     return natives

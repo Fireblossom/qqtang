@@ -15,6 +15,7 @@ import os
 import pathlib
 import random
 import threading
+import types
 from typing import Any, Callable
 
 from .net import accountauth, directory, game, player
@@ -264,5 +265,23 @@ def build_session_natives(runtime: UIRuntime, session: Session) -> dict[str, Cal
     def LogoutSection(*_args):
         session.disconnect()
 
-    excluded = ("script", "notify", "zone_sections", "on_packet", "on_closed", "on_login")
+    def pattern_points(uin: Any) -> list[tuple[int, int, int, int]]:
+        """PATTERN_POINT records (game mode, points, level, level value).
+        Client.exe 0x0054F060/0x0054F0F0 read them through service +0x3A4;
+        only our own login reply is kept here. The local server sends none,
+        so every mode shows level 0."""
+        profile = session.profile
+        return list(profile.patterns) if profile is not None and int(uin) == session.uin else []
+
+    def GetPlayerModeInfoByUin(uin, _flag=0):
+        return len(pattern_points(uin)) & 0xFF
+
+    def GetPlayerModeInfoByModeIndex(uin, index, _flag=0):
+        # The script maps list position i to its i-th panel (bun, match,
+        # sculpture), not the record's game mode.
+        entries = pattern_points(uin)
+        mode, points, level, level_value = entries[int(index)] if 0 <= int(index) < len(entries) else (0, 0, 0, 0)
+        return types.SimpleNamespace(m_byGameMode=mode, m_dwPatternPoint=points, m_wPatternLevel=level, m_dwLevelValue=level_value)
+
+    excluded = ("script", "notify", "zone_sections", "on_packet", "on_closed", "on_login", "pattern_points")
     return {name: value for name, value in locals().items() if callable(value) and name not in excluded and not name.startswith("_")}

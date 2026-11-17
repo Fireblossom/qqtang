@@ -138,6 +138,7 @@ def main() -> int:
     namespace.update(build_kin_natives(runtime, session))  # adds the kin modes to the friend/lobby lists
     namespace.update(build_marriage_natives(runtime, session))  # replaces friend.py's marriage stubs, wraps FindFriend
     renderer = Renderer(screen, resources)
+    namespace["initFaceIconList"] = lambda codes: setattr(renderer, "face_codes", [str(code) for code in codes])
 
     def start_battle(begin: bytes, context) -> None:
         from .battle.online import OnlineBattle
