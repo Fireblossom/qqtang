@@ -30,6 +30,9 @@
 - [x] 选区测速：`SC_PingZones` 用系统 ping 测各区服务器（原版 ICMP），按原版阈值显示快/中/慢/未知并排序（`docs/chat-faces-re.md`）
 - [x] 房间格子分页、玩家列表、快速加入、建房
 - [x] 大厅聊天、悄悄话、小喇叭
+- [x] 小喇叭排队、显示时长和气泡（`docs/section-timer-re.md`，`qqtclient/section_timer.py`）：按 QQTSection 500 ms 定时器排队显示，`NotifyRemoveMsg`/`NotifyAddPopo`/`NotifyRemovePopo` 照原版时序调用，名字按“说:”拆分；大厅和房间双客户端实测。本地服务端不填喇叭特效号，只能看到默认气泡
+- [x] 分区定时器每秒执行 `updatePlayer()`、`updatePlayer2()`（`0x10016FC2`）；家族成员每 10 s 重排（`0x10017041`）没做
+- [x] 登出：`LogoutSection` 发 REQUEST_LOGOUT 0x0065 后断开，服务端记录 `qqt_logout_success`；关窗口、Cmd+Q、Alt+F4 先执行 `leaveSection()`（窗口关闭只有单元测试）
 - [x] 聊天表情（`docs/chat-faces-re.md`）：`initFaceIconList` 代码表按原版匹配、宽度、位置和 333 ms 动画画成图标，覆盖聊天记录 TEXTLIST、输入框和头顶气泡 RICHEDIT 及 MULTIEDIT/DYLABEL；TEXTLIST 行距改为 textsize+rowspace 并裁剪。`/<c=…>` 等格式标记未做
 - [~] 分模式等级（包子/比武/雕像）：`GetPlayerModeInfo*` 已按原版读自己的 PATTERN_POINT，但本地服务端从不填，全部显示 0；需要服务端记录积分（原版规则无资料）
 - [x] 玩家资料里的人物（`docs/chat-faces-re.md`）：找人回复后按对方角色重建，经脚本 `playerInfo_useCommItem` → `selRoom_playerWear` 穿上该角色的装备（帽子/头发互斥规则按原版），资料框右下角绘制；同时修复自己婚姻信息先到时 `ui_UpdateMyMarriageInfo` 报错
@@ -52,6 +55,7 @@
 - [x] 改房间属性（`sc_modifyRoom`）：双客户端实测改名、加密码后大厅卡片更新并显示锁，不带密码进房被拒、带对密码可进
 - [x] 聊天室背景：背景列表 0x00FF、换背景 0x0100、通知 0x0101 后按原版（`0x0052D3D0`）执行 `setChatBackground(id)`；双客户端实测换背景两端同步
 - [x] 房间里人物走动/放泡（`docs/chatroom-move-re.md`，`qqtclient/roomwalk.py`；原版所有房间都能走，聊天房间默认显示名牌）：方向键 0.26 px/ms、可走范围、空格放装饰泡（3 秒、连锁、十字火 400 ms）、F8 名牌；经 TCP 0x0065 发出、服务端转 Type-2，进房先 UDP Type-1 登记，收到后照原版调用脚本 `remotePlayerMove/remotePlayerPutBomb`，远端按"先横后纵"走到每个点。双客户端实测对方走动、放泡和爆炸都同步；打完一局回到房间后会重新登记 UDP（211 双 autoplay 实测，零 warn）。原版之间明文 Type-2 能否被 QQTPPP 接受未验证
+- [x] 聊天房间点人物（`0x00457AE0`，`docs/section-timer-re.md` §3）：右键按下 `ShowKickoutDlg(座位)`、左键双击 `chatWithPlayerInChatRoom(座位)`，在控件之前取走事件；双客户端实测弹出“查看/踢人/取消”（非房主踢人禁用）、双击设悄悄话对象、房主踢人请求到达服务端。“查看”（`UserClickSeatInRoom(座位, 1)`，原版 `0x1000CF2B` 用座位数据走找人回包处理）宿主未实现，所以还不能从房间座位打开资料、加好友
 - [x] 婚礼房间（服务端支持）：婚礼模式面板、牧师问答、烟花、情侣爱心
 
 ## 对战：普通规则

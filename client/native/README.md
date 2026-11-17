@@ -283,11 +283,15 @@ Go 的游戏、协议和服务端测试可在 macOS 运行；包含本地 TCP/UD
 - 建房成功只返回房间号，客户端随后用该房间号发 `EnterRoom` 取得完整房间快照（服务端按"已在房间中"处理）。脚本给的房间名为空时，宿主使用"一起来玩吧"。
 - `GetSeatInfo().seatStatus` 在脚本中是 0 空位、1 关闭（显示 STOP）、2 有人，与两种协议编码都不同。
 - 玩家列表刷新：`Client.exe` 的 `NotifyPlayerUpdate`（`0x0048ED30`）只在当前界面是 selRoom 时调用 `ui_NotifyPlayerUpdate()`，它同时重画引导栏列表（`updatePlayer`）和大厅右侧列表（`updatePlayer2`）。之前宿主只调用 `updatePlayer`，大厅列表进入后不再刷新。
+- 分区定时器（`docs/section-timer-re.md`）：进区成功（`0x1001B2EA`）后 QQTSection 开一个 500 ms 的窗口定时器（`0x10021094`），`XSection::OnTimer`（`0x1002120A`）每次推进小喇叭队列（`0x10008FD8`），每两次（1 s）由 `0x10016FC2` 执行脚本 `updatePlayer()` 和 `updatePlayer2()`，所以两个玩家列表每秒重画一次，与好友是否变化无关。
+- 小喇叭（`docs/section-timer-re.md`）：收到后先排队（`0x10008A0F`，最多 50 条，按“说:”拆成名字和以“说:”开头的正文，名字限 19 字节），不是马上显示。积压 10 条以上时每 500 ms 显示一条，否则每 1000 ms 一条；每条依次执行 `NotifyRemovePopo()`、`NotifyBroadcast(名字, 号码, 正文)`、`NotifyAddPopo(特效号)`（`0x10008D7E`，特效号是 0x0092 的 XEffectID）。队列空后 2.5 s 去掉气泡，27.5/28.5/29.5 s 各执行一次 `NotifyRemoveMsg()` 清掉三行。
+- 聊天房间（类型 4）里，房间场景每帧在控件处理输入之前（`0x00431ED0`）查看输入队列的第一个事件（`0x00457AE0`）：落在某个人物 `x±25`、`y-65..y`（不含边界，按座位顺序取第一个）的右键按下执行 `ShowKickoutDlg(座位)`，左键双击执行 `chatWithPlayerInChatRoom(座位)`，事件被取走，控件收不到。别的房间不处理。
+- 关窗口：Alt+F4 执行脚本 `leaveSection()` 后退出；标题栏关闭按钮执行 `leaveSection()` 后缩到托盘（`0x0042F140`）。`leaveSection()` 点大厅的离开按钮，其中的 `LogoutSection` 先执行 `NotifyRemoveMsg()`，再发 REQUEST_LOGOUT 0x0065（`u32 号码, u32 时间, u8 统计项数, 项`，`0x10019E0D`/`0x1001C23E`），然后不等回包就断开。宿主没有托盘，关窗口和 Cmd+Q 也是 `leaveSection()` 后退出。
 - 好友的逻辑在 `QQTSection.dll` 的 `CFriendHandler`，宿主函数都转到 `XSection` 接口（`Client.exe` 中 `DoFriendTask` `0x0054DCC0` 调 `+0x274`，`GetAttribute` 调 `+0x27C`，`GetValidFriendsCount` 调 `+0x280`）：
   - `DoFriendTask(文字, 长度, QQ号, 操作)`：0 取名单，1 加好友，2 删除，3 追踪，5/7 屏蔽/取消屏蔽（发 `/m 号码`、`/u 号码`），6 应答（文字为 y/Y 时结果 0，n/N 时 0x33）。
   - 加好友（`0x1000F51E`）：自己或已是好友时不发；附言前面放 21 字节的自己的昵称，长度加 0x15。收到申请时（`0x10017FCA`）前 20 字节是昵称，第 21 字节起是附言。
   - 主分发（`0x100189CE`）只把 0xA2～0xA5 交给好友处理（`0x1000FAAA`）；0xA6 不处理。未关联请求的 0xA3 是别人的申请，关联请求的 0xA3 是自己申请的结果：0 成功，0x2C 消息失败，0x33 被拒绝，0x34 对方下线，0x35 名单已满，0x36 已是好友。本服务端改用 0xA6 回结果，宿主按这些含义显示。
-  - 0xA5（`0x10010EBD`）只更新名单里已有的号码；上线的好友移到最前，下线的移到最后。原版只在上线时更新昵称、性别、身份，其余从 `./data/<号码>-Friends.dat` 读；宿主没有这个缓存，每次都更新。名单变化后执行 `updatePlayer()`（`0x100110A9`），大厅列表要等下一次 `ui_NotifyPlayerUpdate` 才重画。
+  - 0xA5（`0x10010EBD`）只更新名单里已有的号码；上线的好友移到最前，下线的移到最后。原版只在上线时更新昵称、性别、身份，其余从 `./data/<号码>-Friends.dat` 读；宿主没有这个缓存，每次都更新。名单变化后执行 `updatePlayer()`（`0x100110A9`），大厅右侧列表由分区定时器每秒重画（下一条）。
   - `fetch_PlayerInfoInPlayerList(i, 1)`（`0x10010558`）：`m_nPlayerStatus` 是在线标志，家族字段取自大厅玩家列表。脚本不用这个状态，所以好友标签页里在线和离线看起来一样，只有顺序不同；在线状态在玩家资料里显示。
   - `GetValidFriendsCount`（`0x10011154`）是 `min(名单上限, 当前人数)`，灰色遮罩盖住的是超过上限的好友，不是离线好友。`GetAttribute(号码, 0)` 是否好友，1 是否屏蔽，2 自己身份是否含 0x2000。
   - `GetPlayerNickNamebyUin`（`0x1002D7DF`）查大厅玩家列表，查不到返回号码本身。
