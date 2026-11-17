@@ -96,7 +96,7 @@ def main() -> int:
     from .render import Renderer
     from .resources import Resources
     from .runtime import UIRuntime
-    from .script import MissingReport, ScriptLoader, call_script, new_namespace
+    from .script import MissingReport, ScriptLoader, new_namespace
     from .chat import build_chat_natives
     from .props import build_props_natives
     from .friend import build_friend_natives
@@ -153,36 +153,33 @@ def main() -> int:
 
     def begin_free_practice() -> None:
         """sc_beginFreePractice (0x0048E780 -> QQTSection 0x1001C6F2): a local
-        game on map 311 that returns to the lobby. The original then calls
-        NewPlayerPractice() (0x005A4181) after a finished match, and goes back
-        to selRoom when the player leaves (0x005A26C1). The engine needs two
-        players, so one wandering opponent joins."""
+        game on map 311. Finished or left, it only goes back to selRoom
+        (0x005A4181 jumps over NewPlayerPractice() when +0x56F04 is set). The
+        engine needs two players, so one wandering opponent joins."""
         from .battle.practice import PracticeSession
-
-        def back(ended: bool) -> None:
-            runtime.goto_screen("selRoom")
-            if ended and "NewPlayerPractice" in namespace:
-                runtime.post(lambda: call_script(namespace["NewPlayerPractice"]))
 
         if runtime.activity is not None:
             return
         role = int(session.state.get("last_role", 1) or 1)
-        runtime.activity = PracticeSession(runtime, renderer, resources, FREE_PRACTICE_MAP, role, 1, on_leave=back)
+        runtime.activity = PracticeSession(runtime, renderer, resources, FREE_PRACTICE_MAP, role, 1,
+                                           on_leave=lambda _ended: runtime.goto_screen("selRoom"))
         runtime.activity.start()
 
-    def begin_tutorial() -> None:
-        """sc_beginTutorial (QQTSection 0x1001C5A7) starts map 1501 with the
-        recorded guide tutorial1.qbv; replays are not supported, so give the
-        lobby buttons DisableEnterRoom hid back and say so."""
-        for name in ("practiceBtn", "fastJoinRoomBtn", "newRoomBtn"):
-            namespace["Win_ShowWidget"](f"UI.selRoom.{name}", 1)
-        runtime.show_msgbox("新手教程需要录像回放，本客户端暂不支持。", "", 0, "UI.SysMsgbox", 0)
-
     from .battle.replay import build_replay_natives
+    from .battle.tutorial import build_tutorial_natives, needs_first_tutorial
 
     namespace.update(build_replay_natives(runtime, renderer, resources))
     namespace["sc_beginFreePractice"] = begin_free_practice
-    namespace["sc_beginTutorial"] = begin_tutorial
+    tutorial, tutorial_natives = build_tutorial_natives(runtime, renderer, resources)
+    namespace.update(tutorial_natives)
+
+    def first_tutorial() -> None:
+        """QQTSection 0x1001BCD1 runs sc_firstBeginTutorial() after the section
+        login of a player without any finished game."""
+        if needs_first_tutorial(session.profile):
+            tutorial.first_begin()
+
+    session.on_entered.append(lambda: runtime.post(first_tutorial))
 
     room_natives, draw_room_players = build_room_natives(runtime, session, AvatarCache(resources), start_battle,
                                                          sprites=renderer.sprites, font=renderer.font)
