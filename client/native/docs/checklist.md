@@ -19,6 +19,7 @@
 - [x] 控件未声明drawcolor时恢复原生默认白色；4个真实构造和12次文字ARGB入口观测、202项Python测试及房间流程通过（`docs/ui-text-defaults-re.md`）。
 - [x] 自定义键位（`docs/keylayout-re.md`）：设置框 KEYEDIT 按原版捕获/闪烁/键名，`sc_keyLayout_save/restore` 按号码存 26 字节键位（原版“系统设置”键存不住的 bug 已修正），在线和练习对战开局按本人键位读方向、放泡、道具 1～7、使用道具和切换键。设置框实跑改键、保存、重开通过；在线对战自定义键只有单元测试
 - [x] 每帧 `OnFrame` 回调与 `sc_getDeltaTick`：对战聊天框按原版从下往上滑入
+- [x] 滚动条（`docs/scrollbar-re.md`）：SCROLLBAR 的位置/范围、`Win_SetPos` 即回调 `OnPosChange`、按原版方向摆滑块、点轨道翻 pagesize 并在 0.4 秒后连发、拖动滑块吸附、SPIN 箭头；聊天记录 TEXTLIST 按原版贴底排版，可用滚动条和滚轮（跟随焦点）往回看。选地图翻页选第二屏地图、大厅聊天翻看、录像浏览实测通过；TEXTLIST 键盘翻页未做
 - [x] 探险路线新建已替换为原版A*，包含同代价取舍、open目标提前终止、方向通行、脚下泡和500次展开边界；106条完整搜索基准及相关Go全套通过（`docs/pve-astar-re.md`）。
 - [x] 探险旧路线复用适配真实基础地图元素方向位，保留原版与寻路相反的判定及末节点方向9行为；197条原版记录经正式入口回放通过（`docs/pve-route-elements-re.md`）。
 - [x] 探险视野改为原生像素差，恢复BattleStrategy2的场景种子选敌；985条视野/目标/仇恨切换记录及相关Go全套通过，1602角色69使用该策略（`docs/pve-perception-re.md`）。

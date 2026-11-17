@@ -13,6 +13,7 @@ from typing import Any, Callable
 
 import pygame
 
+from . import scrollbar
 from .resources import Resources
 from .runtime import CHANNEL_ALPHA, CHANNEL_ALPHA_DIRECTION, CHANNEL_ALPHA_MINIMUM, CHANNEL_ALPHA_SPEED, UIRuntime
 from .script import log
@@ -20,8 +21,6 @@ from .keylayout import build_keylayout_natives, set_key_value
 from .widgets import TEXT_INPUT_TYPES, Widget
 
 CHANNEL_VALUE = 10
-CHANNEL_MAXVALUE = 12
-CHANNEL_POS = 17
 CHANNEL_WINRECT = 34
 CHANNEL_CAPTIONRECT = 36
 CHANNEL_CAPTION = 200
@@ -336,25 +335,30 @@ def build_natives(runtime: UIRuntime, resources: Resources, audio: Audio) -> dic
     def Win_GetY(widget):
         return widget.absolute()[1]
 
+    # Win_SetPos/Win_SetScrollPos (0x1001CEAA, 0x1001CF20), Win_GetPos/
+    # Win_GetScrollPos (both 0x1001D01D) and Win_SetRange (0x1001CF96) only
+    # act on SCROLLBAR widgets (type 0x1B). Setting a position fires the
+    # bar's OnPosChange at once (0x10008FD3); see scrollbar.py.
     @with_widget()
     def Win_SetPos(widget, position):
-        widget.values[CHANNEL_POS] = position
+        if widget.type == "SCROLLBAR":
+            scrollbar.set_pos(widget, int(position), runtime.call)
 
     @with_widget(0)
     def Win_GetPos(widget):
-        return widget.values.get(CHANNEL_POS, 0)
+        return widget.scroll_pos if widget.type == "SCROLLBAR" else 0
 
-    @with_widget()
-    def Win_SetScrollPos(widget, position):
-        widget.values[CHANNEL_POS] = int(position)
+    def Win_SetScrollPos(path, position):
+        Win_SetPos(path, position)
 
-    @with_widget(0)
-    def Win_GetScrollPos(widget):
-        return int(widget.values.get(CHANNEL_POS, 0))
+    def Win_GetScrollPos(path):
+        return Win_GetPos(path)
 
     @with_widget()
     def Win_SetRange(widget, maximum):
-        widget.values[CHANNEL_MAXVALUE] = int(maximum)
+        """Range [0, max(maximum, 0)]; the position is not clamped."""
+        if widget.type == "SCROLLBAR":
+            scrollbar.set_range(widget, 0, max(int(maximum), 0))
 
     @with_widget()
     def Win_Update(widget):
