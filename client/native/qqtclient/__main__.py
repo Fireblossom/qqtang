@@ -178,6 +178,9 @@ def main() -> int:
             namespace["Win_ShowWidget"](f"UI.selRoom.{name}", 1)
         runtime.show_msgbox("新手教程需要录像回放，本客户端暂不支持。", "", 0, "UI.SysMsgbox", 0)
 
+    from .battle.replay import build_replay_natives
+
+    namespace.update(build_replay_natives(runtime, renderer, resources))
     namespace["sc_beginFreePractice"] = begin_free_practice
     namespace["sc_beginTutorial"] = begin_tutorial
 
@@ -208,6 +211,11 @@ def main() -> int:
             runtime.activity.start()
         else:
             runtime.start(args.screen)
+            # The replay browser's art has a white list, but the script draws its
+            # file names in lightColor (white): host deviation, dark names.
+            for index in range(1, 13):
+                if (label := runtime.find(f"UI.SetRecorderDlg.file{index}.name")) is not None:
+                    label.draw_color = (32, 32, 32, 255)
         while not runtime.quit_requested:
             elapsed = clock.tick(60)
             now = pygame.time.get_ticks() - started

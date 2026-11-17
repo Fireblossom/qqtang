@@ -19,6 +19,7 @@ from ..keylayout import BattleKeys
 from ..render import Renderer
 from ..resources import Resources
 from ..runtime import UIRuntime
+from ..script import call_script
 from .scene import BattleScene
 from .sidecar import Sidecar
 
@@ -67,6 +68,9 @@ class PracticeSession:
         self.scene.keys = BattleKeys.for_uin(self.runtime.namespace.get("uin") or None)
         self.scene.attach(self.runtime, self.map_id, self.renderer.font, self.renderer.text_line, self.renderer.draw_widget)
         self.renderer.underlay, self.renderer.overlay = self.scene.draw, self.scene.draw_overlay
+        for name in ("showRecordRecorder", "showRecordPlayer"):  # 0x005A3C7F: no recording offline
+            if callable(function := self.runtime.namespace.get(name)):
+                call_script(function, 0)
 
     def handle(self, event: pygame.event.Event) -> None:
         if self.scene is None:

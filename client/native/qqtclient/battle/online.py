@@ -19,7 +19,7 @@ from ..net import game, match, room
 from ..render import Renderer
 from ..resources import Resources
 from ..runtime import UIRuntime
-from ..script import log
+from ..script import call_script, log
 from ..session import Session
 from .scene import BattleScene, ResultRow
 from .result import result_points
@@ -42,6 +42,7 @@ class MatchMember:
     gender: int = 0  # as the room reports it; 1 picks the male title ranks
     identity: int = 0
     pve_points: int | None = None
+    record: bytes = b""  # PLAYER_INFO_IN_ROOM_OLD, for 保存录像
 
 
 @dataclasses.dataclass
@@ -52,7 +53,28 @@ class MatchContext:
     back_to_room: Callable[[], None]
 
 
+def result_rows(over: match.GameOver, members: dict[int, MatchMember], rule: str) -> list[ResultRow]:
+    """The result controller's rows for a GAME_OVER, with each player's
+    points from before the match (the room's, or a recording's)."""
+    rows = []
+    for result in over.results:
+        member = members.get(result.player_id)
+        before = member.points if member is not None else 0
+        points = result_points(rule, before, result.scores)
+        rows.append(ResultRow(
+            result.player_id, result.result, *(result.counts + [0, 0, 0])[:3], result.point, points,
+            tuple(result.scores), result.counts[3] if len(result.counts) > 3 else 0,
+            before if member is not None else None, result.remark, member.identity if member is not None else 0,
+            member.pve_points if member is not None else None))
+    return rows
+
+
 class OnlineBattle:
+    # 保存录像: whether to write the match, its GAME_OVER body, and whether it was written.
+    recording_on = False
+    over_body: bytes | None = None
+    saved = False
+
     def __init__(self, runtime: UIRuntime, renderer: Renderer, resources: Resources, session: Session,
                  begin: bytes, context: MatchContext, next_stage: Callable[[bytes, MatchContext], None] | None = None):
         self.runtime, self.renderer, self.session, self.context = runtime, renderer, session, context
@@ -89,6 +111,7 @@ class OnlineBattle:
                                  wear={player_id: member.wear for player_id, member in context.members.items()},
                                  game_type=session.game_type)
         self.scene.keys = BattleKeys.for_uin(session.uin)
+        self.begin, self.players, self.resources = begin, players, resources
         self.scene.on_tcp_out = lambda command, payload: session.send(command, payload)
         self.elapsed_ms = 0.0
         self.last_hello_ms = 0.0
@@ -133,6 +156,10 @@ class OnlineBattle:
         runtime.goto_screen("game")
         self.scene.attach(runtime, begin_info["map_id"], renderer.font, renderer.text_line, renderer.draw_widget)
         renderer.underlay, renderer.overlay = self.scene.draw, self.scene.draw_overlay
+        # 0x005A3C7F: a live match offers 保存录像.
+        for name, shown in (("showRecordRecorder", 0), ("showRecordPlayer", 0), ("showRecordRecorder", 1)):
+            if callable(function := runtime.namespace.get(name)):
+                call_script(function, shown)
 
     def on_game_event(self, packet: game.Packet) -> None:
         try:
@@ -149,24 +176,37 @@ class OnlineBattle:
         if event.schema != match.SCHEMA_GAME_OVER:
             self.scene.pending_tcp.append((packet.command, packet.payload))
             return
+        self.over_body = event.body
+        if self.recording_on:
+            self.save_recording()
         over = match.parse_game_over(event.body)
         mine = next((result for result in over.results if result.player_id == self.local_id), None)
         log("[match] game over: " + ", ".join(f"{result.player_id}={result.result}" for result in over.results))
         self.scene.result = mine.result if mine is not None else match.RESULT_LOSS
         self.scene.over = True
-        rows = []
-        for result in over.results:
-            member = self.context.members.get(result.player_id)
-            before = member.points if member is not None else 0
-            points = result_points(self.scene.map.rule, before, result.scores)
-            rows.append(ResultRow(
-                result.player_id, result.result, *(result.counts + [0, 0, 0])[:3], result.point, points,
-                tuple(result.scores), result.counts[3] if len(result.counts) > 3 else 0,
-                before if member is not None else None, result.remark, member.identity if member is not None else 0,
-                member.pve_points if member is not None else None))
+        rows = result_rows(over, self.context.members, self.scene.map.rule)
         self.scene.show_results(rows)
         if self.finish_at is None:
             self.finish_at = self.elapsed_ms + RESULT_SHOWN_MS
+
+    def set_recording(self, on: bool) -> None:
+        """保存录像 / 取消保存录像; pressed after the end it saves at once."""
+        self.recording_on = on
+        if on and self.over_body is not None:
+            self.save_recording()
+
+    def save_recording(self) -> None:
+        if self.saved or self.over_body is None:
+            return
+        self.saved = True
+        from .replay import record_path, save_recording
+
+        try:
+            save_recording(record_path(self.resources.root, self.session.uin), self.scene.sidecar, self.begin, self.over_body,
+                           self.session.uin, self.local_id, self.players,
+                           {player_id: member.record for player_id, member in self.context.members.items() if member.record})
+        except Exception as error:  # noqa: BLE001 - a failed save must not end the match badly
+            log(f"[replay] cannot save the recording: {error}")
 
     def handle(self, event: pygame.event.Event) -> None:
         if self.finished:

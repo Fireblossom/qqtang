@@ -73,6 +73,8 @@ type command struct {
 	Actions []action `json:"actions"`
 	// TCP notifications of the match, forwarded by the client (online).
 	TCP []tcpPacket `json:"tcp"`
+	// Scene clock a replay should reach (replay mode only).
+	ReplayMS uint32 `json:"replay_ms"`
 }
 
 type action struct {
@@ -200,6 +202,7 @@ type stateView struct {
 	PropEffects []propEffectView `json:"prop_effects,omitempty"`
 	Machine     *machineView     `json:"machine,omitempty"`
 	Emotions    []emotionView    `json:"emotions,omitempty"`
+	Replay      *replayView      `json:"replay,omitempty"`
 }
 
 func main() {
@@ -286,6 +289,7 @@ func runOnline(init command, lines *bufio.Scanner, out *json.Encoder) error {
 	state.Adventure = match.adventureView()
 	state.Special = match.specialView()
 	state.PropEffects = match.propEffectView()
+	state.Replay = match.replayView()
 	state.Emotions = match.emotionView()
 	if err := out.Encode(state); err != nil {
 		return err
@@ -294,6 +298,13 @@ func runOnline(init command, lines *bufio.Scanner, out *json.Encoder) error {
 		var step command
 		if err := json.Unmarshal(lines.Bytes(), &step); err != nil {
 			return fmt.Errorf("step: %w", err)
+		}
+		if step.Cmd == "record" {
+			// The messages so far, for writing a .qbv (保存录像).
+			if err := out.Encode(map[string]any{"recorded": match.recordedView()}); err != nil {
+				return err
+			}
+			continue
 		}
 		if step.Cmd != "step" {
 			return fmt.Errorf("unknown command %q", step.Cmd)
@@ -330,6 +341,7 @@ func runOnline(init command, lines *bufio.Scanner, out *json.Encoder) error {
 		state.Adventure = match.adventureView()
 		state.Special = match.specialView()
 		state.PropEffects = match.propEffectView()
+	state.Replay = match.replayView()
 		state.Emotions = match.emotionView()
 		if err := out.Encode(state); err != nil {
 			return err

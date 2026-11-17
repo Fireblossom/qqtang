@@ -136,6 +136,24 @@ def read_room_player(reader: Reader) -> RoomPlayer:
                       identity, game_info, items, kin_index, kin_name, kin_flag, pet)
 
 
+def encode_room_player(player: RoomPlayer) -> bytes:
+    """PLAYER_INFO_IN_ROOM_OLD, the inverse of read_room_player (a .qbv keeps
+    one per player, schema 0x042A)."""
+    name = player.nickname.encode("gbk", "replace")[:NICKNAME_SLOT - 1].ljust(NICKNAME_SLOT, b"\0")
+    info = player.game_info
+    data = struct.pack(">I", player.uin) + name
+    data += struct.pack(">HBBBBI", player.player_id, (player.team & 0x0F) << 4 | (player.seat & 0x0F), player.status,
+                        player.gender, player.icon_id, player.identity)
+    data += struct.pack(">6IHBI4I", *dataclasses.astuple(info))
+    data += struct.pack(">H", len(player.items))
+    for item in player.items:
+        data += struct.pack(">HIBBBBII", *dataclasses.astuple(item))
+    kin_name = player.kin_name.encode("gbk", "replace")
+    data += struct.pack(">IH", player.kin_index, len(kin_name)) + kin_name + player.kin_flag[:8].ljust(8, b"\xff")
+    pet = player.pet if len(player.pet) >= PET_INFO_MINIMUM else bytes(PET_INFO_MINIMUM)
+    return data + pet
+
+
 def _skip_patterns(reader: Reader) -> None:
     (count,) = reader.unpack("B")
     reader.take(PATTERN_POINT_SIZE * count)

@@ -41,6 +41,7 @@ import (
 	"qqtang/internal/clientdata/sceneelement"
 	"qqtang/internal/game/battleengine"
 	"qqtang/internal/game/mapdata"
+	"qqtang/internal/game/qbv"
 	"qqtang/internal/protocol/game"
 )
 
@@ -81,6 +82,8 @@ type onlineInit struct {
 	FreeRule      bool              `json:"free_rule"`
 	TrapMS        uint32            `json:"trap_ms"`
 	Autoplay      bool              `json:"autoplay"` // the test bot plays the local player
+	// Replay plays this .qbv file instead: no local player, no socket.
+	Replay string `json:"replay"`
 }
 
 type tcpPacket struct {
@@ -141,6 +144,8 @@ type onlineMatch struct {
 
 	conn            *net.UDPConn
 	inbound         chan []byte
+	replay          *replayFeed
+	recorded        []qbv.Event // every battle message of a live match, for 保存录像
 	controlNumber   uint32
 	multicastNumber uint32
 	presence        bool
@@ -259,14 +264,23 @@ type pickupKey struct {
 }
 
 func newOnlineMatch(init command) (*onlineMatch, beginView, error) {
-	options := init.Online
-	payload, err := hex.DecodeString(options.Begin)
-	if err != nil {
-		return nil, beginView{}, fmt.Errorf("game begin: %w", err)
-	}
-	begin, err := game.ParseLengthPrefixedGameBeginDataNetwork(payload)
-	if err != nil {
-		return nil, beginView{}, fmt.Errorf("game begin: %w", err)
+	options := *init.Online
+	var feed *replayFeed
+	var begin game.GameBeginData
+	if options.Replay != "" {
+		var err error
+		if feed, begin, err = loadReplay(options.Replay); err != nil {
+			return nil, beginView{}, replayError(err)
+		}
+		options.LocalID, options.LocalUIN = 0, 0
+	} else {
+		payload, err := hex.DecodeString(options.Begin)
+		if err != nil {
+			return nil, beginView{}, fmt.Errorf("game begin: %w", err)
+		}
+		if begin, err = game.ParseLengthPrefixedGameBeginDataNetwork(payload); err != nil {
+			return nil, beginView{}, fmt.Errorf("game begin: %w", err)
+		}
 	}
 	catalog, err := mapdata.LoadCatalog(init.ClientRoot)
 	if err != nil {
@@ -360,15 +374,20 @@ func newOnlineMatch(init command) (*onlineMatch, beginView, error) {
 		}
 		uins[info.PlayerID] = uin
 	}
-	if _, present := uins[options.LocalID]; !present {
+	if _, present := uins[options.LocalID]; !present && feed == nil {
 		return nil, beginView{}, fmt.Errorf("local player %d is not in the match", options.LocalID)
 	}
-	uins[options.LocalID] = options.LocalUIN
+	if feed == nil {
+		uins[options.LocalID] = options.LocalUIN
+	}
 	virtual := map[uint16]bool{}
 	for playerID, uin := range uins {
 		if uin == virtualUINBase+uint32(playerID) {
 			virtual[playerID] = true
 		}
+	}
+	if feed != nil {
+		replayRulePickups(&rules, begin)
 	}
 	var config battleengine.Config
 	if adventure != nil {
@@ -425,13 +444,15 @@ func newOnlineMatch(init command) (*onlineMatch, beginView, error) {
 	if err != nil {
 		return nil, beginView{}, err
 	}
-	address, err := net.ResolveUDPAddr("udp4", net.JoinHostPort(options.ServerHost, strconv.Itoa(options.ServerUDPPort)))
-	if err != nil {
-		return nil, beginView{}, err
-	}
-	conn, err := net.DialUDP("udp4", nil, address)
-	if err != nil {
-		return nil, beginView{}, err
+	var conn *net.UDPConn
+	if feed == nil {
+		address, err := net.ResolveUDPAddr("udp4", net.JoinHostPort(options.ServerHost, strconv.Itoa(options.ServerUDPPort)))
+		if err != nil {
+			return nil, beginView{}, err
+		}
+		if conn, err = net.DialUDP("udp4", nil, address); err != nil {
+			return nil, beginView{}, err
+		}
 	}
 	trapMS := options.TrapMS
 	if trapMS == 0 {
@@ -441,7 +462,7 @@ func newOnlineMatch(init command) (*onlineMatch, beginView, error) {
 		runtime: runtime, engine: engine, begin: begin,
 		local: options.LocalID, localUIN: options.LocalUIN, arbitrator: begin.ArbitratorPlayerID,
 		uins: uins, virtual: virtual, trapMS: trapMS, started: time.Now(), log: os.Stderr,
-		conn: conn, inbound: make(chan []byte, 256),
+		conn: conn, inbound: make(chan []byte, 256), replay: feed,
 		peerReady: map[uint16]bool{}, peerAnswered: map[uint16]bool{}, lastNumber: map[uint16]uint32{},
 		bombs: map[uint32]wireBomb{}, collected: map[pickupKey]uint16{},
 		fieldContacts: map[fieldContactKey]bool{}, itemUses: map[[3]uint32]bool{}, useRequested: map[uint8]uint32{},
@@ -491,10 +512,12 @@ func newOnlineMatch(init command) (*onlineMatch, beginView, error) {
 	}
 	match.filterPreparedDefinitions()
 	match.initSlotOrder()
-	go match.receive()
-	// Register before returning init: the Python host loads the scene before
-	// its first step, which can otherwise postpone presence past Ready/Go.
-	match.negotiate()
+	if feed == nil {
+		go match.receive()
+		// Register before returning init: the Python host loads the scene before
+		// its first step, which can otherwise postpone presence past Ready/Go.
+		match.negotiate()
+	}
 	match.logf("game %d map %d: local %d, arbitrator %d, %d players", begin.GameID, begin.MapID, match.local, match.arbitrator, len(begin.Players))
 	return match, view, nil
 }
@@ -599,7 +622,9 @@ func (match *onlineMatch) logf(format string, args ...any) {
 }
 
 func (match *onlineMatch) close() {
-	_ = match.conn.Close()
+	if match.conn != nil {
+		_ = match.conn.Close()
+	}
 }
 
 func (match *onlineMatch) receive() {
@@ -621,6 +646,9 @@ func (match *onlineMatch) receive() {
 // sceneClock is the scene time the engine should have reached: the 3 s
 // Ready/Go countdown runs from GAME_BEGIN, then fixed 20 ms ticks.
 func (match *onlineMatch) sceneClock() uint32 {
+	if match.replay != nil {
+		return match.replay.clock / tickMS * tickMS
+	}
 	elapsed := uint32(time.Since(match.started) / time.Millisecond)
 	if elapsed < battleengine.NativeRoundStartClockMS {
 		return battleengine.NativeRoundStartClockMS
@@ -629,6 +657,9 @@ func (match *onlineMatch) sceneClock() uint32 {
 }
 
 func (match *onlineMatch) clientTag() uint32 {
+	if match.replay != nil {
+		return match.replay.clock
+	}
 	return uint32(time.Since(match.started) / time.Millisecond)
 }
 
@@ -645,7 +676,11 @@ func (match *onlineMatch) step(step command) ([]battleengine.Event, error) {
 	for _, packet := range step.TCP {
 		match.handleTCP(packet)
 	}
-	match.negotiate()
+	if match.replay != nil {
+		match.replay.clock = max(step.ReplayMS, battleengine.NativeRoundStartClockMS)
+	} else {
+		match.negotiate()
+	}
 	var events []battleengine.Event
 	events = append(events, match.drain()...)
 	match.noteEliminations(events)
@@ -677,6 +712,9 @@ func (match *onlineMatch) step(step command) ([]battleengine.Event, error) {
 		match.bombPressed = false // Ready/Go: no control yet
 	}
 	for ticks := 0; ticks < maxCatchUpTicks && match.engine.ElapsedMS() < target && !match.engine.Terminal().Ended && !match.machineFinishing() && !match.boxFinishing(); ticks++ {
+		if match.replay != nil {
+			events = append(events, match.replayDue(match.engine.ElapsedMS())...)
+		}
 		before := match.runtime.EngineSnapshot()
 		beforeLocal, _ := actorByID(before.Actors(), match.local)
 		action := local
@@ -719,6 +757,11 @@ func (match *onlineMatch) step(step command) ([]battleengine.Event, error) {
 		tickEvents = append(tickEvents, match.takeAdventureEvents()...)
 		events = append(events, tickEvents...)
 	}
+	if match.replay != nil {
+		// Messages recorded after the engine's own round end still play
+		// (results, emotions).
+		events = append(events, match.replayDue(match.replay.clock)...)
+	}
 	match.collectLooseDispatches()
 	if !match.machineFinishing() && !match.boxFinishing() {
 		match.retryPickupRequests()
@@ -756,6 +799,9 @@ func (match *onlineMatch) takeTCP() []tcpPacket {
 
 func (match *onlineMatch) localEndpoint() game.LegacyUDPEndpoint {
 	var endpoint game.LegacyUDPEndpoint
+	if match.conn == nil {
+		return endpoint
+	}
 	if address, ok := match.conn.LocalAddr().(*net.UDPAddr); ok {
 		copy(endpoint.IPv4[:], address.IP.To4())
 		endpoint.Port = uint16(address.Port)
@@ -773,7 +819,9 @@ func (match *onlineMatch) sendControl(packet game.LegacyUDPControlPacket) {
 		match.logf("encode UDP type %d: %v", packet.Header.Type, err)
 		return
 	}
-	_, _ = match.conn.Write(data)
+	if match.conn != nil {
+		_, _ = match.conn.Write(data)
+	}
 }
 
 // negotiate registers the presence endpoint (Type 1) and repeats a room-peer
@@ -874,6 +922,9 @@ func (match *onlineMatch) handleDatagram(data []byte) []battleengine.Event {
 				continue
 			}
 			for _, message := range entry.Package.Messages {
+				if message.DataID <= 0xffff {
+					match.record(uint16(message.DataID), message.Data)
+				}
 				match.received++
 				applied := match.applyRemote(author, message)
 				match.forgetPickups(applied)
@@ -1506,6 +1557,7 @@ func (match *onlineMatch) handleTCP(packet tcpPacket) {
 		if err != nil {
 			return
 		}
+		match.record(notify.Schema, notify.Body)
 		if _, handled := match.boxNPCRemote(match.arbitrator, game.GameEvent{Schema: notify.Schema, Body: notify.Body}); handled {
 			return
 		}
@@ -1779,6 +1831,7 @@ func (match *onlineMatch) request(schema uint16, timeMS uint32, body []byte) {
 }
 
 func (match *onlineMatch) enqueue(schema uint16, timeMS, gameTime uint32, body []byte, arbitratorOnly bool) {
+	match.record(schema, body)
 	match.messageSeq++
 	match.outbound = append(match.outbound, outboundMessage{arbitratorOnly: arbitratorOnly, data: game.BattleMessageData{
 		Time: timeMS, DataID: uint32(schema), Sequence: match.messageSeq, Data: body, GameTime: gameTime,

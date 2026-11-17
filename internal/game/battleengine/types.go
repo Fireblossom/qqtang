@@ -544,6 +544,14 @@ func (rules Rules) objectiveIndex(sceneID uint32) int {
 
 // pickupSupported reports whether the engine can hold sceneID as a pickup:
 // an ordinary effect or one of the rule's objectives.
+// PickupSceneSupported reports whether the engine knows the native effect of
+// a scene item. Replays of old recordings use it to keep item IDs that the
+// current catalog no longer defines as server-counted rule pickups.
+func PickupSceneSupported(sceneID uint32) bool {
+	_, _, supported := supportedPickupEffect(sceneID)
+	return supported
+}
+
 func (rules Rules) pickupSupported(sceneID uint32) bool {
 	if _, _, supported := supportedPickupEffect(sceneID); supported {
 		return true
