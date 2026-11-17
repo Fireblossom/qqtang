@@ -208,6 +208,17 @@ BUN_LOOSE = "object/item/item11_stand.img"
 BUN_CAPS = (22, 23)
 
 
+def base_item_ring_speed(resume_ms: int) -> float:
+    """0x005BA3CB: ui_SetBaseItemTimeSpeed after the local PVE player places a
+    bubble, 100 / BombResumeSpeed (seconds) in degrees per second.
+
+    Below 0.5 s the original multiplies the 0.5 floor itself (50) instead of
+    its reciprocal (200), slowing the ring for faster refills; that obvious
+    original bug is fixed here (pvedata's fastest is 0.7 s anyway).
+    """
+    return 100.0 / max(resume_ms / 1000, 0.5)
+
+
 def effect_frame(elapsed: float, length_ms: int, frame_ms: int, frames: int) -> int:
     """A looping .eff track's frame (0x00582D20, 0x0057CD10): the effect's
     time wraps at its last key, the track's frame at frames * frame_ms."""
@@ -393,6 +404,8 @@ class BattleScene:
         self.shown_tank_hp: dict[int, int] = {}
         self.shown_pve_hp: dict[Any, int] = {}
         self.shown_pve_bosses: tuple[int, ...] = ()
+        self.shown_pve_left: set[int] = set()
+        self.shown_pve_placed = 0
         self.shown_player_icons: dict[int, tuple[int, int]] | None = None
         self.font: Callable[[int], pygame.font.Font] | None = None
         self.text: Callable[[str, int, tuple[int, int, int]], pygame.Surface] | None = None
@@ -457,6 +470,17 @@ class BattleScene:
             if npc.get("boss") and self.shown_pve_hp.get(npc["id"]) != npc["hp"]:
                 self.shown_pve_hp[npc["id"]] = npc["hp"]
                 self._script("ui_UpdatePVEBossLife", npc["id"], npc["hp"])
+        for player_id in adventure.get("left") or ():
+            if player_id not in self.shown_pve_left:
+                # 0x005BA327 (rule slot 8 -> player state 12): hide the row.
+                self.shown_pve_left.add(player_id)
+                self._script("ui_DisposePVEPlayerLeave", player_id)
+        placed = adventure.get("placed", 0)
+        if placed != self.shown_pve_placed:
+            # 0x005BA3CB: each own bubble restarts baseItemCycle from 0.
+            self.shown_pve_placed = placed
+            self._script("ui_SetBaseItemTimeCur", 0.0)
+            self._script("ui_SetBaseItemTimeSpeed", base_item_ring_speed(adventure.get("resume_ms", 0)))
 
     def _script(self, name: str, *args: Any) -> Any:
         function = self.runtime.namespace.get(name) if self.runtime else None

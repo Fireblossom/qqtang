@@ -31,6 +31,8 @@ def parse_args() -> argparse.Namespace:
     automation.add_argument("--click", action="append", default=[], metavar="X,Y@MS", help="left-click at X,Y after MS milliseconds")
     automation.add_argument("--rclick", action="append", default=[], metavar="X,Y@MS", help="right-click at X,Y after MS milliseconds")
     automation.add_argument("--drag", action="append", default=[], metavar="X1,Y1:X2,Y2@MS", help="drag with the left button after MS milliseconds")
+    automation.add_argument("--wheel", action="append", default=[], metavar="X,Y,NOTCHES@MS",
+                            help="turn the mouse wheel at X,Y after MS milliseconds (positive = away from you)")
     automation.add_argument("--type", action="append", default=[], metavar="TEXT@MS", help="type TEXT after MS milliseconds")
     automation.add_argument("--key", action="append", default=[], metavar="NAME@MS", help="press a key (pygame name, e.g. tab, return) after MS milliseconds")
     automation.add_argument("--hold", action="append", default=[], metavar="NAME@FROM:TO", help="hold a key down from FROM to TO milliseconds")
@@ -67,6 +69,13 @@ def scheduled_events(args: argparse.Namespace) -> list[tuple[int, list]]:
         events.append((start + 200, [
             pygame.event.Event(pygame.MOUSEMOTION, pos=(x2, y2), rel=(0, 0), buttons=(1, 0, 0)),
             pygame.event.Event(pygame.MOUSEBUTTONUP, pos=(x2, y2), button=1),
+        ]))
+    for spec in args.wheel:
+        position, _, at = spec.partition("@")
+        x, y, notches = (int(value) for value in position.split(","))
+        events.append((int(at or 0), [
+            pygame.event.Event(pygame.MOUSEMOTION, pos=(x, y), rel=(0, 0), buttons=(0, 0, 0)),
+            pygame.event.Event(pygame.MOUSEWHEEL, x=0, y=notches, flipped=False),
         ]))
     for spec in args.type:
         text, _, at = spec.rpartition("@")
@@ -141,6 +150,8 @@ def main() -> int:
     namespace.update(build_kin_natives(runtime, session))  # adds the kin modes to the friend/lobby lists
     namespace.update(build_marriage_natives(runtime, session))  # replaces friend.py's marriage stubs, wraps FindFriend
     renderer = Renderer(screen, resources)
+    renderer.ui_call = runtime.call
+    runtime.textlist_rows = renderer.textlist_hit_rows
     namespace["initFaceIconList"] = lambda codes: setattr(renderer, "face_codes", [str(code) for code in codes])
 
     def level_images(points: int) -> list[str] | None:

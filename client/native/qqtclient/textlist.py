@@ -64,6 +64,11 @@ class Row:
     elements: list[Element]
     cells: list[tuple[int, int, int]]
 
+    @property
+    def text(self) -> str:
+        """The row's source text (tags included)."""
+        return "".join(self.elements[index].text for index, _, _ in self.cells)
+
 
 def _digits(text: str, start: int, end_char: str) -> tuple[int, int] | None:
     """Decimal digits from start up to end_char: (value, index of end_char)."""

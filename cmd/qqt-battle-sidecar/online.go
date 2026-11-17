@@ -1598,6 +1598,9 @@ func (match *onlineMatch) depart(playerID uint16) {
 		return
 	}
 	match.departed[playerID] = true
+	if match.adventure != nil {
+		match.adventurePlayerLeft(playerID)
+	}
 	delete(match.uins, playerID)
 	delete(match.peerReady, playerID)
 	delete(match.peerAnswered, playerID)

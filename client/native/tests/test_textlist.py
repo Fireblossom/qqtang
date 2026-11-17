@@ -12,6 +12,7 @@ import pygame
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
 from qqtclient import textlist  # noqa: E402
 from qqtclient.net import chat  # noqa: E402
+from qqtclient.render import Renderer  # noqa: E402
 from qqtclient.runtime import UIRuntime  # noqa: E402
 from qqtclient.widgets import build  # noqa: E402
 
@@ -144,7 +145,8 @@ class RightButtonTest(unittest.TestCase):
         chat_list = self.runtime.find("UI.chat")
         elements = textlist.parse("/<name=4:uin=1000013>糖二说:看/<H>a.cn")
         rows = textlist.layout(elements, 12, 300, lambda face: 20)
-        chat_list.text_rows = [(10, 310, 18, textlist.Row(elements, rows[0]))]
+        line = [(10, 310, 18, textlist.Row(elements, rows[0]))]
+        self.runtime.textlist_rows = lambda widget: line if widget is chat_list else []
 
     def press(self, button, position, up=True):
         self.runtime.handle(pygame.event.Event(pygame.MOUSEBUTTONDOWN, pos=position, button=button))
@@ -185,6 +187,35 @@ class RightButtonTest(unittest.TestCase):
         self.press(1, (15, 315))
         self.press(1, (15, 315))
         self.assertEqual(self.calls[-1], ("OnDBClick", "1000013"))
+
+
+class RendererRowsTest(unittest.TestCase):
+    def test_hit_rows_follow_the_bottom_anchored_layout(self):
+        class Screen:
+            class children:
+                class chat:
+                    type = "TEXTLIST"
+                    rect = (100, 200, 340, 98)
+                    captionrect = (3, 20, 320, 98)
+                    rowspace = 6
+
+        runtime = UIRuntime(types.SimpleNamespace(namespace={}))
+        runtime.root = build("UI", Screen, None)
+        runtime._register(runtime.root)
+        renderer = object.__new__(Renderer)
+        renderer.face_codes = []
+        renderer.ui_call = runtime.call
+        chat_list = runtime.find("UI.chat")
+        chat_list.items = [("/<name=4:uin=1000013>糖二说:a", (255, 255, 255)), ("b", (255, 255, 255))]
+        # total = 6 + 2 * (12 + 6) = 42, so the rows start at 98 - 42 + 6.
+        rows = renderer.textlist_hit_rows(chat_list)
+        self.assertEqual([(left, top, height, row.text) for left, top, height, row in rows],
+                         [(105, 282, 18, "/<name=4:uin=1000013>糖二说:a"), (105, 300, 18, "b")])
+        row, index = textlist.element_under(rows, (110, 285))
+        self.assertEqual(row.elements[textlist.name_at(row.elements, index)].value, 1000013)
+        # Rows not wholly inside the client area are not clickable.
+        chat_list.items *= 4
+        self.assertTrue(all(top >= 220 and top + 18 <= 318 for _, top, _, _ in renderer.textlist_hit_rows(chat_list)))
 
 
 if __name__ == "__main__":

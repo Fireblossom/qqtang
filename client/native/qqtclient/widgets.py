@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from typing import Any, Callable, Iterator
 
+from . import scrollbar
 from .ui_animation import ImageAnimation
 
 WGTSTYLE_STATIC = 32768
@@ -95,9 +96,6 @@ class Widget:
         self.values: dict[int, Any] = {}
         # List lines (value_channel_itemtext) with their colours.
         self.items: list[tuple[str, tuple[int, int, int]]] = []
-        # TEXTLIST rows as last drawn, (left, top, height, textlist.Row),
-        # for the name and link hit test.
-        self.text_rows: list[Any] = []
         # Win_SetDrawTexRect / Win_SetDrawWinRect: draw only this part of the
         # background image, in image coordinates (None draws all of it).
         self.texture_rect: tuple[int, int, int, int] | None = None
@@ -110,6 +108,10 @@ class Widget:
         self.alpha_direction = 0
         self.hover = False
         self.pressed = False
+        if self.type in ("SCROLLBAR", "SPIN"):
+            scrollbar.init(self)
+        elif self.type == "TEXTLIST":
+            scrollbar.init_list(self)
         if self.type == "KEYEDIT":
             # 0x100139FF: no key yet, and the text starts as "null".
             self.key_value = -1
@@ -180,7 +182,7 @@ class Widget:
             first, last = row[state * 2], row[state * 2 + 1]
         elif self.type == "CHECK":
             first = last = row_index
-        elif self.type in ("BUTTON", "HYPERLINK"):
+        elif self.type in ("BUTTON", "HYPERLINK", "SPIN"):
             first = last = state
         else:
             first = last = 0

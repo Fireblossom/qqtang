@@ -111,6 +111,14 @@ type adventureRule struct {
 	events      []battleengine.Event
 	props       map[uint32]mapdata.AdventureProp // config/errorPPP.ini
 	casts       []*advCast
+	// left are the players who left the room during this stage, in order;
+	// the host hides each one's PVE panel row (0x005BA327).
+	left []uint16
+	// ownBubbles are the local player's bubbles already seen and placed
+	// counts them: every new one restarts the status bar's refill ring
+	// (0x005BA3CB).
+	ownBubbles map[uint32]bool
+	placed     uint32
 }
 
 type advActorView struct {
@@ -147,6 +155,12 @@ type adventureView struct {
 	Locked  bool                     `json:"locked,omitempty"`
 	FlashAt uint32                   `json:"flash_at,omitempty"`
 	Casts   []advCastView            `json:"casts,omitempty"`
+	// Left lists the players who left mid-stage (ui_DisposePVEPlayerLeave).
+	Left []uint16 `json:"left,omitempty"`
+	// Placed counts the local player's bubbles; ResumeMS is its refill time
+	// (pvedata resspeed) for ui_SetBaseItemTimeSpeed.
+	Placed   uint32 `json:"placed,omitempty"`
+	ResumeMS uint32 `json:"resume_ms,omitempty"`
 }
 
 func newAdventureRule(stage mapdata.AdventureStage, field mapdata.AdventureBattlefield, begin game.GameBeginData) *adventureRule {
@@ -428,9 +442,44 @@ func (match *onlineMatch) adventureTick(now uint32) {
 		}
 	}
 	match.adventureCastTick(now)
+	match.adventureBubbleRing()
 	match.adventureDoor(now)
 	if arbitrator {
 		match.flushNPC(&rule.outbox)
+	}
+}
+
+// adventureBubbleRing counts the local player's placements as the PVE
+// player's place slot (vtbl+0x1c, 0x005BA3CB) sees them: each new bubble of
+// its own, not a rule's, restarts the status bar's refill ring. The engine
+// counts the same bubbles for the refill itself (adventureBombResume).
+func (match *onlineMatch) adventureBubbleRing() {
+	rule := match.adventure
+	live := map[uint32]bool{}
+	for _, bomb := range match.engine.Bombs() {
+		if bomb.OwnerID != match.local || bomb.RuleOwned {
+			continue
+		}
+		live[bomb.ID] = true
+		if !rule.ownBubbles[bomb.ID] {
+			rule.placed++
+		}
+	}
+	rule.ownBubbles = live
+}
+
+// adventurePlayerLeft is the PVE player's leave slot (vtbl+0x54, 0x005BA327).
+// Rule 12 keeps the base slot 8 (0x005F4D1F): the player enters state 12,
+// whose entry 0x005C0FF0 calls it. The host hides the player's row in the
+// PVE panel, and every NPC drops its enmity toward the player through
+// AddEnmity(seat, -9999999) (vtbl+0xd4, 0x005BC67A).
+func (match *onlineMatch) adventurePlayerLeft(id uint16) {
+	rule := match.adventure
+	rule.left = append(rule.left, id)
+	for _, n := range rule.npcs {
+		if n.enmity != nil {
+			n.addEnmity(id, -9999999)
+		}
 	}
 }
 
@@ -983,7 +1032,10 @@ func (match *onlineMatch) adventureView() *adventureView {
 	}
 	view := &adventureView{Players: map[uint16]advPlayerView{}, Field: rule.currentField(), DoorRow: rule.stage.LevelRow, DoorCol: rule.stage.LevelCol,
 		Open: rule.clearAt != 0, Width: int(rule.field.Battlefield.Width), Height: int(rule.field.Battlefield.Height),
-		Locked: rule.locked, FlashAt: rule.lockFlashAt, Casts: match.adventureCastView()}
+		Locked: rule.locked, FlashAt: rule.lockFlashAt, Casts: match.adventureCastView(), Left: rule.left, Placed: rule.placed}
+	if actor, ok := actorByID(match.engine.Actors(), match.local); ok {
+		view.ResumeMS = actor.BombResumeMS
+	}
 	for id, p := range rule.players {
 		view.Players[id] = advPlayerView{HP: p.hp, MaxHP: p.maxHP, ProtectedUntil: p.protectedUntil, DyingSince: p.dyingSince}
 		if now := match.engine.ElapsedMS(); now < p.avatarUntil {
