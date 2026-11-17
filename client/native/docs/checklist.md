@@ -147,6 +147,7 @@
 - [x] 探险NPC远端初始化成功路径与260个保持单步已对照，统一使用原版玩家接收表，接收队列与快慢回正也已对照（`docs/npc-remote-queue-re.md`），共享发送历史/序列及无固定心跳也已对照（`docs/npc-publish-re.md`），完整Win32实局仍待核对（`docs/pve-remote-re.md`）。
 - [x] 探险三字节路线消费、目标格停止、场景共享移动计数、默认float32物理及施法停止/禁走技能顺序已接入；1036条原版记录、1152个物理帧逐位对照。完整A*随后另补106条搜索基准和1601→1602双端验收，服务端1200条info、零warn/error（`docs/pve-motion-re.md`、`docs/pve-astar-re.md`）。
 - [~] 多人同局：两个本客户端同局已实测；随后原版补丁客户端在Wine下与Mac客户端实际完成1601→1602、NPC生成/死亡和仲裁移交，180秒采集零warn/error。Windows实机混合及全路线仍未验收（`docs/wine-reference.md`）。
+- [x] 探险界面回调：队友中途离开调用 `ui_DisposePVEPlayerLeave` 隐藏其行并清 NPC 仇恨（`0x005BA327`）；本机放泡后 `ui_SetBaseItemTimeCur(0)`/`Speed(100/resspeed)` 重启状态栏回复圈（`0x005BA3CB`，0.5 s 以下的原版 bug 已修正）。`NotifyAddHint` 查明只属于新手任务，探险不调用（`docs/pve-panel-re.md`）
 - [x] 双人同时进门的明确重复目标按最近成功地图边只返回确认，保留正常清怪和目录跳号校验；合成目录回归可独立运行（`docs/pve-doorway-re.md`）。
 
 ## 商城

@@ -178,7 +178,7 @@ if A+0x760 > limit:  A+0x760 = 0; P.used(+0x27c) -= 1 (only if used >= 1)   // 0
 A+0x760 += dt
 ```
 
-- 放泡走 `vtbl+0x1c` = `0x005BA3CB`：`A+0x760 = 0`，`P.used += 1`。如果是本机玩家，还调用 `ui_SetBaseItemTimeCur(0)` 和 `ui_SetBaseItemTimeSpeed(100/resspeed)`（resspeed 小于 0.5 时按 0.5 算，即 200）。
+- 放泡走 `vtbl+0x1c` = `0x005BA3CB`：`A+0x760 = 0`，`P.used += 1`。如果是本机玩家，还调用 `ui_SetBaseItemTimeCur(0)` 和 `ui_SetBaseItemTimeSpeed(100/resspeed)`（resspeed 小于 0.5 时原版直接用 0.5 乘 100，得 50；本实现按原版 bug 修正为 200，见 `pve-panel-re.md`）。
 - 爆炸时 `0x00606F28` 对泡的主人照常调用 `0x005AE052(1)`，又还一个泡。规则 12 不例外，只有泡类型 9/13/14 和规则 8 不还。
 - 结果是：PVE 玩家场上的泡可以多于上限。lev_0 每 2 s 回复一个，lev_15 以上每 0.8 s 一个。
 
