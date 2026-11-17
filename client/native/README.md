@@ -18,7 +18,7 @@
 | 宠物 | 可用（`docs/pet-re.md`）：大厅"宠物之家"面板：领养（宠物卡）、携带/休息、喂养、学技能、改名、放生，经验条、体力、心情、天赋与技能名，失败时弹服务端原因；背包宠物道具变化刷新面板。房间里携带的宠物跟着主人走（本机用缓存，其他座位用房间记录）。对战里没有宠物，加成只在服务端结算。当铺查看宠物没做（服务端没有当铺）。实测：两个账号领养→携带→喂养→学技能→改名都成功，同房间两只宠物都显示；休息后面板仍显示最后一只、按钮变"携带"；失败框显示"没有找到这只宠物"；放生后收到 0x00D4 面板变空；服务端除故意发的无效宠物外零 warn。跟随动作按伪 C 推断，没有和原版画面逐帧对照 |
 | 商城 | 部分可用：进出商城、六个大类和子类的商品分页、糖币购买（扣款后物品进背包）、道具箱分页、试穿预览（换角色、换颜色、动作）、保存装备（`ITEM_STATUS_CHANGE`）。合成书学习、56 个配方的分类/材料查询和合成、装扮锻造/拆分/还原、砸蛋已接通并本地联调（`docs/craft-re.md`）；锻造结果动态预览已接入原版部件和 .eff，尚未做录像对照。收藏柜收放及材料整理已实测；糖币赠送已接入（含在线/离线附言），修理结算尚未启用；购买只结算糖币，Q 币、Q 点、水果机、任务和密保验证未实现 |
 
-原版脚本共用到 346 个宿主函数，已定义 243 个（覆盖率工具按函数名统计，含占位函数，不代表功能完成比例）。运行 `tools/native_coverage.py` 可按界面列出尚未实现的函数。除此之外，服务器消息到达时宿主要回调脚本里的 `Notify*`、`ui_*` 等函数（约 150 种），目前接通了登录的 `LoginOK`、`LoginFailed`，大厅的 `updateRoom`、`ui_NotifyPlayerUpdate`、`ui_sectSetBtnState`、`NotifyBroadcast`（小喇叭），好友的 `updatePlayer`、`startGlint`/`endGlint`、`ReceivedRequestAddFriend`、`ui_msgBox`、`go2playerInfo`、`ui_getPlayerDetail`，以及房间的 `ui_NotifyRoomSeatChange`、`ui_NotifyRoomID`、`ui_NotifyMapChange`、`NotifyRoomPropChange`、`ui_UpdateGameType`、`ui_createRoomOK`、`ui_playerChat`。对战画面和游戏逻辑不在界面脚本里，需要另外实现。
+原版脚本共用到 346 个宿主函数，已定义 262 个（覆盖率工具按函数名统计，含占位函数，不代表功能完成比例）。运行 `tools/native_coverage.py` 可按界面列出尚未实现的函数。除此之外，服务器消息到达时宿主要回调脚本里的 `Notify*`、`ui_*` 等函数（约 150 种），目前接通了登录的 `LoginOK`、`LoginFailed`，大厅的 `updateRoom`、`ui_NotifyPlayerUpdate`、`ui_sectSetBtnState`、`NotifyBroadcast`（小喇叭），好友的 `updatePlayer`、`startGlint`/`endGlint`、`ReceivedRequestAddFriend`、`ui_msgBox`、`go2playerInfo`、`ui_getPlayerDetail`，以及房间的 `ui_NotifyRoomSeatChange`、`ui_NotifyRoomID`、`ui_NotifyMapChange`、`NotifyRoomPropChange`、`ui_UpdateGameType`、`ui_createRoomOK`、`ui_playerChat`。对战画面和游戏逻辑不在界面脚本里，需要另外实现。
 
 ## 工作方式
 

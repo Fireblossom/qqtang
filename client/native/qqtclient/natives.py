@@ -16,6 +16,7 @@ import pygame
 from .resources import Resources
 from .runtime import CHANNEL_ALPHA, CHANNEL_ALPHA_DIRECTION, CHANNEL_ALPHA_MINIMUM, CHANNEL_ALPHA_SPEED, UIRuntime
 from .script import log
+from .keylayout import build_keylayout_natives, set_key_value
 from .widgets import TEXT_INPUT_TYPES, Widget
 
 CHANNEL_VALUE = 10
@@ -219,6 +220,8 @@ def build_natives(runtime: UIRuntime, resources: Resources, audio: Audio) -> dic
 
     @with_widget()
     def Win_SetValue(widget, value, channel=CHANNEL_VALUE):
+        if channel == CHANNEL_VALUE and widget.type == "KEYEDIT":
+            set_key_value(widget, value)
         if channel == CHANNEL_ALPHA_SPEED:
             widget.alpha_speed = float(value)
         elif channel == CHANNEL_ALPHA:
@@ -232,6 +235,8 @@ def build_natives(runtime: UIRuntime, resources: Resources, audio: Audio) -> dic
 
     @with_widget(0)
     def Win_GetValue(widget, channel=CHANNEL_VALUE):
+        if channel == CHANNEL_VALUE and widget.type == "KEYEDIT":
+            return widget.key_value
         if channel == CHANNEL_ALPHA:
             return widget.alpha
         if channel == CHANNEL_ALPHA_SPEED:
@@ -414,4 +419,23 @@ def build_natives(runtime: UIRuntime, resources: Resources, audio: Audio) -> dic
 
     natives = {name: value for name, value in locals().items() if callable(value) and (name[0].isupper() or name.startswith("os_"))}
     natives["device"] = load_device_config(resources.root / "devConfig.txt")
+    natives.update(build_keylayout_natives(runtime.namespace))
+    natives.update({
+        # 0x00530E00 -> 0x0042ECD0: this frame's tick minus the last, at most 150 ms.
+        "sc_getDeltaTick": lambda: runtime.delta_tick_ms,
+        # 0x005310F0: not full screen; the host always runs in a window.
+        "sc_isWindow": lambda: 1,
+        # 0x005310B0 (F11) and 0x0048E620 do nothing in the final client.
+        "sc_printScreen": lambda: None,
+        "sc_LogOutMemoryStatus": lambda: None,
+        # Click counters for the statistics service (0x00531430 and its
+        # neighbours call service 0x0079E500); nothing visible.
+        "SC_ClickCustomSettingBtn": lambda: None,
+        "SC_ClickHelperInfoBtn": lambda: None,
+        "SC_ClickCreateRoomBtn": lambda: None,
+        "SC_ClickAutoEnterRoomBtn": lambda: None,
+        "SC_ClickExitBtnInSection": lambda: None,
+        # 0x0054E420 opens the http.ini url10 page; there is no embedded web.
+        "InvalidOperation": lambda: None,
+    })
     return natives

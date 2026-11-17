@@ -16,7 +16,7 @@ WGTSTYLE_STATIC = 32768
 UI_BTN_STYLE_RADIO = 2
 EDIT_CODER = 2
 
-TEXT_INPUT_TYPES = {"EDIT", "MULTIEDIT", "RICHEDIT", "KEYEDIT"}
+TEXT_INPUT_TYPES = {"EDIT", "MULTIEDIT", "RICHEDIT"}
 
 # 1002A16B: E4 bits 8/2/1 select disabled/pressed/hover respectively.
 STATE_PRESSED, STATE_HOVER, STATE_NORMAL, STATE_DISABLED = range(4)
@@ -107,6 +107,13 @@ class Widget:
         self.alpha_direction = 0
         self.hover = False
         self.pressed = False
+        if self.type == "KEYEDIT":
+            # 0x100139FF: no key yet, and the text starts as "null".
+            self.key_value = -1
+            self.key_capturing = False
+            self.key_blink_on = True
+            self.key_blink_ms = 0.0
+            self.text = self.text or "null"
 
     def attr(self, name: str, default: Any = None) -> Any:
         value = getattr(self.cls, name, default)

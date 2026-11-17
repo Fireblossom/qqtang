@@ -4,7 +4,9 @@ Usage: .venv/bin/python tools/native_coverage.py [--json PATH]
 
 A native is any name the scripts read but never define (not assigned, not a
 function/class/parameter/import, not a builtin). It is implemented when
-one of NATIVE_MODULES defines a function of that name.
+one of NATIVE_MODULES defines a function of that name, or registers it
+by name (a "name": value entry, or namespace["name"] = ...), as natives
+installed only during a battle or from the entry point are.
 """
 
 from __future__ import annotations
@@ -21,7 +23,8 @@ ROOT = pathlib.Path(__file__).resolve().parent.parent
 SCRIPTS = ROOT / "generated" / "scripts"
 NATIVE_MODULES = ("qqtclient/natives.py", "qqtclient/session.py", "qqtclient/lobby.py", "qqtclient/room.py", "qqtclient/chat.py", "qqtclient/shop.py",
                   "qqtclient/props.py", "qqtclient/friend.py", "qqtclient/kin.py", "qqtclient/slash.py", "qqtclient/pet.py",
-                  "qqtclient/marriage.py", "qqtclient/pve.py", "qqtclient/craft.py")
+                  "qqtclient/marriage.py", "qqtclient/pve.py", "qqtclient/craft.py", "qqtclient/keylayout.py",
+                  "qqtclient/__main__.py", "qqtclient/battle/online.py", "qqtclient/battle/practice.py", "qqtclient/battle/scene.py")
 HELPERS = {"qqt_py2_div", "qqt_py2_cmp_key", "qqt_py2_compare", "qqt_py2_len", "unicode", "long", "xrange"}
 # Screens in the order a player reaches them; a native is listed under the first.
 SCREENS = ("uiLogo", "uiLogin", "uiSelSect", "uiSelRoom", "uiRoom", "uiGame", "uiShop", "uiMain", "uiFunc", "levelCFG", "uiWeb")
@@ -49,7 +52,10 @@ def script_natives() -> dict[str, set[str]]:
 def implemented() -> set[str]:
     names = {"device"}
     for module in NATIVE_MODULES:
-        names |= set(re.findall(r"^    def ([A-Za-z_]\w*)\(", (ROOT / module).read_text(encoding="utf-8"), re.M))
+        text = (ROOT / module).read_text(encoding="utf-8")
+        names |= set(re.findall(r"^    def ([A-Za-z_]\w*)\(", text, re.M))
+        names |= set(re.findall(r"""["']([A-Za-z_]\w*)["']\s*:\s*(?:lambda|self\.|\w+\b(?!\s*[,}]))""", text))
+        names |= set(re.findall(r"""namespace\[["']([A-Za-z_]\w*)["']\]\s*=""", text))
     return names
 
 

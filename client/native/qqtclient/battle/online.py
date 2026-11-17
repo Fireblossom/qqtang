@@ -14,6 +14,7 @@ from typing import Any, Callable
 import pygame
 
 from ..avatar import AvatarCache
+from ..keylayout import BattleKeys
 from ..net import game, match, room
 from ..render import Renderer
 from ..resources import Resources
@@ -87,6 +88,7 @@ class OnlineBattle:
                                  local_id=self.local_id, state=state, realtime=True,
                                  wear={player_id: member.wear for player_id, member in context.members.items()},
                                  game_type=session.game_type)
+        self.scene.keys = BattleKeys.for_uin(session.uin)
         self.scene.on_tcp_out = lambda command, payload: session.send(command, payload)
         self.elapsed_ms = 0.0
         self.last_hello_ms = 0.0

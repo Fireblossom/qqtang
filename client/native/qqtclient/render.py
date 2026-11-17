@@ -12,6 +12,7 @@ import pygame
 from . import dimg
 from .resources import Resources
 from .script import log
+from .keylayout import keyedit_text
 from .widgets import TEXT_INPUT_TYPES, Widget
 from .ui_alpha import alpha_byte, combined_alpha, float32
 
@@ -184,6 +185,12 @@ class Renderer:
         elif widget.type == "DYMASK":
             if 0 <= widget.angle_cur < 360 and widget.image:
                 self._draw_image(widget, x, y, alpha, angle=widget.angle_cur)
+        elif widget.type == "KEYEDIT":
+            if widget.image:
+                self._draw_image(widget, x, y, alpha)
+            text = keyedit_text(widget)
+            if text:
+                self._draw_text(widget, x, y, alpha, False, text)
         else:
             if widget.image:
                 self._draw_image(widget, x, y, alpha)
@@ -346,8 +353,9 @@ class Renderer:
             self.screen.blit(surface, (draw_x, draw_y))
         surface.set_alpha(255)
 
-    def _draw_text(self, widget: Widget, x: int, y: int, alpha: float, focused: bool) -> None:
-        text = "*" * len(widget.text) if widget.password() else widget.text
+    def _draw_text(self, widget: Widget, x: int, y: int, alpha: float, focused: bool, text: str | None = None) -> None:
+        if text is None:
+            text = "*" * len(widget.text) if widget.password() else widget.text
         if focused and widget.type in TEXT_INPUT_TYPES and int(time.monotonic() * 2) % 2 == 0:
             text += "|"
         if widget.caption_rect:

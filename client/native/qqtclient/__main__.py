@@ -9,6 +9,7 @@ import pathlib
 import sys
 
 PACKAGE_ROOT = pathlib.Path(__file__).resolve().parent.parent
+FREE_PRACTICE_MAP = 311  # QQTSection 0x1001C6F2
 
 
 def parse_args() -> argparse.Namespace:
@@ -95,7 +96,7 @@ def main() -> int:
     from .render import Renderer
     from .resources import Resources
     from .runtime import UIRuntime
-    from .script import MissingReport, ScriptLoader, new_namespace
+    from .script import MissingReport, ScriptLoader, call_script, new_namespace
     from .chat import build_chat_natives
     from .props import build_props_natives
     from .friend import build_friend_natives
@@ -145,6 +146,36 @@ def main() -> int:
             runtime.activity.close()
             runtime.activity = None
         runtime.activity = OnlineBattle(runtime, renderer, resources, session, begin, context, start_battle)
+
+    def begin_free_practice() -> None:
+        """sc_beginFreePractice (0x0048E780 -> QQTSection 0x1001C6F2): a local
+        game on map 311 that returns to the lobby. The original then calls
+        NewPlayerPractice() (0x005A4181) after a finished match, and goes back
+        to selRoom when the player leaves (0x005A26C1). The engine needs two
+        players, so one wandering opponent joins."""
+        from .battle.practice import PracticeSession
+
+        def back(ended: bool) -> None:
+            runtime.goto_screen("selRoom")
+            if ended and "NewPlayerPractice" in namespace:
+                runtime.post(lambda: call_script(namespace["NewPlayerPractice"]))
+
+        if runtime.activity is not None:
+            return
+        role = int(session.state.get("last_role", 1) or 1)
+        runtime.activity = PracticeSession(runtime, renderer, resources, FREE_PRACTICE_MAP, role, 1, on_leave=back)
+        runtime.activity.start()
+
+    def begin_tutorial() -> None:
+        """sc_beginTutorial (QQTSection 0x1001C5A7) starts map 1501 with the
+        recorded guide tutorial1.qbv; replays are not supported, so give the
+        lobby buttons DisableEnterRoom hid back and say so."""
+        for name in ("practiceBtn", "fastJoinRoomBtn", "newRoomBtn"):
+            namespace["Win_ShowWidget"](f"UI.selRoom.{name}", 1)
+        runtime.show_msgbox("新手教程需要录像回放，本客户端暂不支持。", "", 0, "UI.SysMsgbox", 0)
+
+    namespace["sc_beginFreePractice"] = begin_free_practice
+    namespace["sc_beginTutorial"] = begin_tutorial
 
     room_natives, draw_room_players = build_room_natives(runtime, session, AvatarCache(resources), start_battle,
                                                          sprites=renderer.sprites, font=renderer.font)

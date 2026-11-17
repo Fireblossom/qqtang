@@ -15,6 +15,7 @@ import pygame
 
 from .. import pve
 from ..avatar import AvatarCache
+from ..keylayout import DEFAULT_LAYOUT, BattleKeys
 from ..render import SpriteCache, cell_width
 from ..resources import Resources
 from ..runtime import UIRuntime
@@ -83,16 +84,13 @@ TRAPPED_FRAME_MS = 100
 DESTROY_MS = 300
 # Engine direction -> avatar sprite direction (0 right, 1 up, 2 left, 3 down).
 SPRITE_DIRECTION = {MOVE_UP: 1, MOVE_RIGHT: 0, MOVE_DOWN: 3, MOVE_LEFT: 2, MOVE_NONE: 3}
-KEY_MOVES = {pygame.K_UP: MOVE_UP, pygame.K_RIGHT: MOVE_RIGHT, pygame.K_DOWN: MOVE_DOWN, pygame.K_LEFT: MOVE_LEFT}
-# The battle key table (0x005A4B6E, DirectInput scan codes, read through
-# 0x005A5391): space puts a bubble; 1..7 and Z X C V B N M use held-item
-# slot 0..6; left Ctrl uses the first usable item of slots 0..5
-# (0x006102D9 -> 0x00610516 with -1). Tab pages the seven-slot view
-# (0x0061021C); the host corrects the original getter's missing offset.
-BOMB_KEYS = (pygame.K_SPACE,)
-SLOT_KEYS = {**{pygame.K_1 + index: index for index in range(7)},
-             **{key: index for index, key in enumerate((pygame.K_z, pygame.K_x, pygame.K_c, pygame.K_v, pygame.K_b, pygame.K_n, pygame.K_m))}}
-USE_KEYS = (pygame.K_LCTRL, pygame.K_RCTRL)  # Mac: the host also maps Cmd to Ctrl elsewhere
+# Movement, bubble, item and Tab keys come from the player's keyboard layout
+# (keylayout.BattleKeys; 0x005A2AB7 loads it into the battle key table,
+# 0x005A4B6E holds the fixed keys, read through 0x005A5391). Z X C V B N M also
+# use held-item slot 0..6; the smart-use key uses the first usable item of
+# slots 0..5 (0x006102D9 -> 0x00610516 with -1). The page key turns the
+# seven-slot view (0x0061021C); the host corrects the original getter's
+# missing offset.
 CTRL_SLOTS = 6
 EMOTION_KEYS = {key: i + 1 for i, key in enumerate((pygame.K_t, pygame.K_y, pygame.K_u, pygame.K_i, pygame.K_o, pygame.K_p))}
 NEEDLE_ACTION = 63  # self-rescue from a bubble
@@ -310,6 +308,8 @@ class BattleScene:
     """state is the started sidecar's init reply. In realtime (online) mode
     the sidecar keeps its own clock, so it is stepped every frame."""
 
+    keys = BattleKeys.from_layout(DEFAULT_LAYOUT)  # the session sets the player's own layout
+
     def __init__(self, resources: Resources, sprites: SpriteCache, avatars: AvatarCache, sidecar: Sidecar,
                  map_id: int, players: list[dict[str, Any]], local_id: int, state: dict[str, Any], realtime: bool = False,
                  wear: dict[int, tuple[tuple[str, int], ...]] | None = None, game_type: int = 0):
@@ -507,29 +507,33 @@ class BattleScene:
                     self.emotion_pressed = EMOTION_KEYS[event.key]
                     if not self.realtime and self.clock >= 2000 and (self.practice_emotion is None or self.clock - self.practice_emotion["since"] >= 2000):
                         self.practice_emotion = {"player": self.local_id, "id": self.emotion_pressed, "since": self.clock}
-            elif event.key == pygame.K_TAB:
-                chat_open = self.runtime is not None and self.runtime.namespace["Win_IsVisible"]("UI.game.chat")
-                if not chat_open and not self.over:
-                    # Native 0061021C requests a seven-slot page. Its getter
-                    # omits the offset; apply the intended page consistently.
-                    self.item_page = getattr(self, "item_page", 0) + 1
-                    self._slots()
-            elif event.key in KEY_MOVES:
-                move = KEY_MOVES[event.key]
-                if move in self.held:
-                    self.held.remove(move)
-                self.held.append(move)  # the latest key wins
-            elif event.key in BOMB_KEYS:
-                self.bomb_pressed = True
-            elif event.key in SLOT_KEYS:
-                self._press_use(self._slots()[SLOT_KEYS[event.key]][0])
-            elif event.key in USE_KEYS:
-                self._press_use(self._smart_use())
+            else:
+                # The native table is polled slot by slot, so a key bound to
+                # several actions triggers each of them.
+                keys = self.keys
+                if event.key in keys.page:
+                    chat_open = self.runtime is not None and self.runtime.namespace["Win_IsVisible"]("UI.game.chat")
+                    if not chat_open and not self.over:
+                        # Native 0061021C requests a seven-slot page. Its getter
+                        # omits the offset; apply the intended page consistently.
+                        self.item_page = getattr(self, "item_page", 0) + 1
+                        self._slots()
+                if event.key in keys.moves:
+                    move = keys.moves[event.key]
+                    if move in self.held:
+                        self.held.remove(move)
+                    self.held.append(move)  # the latest key wins
+                if event.key in keys.bomb:
+                    self.bomb_pressed = True
+                if event.key in keys.slots:
+                    self._press_use(self._slots()[keys.slots[event.key]][0])
+                if event.key in keys.smart_use:
+                    self._press_use(self._smart_use())
         elif event.type == pygame.KEYUP:
             if event.key == pygame.K_F8:
                 self.name_key_down = False
-            elif event.key in KEY_MOVES:
-                move = KEY_MOVES[event.key]
+            elif event.key in self.keys.moves:
+                move = self.keys.moves[event.key]
                 if move in self.held:
                     self.held.remove(move)
 

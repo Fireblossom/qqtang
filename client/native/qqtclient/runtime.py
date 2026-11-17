@@ -8,6 +8,7 @@ from typing import Any, Callable
 
 import pygame
 
+from . import keylayout
 from .script import ScriptLoader, call_script, log
 from .widgets import TEXT_INPUT_TYPES, Widget, build
 from .ui_alpha import advance_alpha
@@ -39,6 +40,8 @@ class UIRuntime:
         self.current_screen: str | None = None
         self.names_flag = False  # shared F8 toggle: native keyboard +0x23
         self.focus: Widget | None = None
+        self.delta_tick_ms = 0
+        self._frame_widgets: list[Widget] | None = None
         self.pressed: Widget | None = None
         self.last_press: tuple[float, tuple[int, int], Widget | None] = (0.0, (0, 0), None)
         self.press_pos = (0, 0)
@@ -80,10 +83,12 @@ class UIRuntime:
         self.goto_screen(first_screen)
 
     def _register(self, widget: Widget) -> None:
+        self._frame_widgets = None
         for item in widget.walk():
             self.widgets[item.path.lower()] = item
 
     def _unregister(self, widget: Widget) -> None:
+        self._frame_widgets = None
         for item in widget.walk():
             self.widgets.pop(item.path.lower(), None)
             self.timers.pop(item.path.lower(), None)
@@ -170,6 +175,16 @@ class UIRuntime:
             self.periodic[name] = (seconds, time.monotonic() + seconds, function)
 
     def tick(self, elapsed_ms: float) -> None:
+        self.delta_tick_ms = min(int(elapsed_ms), 150)  # sc_getDeltaTick, 0x0042ECD0
+        if self.focus is not None and self.focus.type == "KEYEDIT":
+            keylayout.keyedit_tick(self.focus, elapsed_ms)
+        # gameUI.dll runs each widget's OnFrame every frame (callback 56); the
+        # in-game chat box slides up with it.
+        if self._frame_widgets is None:
+            self._frame_widgets = [widget for widget in self.widgets.values() if widget.handler("OnFrame")]
+        for widget in self._frame_widgets:
+            if widget.shown():
+                self.call(widget, "OnFrame")
         while not self.main_thread_calls.empty():
             self.main_thread_calls.get()()
         now = time.monotonic()
@@ -305,6 +320,8 @@ class UIRuntime:
         elif event.type == pygame.MOUSEBUTTONUP and event.button == 3:
             target = self.hit_test(event.pos)
             if target is not None and target.enabled:
+                if target.type == "KEYEDIT":
+                    keylayout.keyedit_click(target, right=True)
                 self.call(target, "OnRClick")
         elif event.type == pygame.TEXTINPUT:
             self._type_text(event.text)
@@ -392,6 +409,8 @@ class UIRuntime:
         if box is not None and widget.parent is box:
             self._answer_msgbox(bool(widget.attr("defaultok", 0)))
             return
+        if widget.type == "KEYEDIT":
+            keylayout.keyedit_click(widget)
         if widget.type == "CHECK" and not widget.is_radio():
             widget.checked = 0 if widget.checked else 1
         else:
@@ -416,6 +435,8 @@ class UIRuntime:
         # capture and keyboard focus are independent. This repairs the
         # original script's parent-focus overwrite (e.g. Add Friend).
         current = self.focus
+        if current is not None and current is not widget and current.type == "KEYEDIT":
+            current.key_capturing = False  # 0x10014AC9 event 15
         if (widget is not None and current is not None and current.type in TEXT_INPUT_TYPES
                 and current.editable and current.enabled and current.shown()
                 and current in widget.walk()):
@@ -454,6 +475,11 @@ class UIRuntime:
         if self._accelerator(event):
             return
         widget = self.focus
+        if widget is not None and widget.type == "KEYEDIT" and widget.enabled and widget.shown():
+            # 0x1001491F answers every key itself, so a focused box keeps
+            # Enter and Escape from the dialog.
+            keylayout.keyedit_key(widget, event.key)
+            return
         if event.key == pygame.K_BACKSPACE and widget is not None and widget.type in TEXT_INPUT_TYPES and widget.editable:
             widget.text = widget.text[:-1]
         elif event.key == pygame.K_TAB and widget is not None:
