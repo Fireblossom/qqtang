@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from typing import Any, Callable
 
-from . import slash
+from . import slash, textlist
 from .net import chat
 from .runtime import UIRuntime
 from .script import call_script, log
@@ -41,14 +41,15 @@ def build_chat_natives(runtime: UIRuntime, session: Session) -> dict[str, Callab
             if runtime.find(widget) is not None:
                 runtime.namespace["Win_SetColorText"](widget, text, CHANNEL_ITEMTEXT, *color)
 
-    def show_whisper(text: str) -> None:
+    def show_whisper(text: str, markup: str = "") -> None:
+        """markup: a /<name=..> tag the chat lists put before text."""
         screen = runtime.current_screen
         if screen == "selRoom":
-            show((LOBBY_CHAT, LOBBY_WHISPERS), text, WHISPER_COLOR)
+            show((LOBBY_CHAT, LOBBY_WHISPERS), markup + text, WHISPER_COLOR)
         elif screen == "room":
-            show((ROOM_CHAT, ROOM_WHISPERS), text, WHISPER_COLOR)
+            show((ROOM_CHAT, ROOM_WHISPERS), markup + text, WHISPER_COLOR)
         elif screen == "game":
-            show((GAME_CHAT,), text, WHISPER_COLOR)
+            show((GAME_CHAT,), markup + text, WHISPER_COLOR)
         elif screen == "shop":
             # The shop has no chat list. Do not discard a gift note/private
             # message merely because its recipient is browsing the shop.
@@ -125,7 +126,7 @@ def build_chat_natives(runtime: UIRuntime, session: Session) -> dict[str, Callab
         if message.bugle:
             script("NotifyBroadcast", message.nickname + chat.SAID, message.uin, message.text)
         elif runtime.current_screen == "selRoom":
-            show((LOBBY_CHAT,), message.nickname + chat.SAID + message.text, CHAT_COLOR)
+            show((LOBBY_CHAT,), textlist.lobby_line(message), CHAT_COLOR)
 
     def on_whisper_result(packet) -> None:
         name, text = pending_whispers.pop(0) if pending_whispers else ("", "")
@@ -142,7 +143,8 @@ def build_chat_natives(runtime: UIRuntime, session: Session) -> dict[str, Callab
             # /M shield list, which is client-side, so the receiver drops it.
             log(f"[chat] across-section message from {whisper.source_uin} handled: {whisper.text!r}")
             return
-        show_whisper(f"{whisper.nickname}悄悄对你说:{text}")
+        # QQTSection 0x10026EFF marks the sender's name for OnClickName.
+        show_whisper(f"{whisper.nickname}悄悄对你说:{text}", textlist.name_tag(whisper.nickname, whisper.source_uin))
 
     session.handlers.update({
         chat.SECTION_CHAT_COMMAND: on_section_result,

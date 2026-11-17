@@ -95,6 +95,9 @@ class Widget:
         self.values: dict[int, Any] = {}
         # List lines (value_channel_itemtext) with their colours.
         self.items: list[tuple[str, tuple[int, int, int]]] = []
+        # TEXTLIST rows as last drawn, (left, top, height, textlist.Row),
+        # for the name and link hit test.
+        self.text_rows: list[Any] = []
         # Win_SetDrawTexRect / Win_SetDrawWinRect: draw only this part of the
         # background image, in image coordinates (None draws all of it).
         self.texture_rect: tuple[int, int, int, int] | None = None

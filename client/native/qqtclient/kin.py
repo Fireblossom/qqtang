@@ -12,7 +12,7 @@ import time
 import types
 from typing import Any, Callable
 
-from . import lobby as lobby_module
+from . import lobby as lobby_module, textlist
 from .net import kin
 from .net import lobby as lobby_net
 from .net.player import GameInfo
@@ -382,7 +382,7 @@ def build_kin_natives(runtime: UIRuntime, session: Session) -> dict[str, Callabl
         text = r.raw(r.u32()).decode("gbk", "replace")
         entry = member(uin)
         name = entry["nickname"] if entry else str(uin)
-        line(f"{name}[{uin}]说:{text}")
+        line(f"{textlist.name_tag(name, uin)}{name}[{uin}]说:{text}")  # QQTSection 0x10016C8A
 
     def on_kicked(packet) -> None:
         r = reader(packet)

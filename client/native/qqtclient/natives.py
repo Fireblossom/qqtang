@@ -24,6 +24,7 @@ CHANNEL_MAXVALUE = 12
 CHANNEL_POS = 17
 CHANNEL_WINRECT = 34
 CHANNEL_CAPTIONRECT = 36
+CHANNEL_MOUSE_POS = 906  # Win_GetRect only (0x1001CBAD)
 CHANNEL_CAPTION = 200
 CHANNEL_LISTITEM_NUM = 32
 CHANNEL_ITEMTEXT = 207
@@ -318,6 +319,10 @@ def build_natives(runtime: UIRuntime, resources: Resources, audio: Audio) -> dic
             return (*widget.absolute(), widget.w, widget.h)
         if channel == CHANNEL_CAPTIONRECT:
             return widget.caption_rect or (0, 0, widget.w, widget.h)
+        if channel == CHANNEL_MOUSE_POS:
+            # 0x1001CBAD: channel 0x38A is the last WM_MOUSEMOVE position
+            # ([0x10048AC0], [0x10048AC4]) whatever the widget.
+            return (*runtime.mouse_pos, 0, 0)
         return widget.values.get(channel, (0, 0, widget.w, widget.h))
 
     @with_widget()

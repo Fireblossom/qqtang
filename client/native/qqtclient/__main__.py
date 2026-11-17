@@ -143,6 +143,15 @@ def main() -> int:
     renderer = Renderer(screen, resources)
     namespace["initFaceIconList"] = lambda codes: setattr(renderer, "face_codes", [str(code) for code in codes])
 
+    def level_images(points: int) -> list[str] | None:
+        """TEXTLIST /<level=P> (gameUI 0x10022CA3 evaluates these two)."""
+        functions = [namespace.get(name) for name in ("ui_GetLevelMainPath", "ui_GetLevelSubPath")]
+        if not all(callable(function) for function in functions):
+            return None
+        return [str(call_script(function, points) or "") for function in functions]
+
+    renderer.level_images = level_images
+
     def start_battle(begin: bytes, context) -> None:
         from .battle.online import OnlineBattle
 

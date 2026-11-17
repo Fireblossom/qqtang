@@ -30,7 +30,9 @@
 - [x] 选区测速：`SC_PingZones` 用系统 ping 测各区服务器（原版 ICMP），按原版阈值显示快/中/慢/未知并排序（`docs/chat-faces-re.md`）
 - [x] 房间格子分页、玩家列表、快速加入、建房
 - [x] 大厅聊天、悄悄话、小喇叭
-- [x] 聊天表情（`docs/chat-faces-re.md`）：`initFaceIconList` 代码表按原版匹配、宽度、位置和 333 ms 动画画成图标，覆盖聊天记录 TEXTLIST、输入框和头顶气泡 RICHEDIT 及 MULTIEDIT/DYLABEL；TEXTLIST 行距改为 textsize+rowspace 并裁剪。`/<c=…>` 等格式标记未做
+- [x] 右键事件（`docs/rbutton-textlist-re.md`）：`OnRClick` 改为按下时发，抬起时按钮类发 `OnRBtnUp((x, y))`、其他控件交给父控件；右键按下也先关弹窗。大厅/引导栏玩家列表右键菜单、家族成员菜单（提升/下调/开除入口）可用，双客户端和族长账号实测发送密语、查看资料、职位提升再下调；开除未实测
+- [x] 聊天记录里的名字和链接（`docs/rbutton-textlist-re.md`，`qqtclient/textlist.py`）：`/<name=…>`、`/<kin=…>`、`/<level=…>`、`/<H>…/<~H>` 按原版解析、排版和命中；`OnClickName`/`OnRClickName`/`OnClickHLink`、名字双击插入号码、`Win_GetRect(…, 906)` 鼠标位置；大厅聊天按原版带家族旗和等级图标，悄悄话和家族聊天带名字标记。原版链接重复补 `http://` 的 bug 已修正；名字上的手形光标没做
+- [x] 聊天表情（`docs/chat-faces-re.md`）：`initFaceIconList` 代码表按原版匹配、宽度、位置和 333 ms 动画画成图标，覆盖聊天记录 TEXTLIST、输入框和头顶气泡 RICHEDIT 及 MULTIEDIT/DYLABEL；TEXTLIST 行距改为 textsize+rowspace 并裁剪。TEXTLIST 只启用链接，`/<c=…>` 等在原版也按原文显示（`docs/rbutton-textlist-re.md`）
 - [~] 分模式等级（包子/比武/雕像）：`GetPlayerModeInfo*` 已按原版读自己的 PATTERN_POINT，但本地服务端从不填，全部显示 0；需要服务端记录积分（原版规则无资料）
 - [x] 玩家资料里的人物（`docs/chat-faces-re.md`）：找人回复后按对方角色重建，经脚本 `playerInfo_useCommItem` → `selRoom_playerWear` 穿上该角色的装备（帽子/头发互斥规则按原版），资料框右下角绘制；同时修复自己婚姻信息先到时 `ui_UpdateMyMarriageInfo` 报错
 - [x] 好友：名单、上下线、资料、加好友、同意或拒绝、删除、信封消息
