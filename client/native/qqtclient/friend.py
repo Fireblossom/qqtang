@@ -31,6 +31,7 @@ from . import pve
 from .chat import CHANNEL_ITEMTEXT, LOBBY_CHAT, ROOM_CHAT
 from .slash import SYSTEM_COLOR
 from .net import friend
+from .net.player import GameInfo
 from .net import lobby as lobby_net
 from .net.player import GameInfo
 from .runtime import UIRuntime
@@ -136,7 +137,8 @@ class FriendState:
         return min(self.maximum, len(self.roster)) if self.maximum else len(self.roster)
 
 
-def build_friend_natives(runtime: UIRuntime, session: Session) -> dict[str, Callable[..., Any]]:
+def build_friend_natives(runtime: UIRuntime, session: Session,
+                         dress_profile: Callable[[friend.FoundPlayer], None] | None = None) -> dict[str, Callable[..., Any]]:
     state = FriendState()
     lobby_count = runtime.namespace["GetPlayerCnt"]
     lobby_fetch = runtime.namespace["fetch_PlayerInfoInPlayerList"]
@@ -299,6 +301,10 @@ def build_friend_natives(runtime: UIRuntime, session: Session) -> dict[str, Call
             session.send(friend.FIND_FRIEND_COMMAND, friend.build_find_friend(session.uin, int(uin)))
 
     def GetPlayerDetail():
+        # Client.exe keeps a zero-filled struct until a query answers; our
+        # own marriage notice can ask for it first (ui_UpdateMyMarriageInfo).
+        if state.detail is None:
+            return detail(friend.FoundPlayer(0, 0, game_info=GameInfo(*([0] * len(dataclasses.fields(GameInfo))))))
         return state.detail
 
     def GetPVEData(points=0):
@@ -429,6 +435,8 @@ def build_friend_natives(runtime: UIRuntime, session: Session) -> dict[str, Call
             return
         state.detail = detail(found)
         script("go2playerInfo", found.uin, 0)
+        if dress_profile is not None:
+            dress_profile(found)  # 0x0048EB20 dresses the dialog's avatar before the details
         script("ui_getPlayerDetail")
 
     session.handlers.update({

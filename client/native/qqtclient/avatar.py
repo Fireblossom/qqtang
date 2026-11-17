@@ -17,6 +17,7 @@ from . import dimg
 from .resources import Resources
 
 # Back to front. npack (the held item) is drawn first so the body covers it.
+REMOVED_PART = -1  # a wear value that drops the role's own part
 PART_ORDER = ("npack", "foot", "leg", "body", "cloth", "head", "face", "hair")
 # Worn shop parts that a role's ini does not list, back to front among the
 # parts above. Their exact native order is not traced.
@@ -142,7 +143,11 @@ class AvatarCache:
         parts = self.parts(role_id, action)
         full_body = action in FULL_BODY_ACTIONS and set(parts) == {"cloth"}
         if not full_body:
-            parts.update((name, part) for name, part in wear if part > 0)
+            for name, part in wear:
+                if part > 0:
+                    parts[name] = part
+                elif part == REMOVED_PART:
+                    parts.pop(name, None)
         if not parts:
             return None
         canvas = np.zeros((CANVAS, CANVAS, 4), np.float32)

@@ -31,6 +31,7 @@
 - [x] 大厅聊天、悄悄话、小喇叭
 - [x] 聊天表情（`docs/chat-faces-re.md`）：`initFaceIconList` 代码表按原版匹配、宽度、位置和 333 ms 动画画成图标，覆盖聊天记录 TEXTLIST、输入框和头顶气泡 RICHEDIT 及 MULTIEDIT/DYLABEL；TEXTLIST 行距改为 textsize+rowspace 并裁剪。`/<c=…>` 等格式标记未做
 - [~] 分模式等级（包子/比武/雕像）：`GetPlayerModeInfo*` 已按原版读自己的 PATTERN_POINT，但本地服务端从不填，全部显示 0；需要服务端记录积分（原版规则无资料）
+- [x] 玩家资料里的人物（`docs/chat-faces-re.md`）：找人回复后按对方角色重建，经脚本 `playerInfo_useCommItem` → `selRoom_playerWear` 穿上该角色的装备（帽子/头发互斥规则按原版），资料框右下角绘制；同时修复自己婚姻信息先到时 `ui_UpdateMyMarriageInfo` 报错
 - [x] 好友：名单、上下线、资料、加好友、同意或拒绝、删除、信封消息
 - [x] 好友追踪：最终版客户端已关闭（QQTSection `0x1002C68D`），按用户决定启用原版留下的追踪逻辑，同小区进房实测可用；跨小区跳转没做
 - [x] 屏蔽、取消屏蔽：原版是客户端本地名单（斜杠命令 `/M` 0x11、`/U` 0x12，QQTSection `0x10025027`，`GetAttribute(uin, 1)` 查名单），只屏蔽悄悄话，不发服务端；玩家菜单和聊天栏输入 `/m 号码`、`/u 号码` 都可用，双客户端实测屏蔽期间的悄悄话被丢弃、取消后恢复（丢弃的位置是推断）

@@ -100,6 +100,7 @@ def main() -> int:
     from .chat import build_chat_natives
     from .props import build_props_natives
     from .friend import build_friend_natives
+    from .profile_avatar import build_profile_avatar, profile_drawer
     from .kin import build_kin_natives
     from .marriage import build_marriage_natives
     from .pet import build_pet_natives
@@ -134,7 +135,9 @@ def main() -> int:
     namespace.update(build_lobby_natives(runtime, session))
     namespace.update(build_chat_natives(runtime, session))
     namespace.update(build_props_natives(runtime, session))
-    namespace.update(build_friend_natives(runtime, session))  # wraps the lobby's player-list natives
+    profile_avatar, dress_profile, profile_natives = build_profile_avatar(runtime)
+    namespace.update(build_friend_natives(runtime, session, dress_profile))  # wraps the lobby's player-list natives
+    namespace.update(profile_natives)
     namespace.update(build_kin_natives(runtime, session))  # adds the kin modes to the friend/lobby lists
     namespace.update(build_marriage_natives(runtime, session))  # replaces friend.py's marriage stubs, wraps FindFriend
     renderer = Renderer(screen, resources)
@@ -189,6 +192,7 @@ def main() -> int:
     namespace.update(build_pet_natives(runtime, session, resources))  # replaces the shop's pet list and the room's ignored 0x00D4
     renderer.draw_callbacks["SC_shopDemo_draw"] = draw_shop_preview
     renderer.draw_callbacks["SC_room_drawPlayer"] = draw_room_players
+    renderer.draw_callbacks["SC_selRoom_drawPlayer"] = profile_drawer(runtime, profile_avatar, AvatarCache(resources))
     pending = scheduled_events(args)
     calls = sorted(((int(at), expr) for expr, _, at in (spec.rpartition("@") for spec in args.call)), key=lambda item: item[0])
     shots = sorted(((int(at), path) for path, _, at in (spec.rpartition("@") for spec in args.shot)), key=lambda item: item[0])
