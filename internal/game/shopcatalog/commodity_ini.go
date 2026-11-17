@@ -102,9 +102,8 @@ func BuildCommodityINIWithLimit(version uint32, items []itemcatalog.RegistryEntr
 	fmt.Fprintf(&utf8, "[public]\rversion = %d\r\r", version)
 	fmt.Fprintf(&utf8, "[COMMODITY]\rCOMMODITYCOUNT = %d\r\r", len(rows))
 	for index, row := range rows {
-		// commodityCFG does not contain the retired historical price table. A
-		// small positive local Q-price keeps the original card layout and buy
-		// path active; local purchase settlement remains server-authoritative.
+		// Negative external prices disable the legacy Q-coin and Q-point
+		// purchase options. Every offer is sold only for local sugar currency.
 		fmt.Fprintf(&utf8, "[COMMODITY.%d]\r", index+1)
 		fmt.Fprintf(&utf8, "COMMODITYID = %d\r", row.Commodity.CommodityID)
 		fmt.Fprintf(&utf8, "COMMODITYNAME = %s\r", sanitizeINIValue(row.Commodity.Name))

@@ -31,7 +31,7 @@ func TestBuildCommodityINIUsesCanonicalItemIDAndPackedType(t *testing.T) {
 	}
 	for _, want := range []string{
 		"version = 848", "COMMODITYCOUNT = 1", "[COMMODITY.1]", "COMMODITYID = 912067",
-		"COMMODITYNAME = 中山装[30天]", "COMMODITYTYPE = 1028", "QPRICE = 10", "QQPOINTPRICE = 10", "QQTANGPRICE = 1000",
+		"COMMODITYNAME = 中山装[30天]", "COMMODITYTYPE = 1028", "QPRICE = -1", "QQPOINTPRICE = -1", "QQTANGPRICE = 1000",
 		"ITEM.1.ID = 2067", "ITEM.1.NUM = 1", "ITEM.1.AVAILPERIOD = 0",
 		"[comment]", "count = 4", "[comment.1]", "item.1 = 912067",
 	} {
@@ -97,6 +97,11 @@ func TestCatalogMatchesPublishedCommodityRows(t *testing.T) {
 	}
 	if len(catalog.Products()) != 2 {
 		t.Fatalf("products = %d", len(catalog.Products()))
+	}
+	for _, product := range catalog.Products() {
+		if product.QPrice != -1 || product.QQPointPrice != -1 || product.SugarPrice != 1000 {
+			t.Fatalf("product must be sold only for sugar currency: %+v", product)
+		}
 	}
 }
 

@@ -14,8 +14,8 @@ import (
 var commodityBundleQuantityPattern = regexp.MustCompile(`[\[\(（]\s*([0-9]+)\s*个`)
 
 const (
-	LocalQPrice       uint32 = 10
-	LocalQQPointPrice uint32 = 10
+	LocalQPrice       int32 = -1
+	LocalQQPointPrice int32 = -1
 	LocalSugarPrice   uint32 = 1000
 )
 
@@ -31,8 +31,8 @@ type Product struct {
 	Type            uint16
 	Quantity        uint32
 	AvailablePeriod uint32
-	QPrice          uint32
-	QQPointPrice    uint32
+	QPrice          int32
+	QQPointPrice    int32
 	SugarPrice      uint32
 }
 

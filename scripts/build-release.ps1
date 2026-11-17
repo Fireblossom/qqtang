@@ -157,6 +157,7 @@ $required = @(
 	(Join-Path $workspace 'cmd\qqt-static-start-rejection\main.go')
 	(Join-Path $workspace 'cmd\qqt-static-profile-persistence\main.go')
 	(Join-Path $workspace 'scripts\patch-python23-item-registry.py')
+	(Join-Path $workspace 'scripts\patch-python23-shop.py')
 	(Join-Path $workspace 'cmd\qqt-static-avatar-forge\main.go')
 	(Join-Path $workspace 'cmd\qqt-static-platform-effects\main.go')
 	(Join-Path $workspace 'cmd\qqt-static-frame-rate\main.go')
@@ -316,6 +317,10 @@ try {
 	if ($LASTEXITCODE -ne 0) { throw "Python 2.3 item-registry patch exited with $LASTEXITCODE" }
 	& $python.Source (Join-Path $workspace 'scripts\patch-python23-item-registry.py') --check --client-root $targetClient --xdis-root (Join-Path $workspace 'build-assets\pytools')
 	if ($LASTEXITCODE -ne 0) { throw "Python 2.3 item-registry verification exited with $LASTEXITCODE" }
+	& $python.Source (Join-Path $workspace 'scripts\patch-python23-shop.py') --client-root $targetClient --xdis-root (Join-Path $workspace 'build-assets\pytools')
+	if ($LASTEXITCODE -ne 0) { throw "Python 2.3 shop patch exited with $LASTEXITCODE" }
+	& $python.Source (Join-Path $workspace 'scripts\patch-python23-shop.py') --check --client-root $targetClient --xdis-root (Join-Path $workspace 'build-assets\pytools')
+	if ($LASTEXITCODE -ne 0) { throw "Python 2.3 shop verification exited with $LASTEXITCODE" }
 	$soloBossPatchEvidence = Get-Content -Raw -LiteralPath $soloBossPatchReport | ConvertFrom-Json
 	$soloBossPatchEvidence.client_root = 'runtime/client-patched'
 	$soloBossPatchEvidence.dll_path = 'runtime/client-patched/QQTSection.dll'
