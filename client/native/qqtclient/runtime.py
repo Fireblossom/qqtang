@@ -8,7 +8,7 @@ from typing import Any, Callable
 
 import pygame
 
-from . import keylayout
+from . import keylayout, scrollbar
 from .script import ScriptLoader, call_script, log
 from .widgets import TEXT_INPUT_TYPES, Widget, build
 from .ui_alpha import advance_alpha
@@ -47,6 +47,10 @@ class UIRuntime:
         self.press_pos = (0, 0)
         self.mouse_pos = (0, 0)
         self.dragging: Widget | None = None
+        # A moveable widget (a scroll bar's thumb) following the mouse, and
+        # its top-left minus the press point (dispatcher +0x2B8, +0x70C/+0x710).
+        self.moving: Widget | None = None
+        self.move_offset = (0, 0)
         self.drag_image = ""  # Win_SetDragImg; drawn at the mouse while dragging
         # gameUI.dll counts the messages it dispatches ([0x10049928], read by
         # Win_GetEventCnt) and hides the open popup widget on a press outside it.
@@ -209,6 +213,10 @@ class UIRuntime:
                     widget.angle_cur = min(widget.angle_dest, widget.angle_cur + delta)
                 elif widget.angle_cur > widget.angle_dest:
                     widget.angle_cur = max(widget.angle_dest, widget.angle_cur - delta)
+            if widget.type in ("SCROLLBAR", "SPIN"):
+                # 0x10008B13 / 0x10004811: holding the track or a spin repeats.
+                held = widget.pressed and self.pressed is widget and self.hovered is widget
+                scrollbar.tick(widget, elapsed_ms / 1000, held, self.mouse_pos, self.call)
             if widget.type == "DYLIFESTRIP":
                 # 10011D9A: approach destination at stepnum units/second.
                 delta = widget.strip_step * elapsed_ms / 1000
@@ -277,6 +285,12 @@ class UIRuntime:
             self.quit_requested = True
         elif event.type == pygame.MOUSEMOTION:
             self.mouse_pos = event.pos
+            if self.moving is not None:
+                # 0x100304C8: while a widget is moved it gets event 0x19 and
+                # nothing is hovered.
+                ox, oy = self.move_offset
+                scrollbar.move(self.moving, event.pos[0] + ox, event.pos[1] + oy, self.call)
+                return
             self._hover(self.hit_test(event.pos))
             self._maybe_begin_drag(event.pos)
         elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
@@ -304,6 +318,16 @@ class UIRuntime:
                 # their own index through Win_GetFocusPath.
                 if target.enabled:
                     self.set_focus(target)
+                if scrollbar.moveable(target):
+                    tx, ty = target.absolute()
+                    self.moving, self.move_offset = target, (tx - event.pos[0], ty - event.pos[1])
+                elif target.type == "SCROLLBAR":
+                    scrollbar.press_track(target, event.pos, self.call)
+        elif event.type == pygame.MOUSEBUTTONUP and event.button == 1 and self.moving is not None:
+            # The moved widget only gets the release; nothing is clicked.
+            moved, self.moving = self.moving, None
+            moved.pressed = False
+            self.pressed = None
         elif event.type == pygame.MOUSEBUTTONUP and event.button == 1:
             target = self.hit_test(event.pos)
             pressed, self.pressed = self.pressed, None
@@ -323,6 +347,11 @@ class UIRuntime:
                 if target.type == "KEYEDIT":
                     keylayout.keyedit_click(target, right=True)
                 self.call(target, "OnRClick")
+        elif event.type == pygame.MOUSEWHEEL:
+            # WM_MOUSEWHEEL goes to the focus, else the capture, else the
+            # hovered widget, and bubbles up to a TEXTLIST (0x100304C8).
+            target = self.focus or (self.capture if self.capture is not None and self.capture.shown() else None) or self.hovered
+            scrollbar.wheel(target, int(event.y), self.call)
         elif event.type == pygame.TEXTINPUT:
             self._type_text(event.text)
         elif event.type == pygame.KEYDOWN:
@@ -416,6 +445,8 @@ class UIRuntime:
         else:
             self.select(widget)
         self.call(widget, "OnClick")
+        if widget.type == "SPIN":
+            scrollbar.spin_step(widget, self.call)  # 0x10004879: after OnClick
 
     def select(self, widget: Widget) -> None:
         """Radio checks and tabs (TABWIN) are exclusive among their siblings
