@@ -1001,7 +1001,7 @@ func (runtime *liveCompetitiveAIRuntime) run(server *Server) {
 			return
 		}
 	}
-	server.log(logEvent{Level: "info", Event: "competitive_ai_native_round_started", RoomID: fmt.Sprint(runtime.roomID), Result: fmt.Sprintf("game_%d_delay_%s", runtime.gameID, time.Since(startedAt).Round(time.Millisecond))})
+	server.log(logEvent{Level: "info", Event: "competitive_ai_native_scene_wait", RoomID: fmt.Sprint(runtime.roomID), Result: fmt.Sprintf("game_%d_delay_%s", runtime.gameID, time.Since(startedAt).Round(time.Millisecond))})
 	ticker := time.NewTicker(runtime.worldTick)
 	defer ticker.Stop()
 	for {
@@ -1089,11 +1089,20 @@ func (runtime *liveCompetitiveAIRuntime) advanceToLocked(server *Server, target 
 // mirror must not move the wall anchor forward, otherwise repeated delivery
 // would manufacture time that never elapsed in Client.exe.
 func (runtime *liveCompetitiveAIRuntime) observeAuthorityClockLocked(sceneMS uint32, now time.Time) {
-	if runtime == nil || sceneMS < battleengine.NativeRoundStartClockMS || sceneMS > battleengine.StandardRoundTimeMS {
+	if runtime == nil || sceneMS < battleengine.NativeRoundStartClockMS || sceneMS >= battleengine.StandardRoundTimeMS {
 		return
 	}
 	if runtime.authorityClockReady && sceneMS <= runtime.authorityClockMS {
 		return
+	}
+	if !runtime.authorityClockReady {
+		if snapshot := runtime.runtime.EngineSnapshot(); snapshot != nil && snapshot.ElapsedMS() == battleengine.NativeRoundStartClockMS {
+			frameMS := competitiveAICompletedSceneFrameMS(sceneMS, uint32(runtime.worldTick/time.Millisecond))
+			if err := runtime.runtime.SynchronizeInitialClock(frameMS); err != nil {
+				return
+			}
+			runtime.recordPositionFrameLocked(runtime.runtime.EngineSnapshot())
+		}
 	}
 	runtime.authorityClockReady = true
 	runtime.authorityClockMS = sceneMS
@@ -1104,7 +1113,9 @@ func (runtime *liveCompetitiveAIRuntime) targetElapsedMSLocked(now time.Time) ui
 	tickMS := uint32(runtime.worldTick / time.Millisecond)
 	wallTarget := competitiveAITargetElapsedMS(runtime.nativeGameStartedAt, now, tickMS)
 	if !runtime.authorityClockReady {
-		return wallTarget
+		// GAME_BEGIN and UDP peer readiness precede scene loading and ReadyGo.
+		// Only the arbitrator's first playable clock proves control is unlocked.
+		return battleengine.NativeRoundStartClockMS
 	}
 	authorityTarget := runtime.authorityClockMS
 	if !runtime.authorityClockAt.IsZero() && now.After(runtime.authorityClockAt) {
@@ -2489,6 +2500,20 @@ func (server *Server) recordCompetitiveAIHumanPackagesOnRoomActor(runtime *liveC
 	for _, packet := range packages {
 		if _, human := runtime.humanIDs[packet.PlayerID]; !human {
 			continue
+		}
+		if packet.PlayerID == arbitratorID && !runtime.authorityClockReady {
+			// A reliable upload may contain older occurrences under a newer
+			// send clock. Seed before the earliest fact so its state is applied
+			// before any later policy decisions in this same batch.
+			firstClock := packet.Time
+			for _, message := range packet.Messages {
+				for _, clock := range []uint32{message.Time, competitiveAIEventClock(message)} {
+					if clock >= battleengine.NativeRoundStartClockMS && (firstClock < battleengine.NativeRoundStartClockMS || clock < firstClock) {
+						firstClock = clock
+					}
+				}
+			}
+			runtime.observeAuthorityClockLocked(firstClock, observedAt)
 		}
 		for _, message := range packet.Messages {
 			if message.DataID > 0xffff {

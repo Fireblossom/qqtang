@@ -176,6 +176,25 @@ func (runtime *Runtime) EngineSnapshot() *Engine {
 	return runtime.engine.Clone()
 }
 
+// SynchronizeInitialClock attaches an unstarted native simulation to the
+// client's first observed scene clock without replaying AI inputs during load
+// or idle time. Once the world has advanced, its clock cannot be reset.
+func (runtime *Runtime) SynchronizeInitialClock(sceneMS uint32) error {
+	if runtime == nil || runtime.engine == nil {
+		return fmt.Errorf("battle runtime is nil")
+	}
+	engine := runtime.engine
+	if engine.rules.StartClockMS != NativeRoundStartClockMS || engine.elapsedMS != engine.rules.StartClockMS ||
+		len(engine.bombs) != 0 || len(engine.flames) != 0 || engine.outcome.Ended {
+		return fmt.Errorf("native world has already started")
+	}
+	if sceneMS < NativeRoundStartClockMS || sceneMS >= engine.rules.RoundDurationMS {
+		return fmt.Errorf("initial native clock %d is outside the playable round", sceneMS)
+	}
+	engine.elapsedMS = sceneMS
+	return nil
+}
+
 // ReconcileHumanMovement applies an authenticated original-client absolute
 // movement sample. This boundary is available only for human participants;
 // virtual policies must continue to advance exclusively through Step.
