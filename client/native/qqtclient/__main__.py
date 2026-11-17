@@ -229,9 +229,14 @@ def main() -> int:
             for event in pygame.event.get():
                 if runtime.activity is not None:
                     runtime.activity.handle(event)
+                # A hook returning True used the event up (an avatar click in
+                # a chat room is taken out of the input queue before the
+                # widgets see it, Client.exe 0x00457AE0).
+                consumed = False
                 for hook in runtime.event_hooks:
-                    hook(event)
-                runtime.handle(event)
+                    consumed = bool(hook(event)) or consumed
+                if not consumed:
+                    runtime.handle(event)
             runtime.tick(elapsed)
             for hook in runtime.tick_hooks:
                 hook(elapsed)

@@ -1,4 +1,5 @@
-"""REQUEST_LOGIN (0x0064) and RESPONSE_LOGIN schema 0x07D5.
+"""REQUEST_LOGIN (0x0064) and RESPONSE_LOGIN schema 0x07D5; REQUEST_LOGOUT
+(0x0065, schema 0x03EE).
 
 Layouts follow internal/protocol/game/login.go and login_response.go; all
 integers are big-endian.
@@ -76,6 +77,17 @@ def build_login_request(uin: int, nickname: str, gender: int, section_id: int, r
     # No CONFIG_FILE_INFO entries; ClientType and CSVersion follow the empty list.
     payload += struct.pack(">II", 0, 0)
     return payload
+
+
+LOGOUT_COMMAND = 0x0065
+
+
+def build_logout_request(uin: int, now: int | None = None) -> bytes:
+    """REQUEST_LOGOUT as QQTSection 0x10019E0D fills it: u32 UIN, u32 time,
+    u8 statistic item count and 5-byte items (internal/protocol/game/
+    logout.go). The items come from a statistics service only when its flag
+    (+0xC610) is set; the host has none and sends zero."""
+    return struct.pack(">IIB", uin, (int(time.time()) if now is None else now) & 0xFFFFFFFF, 0)
 
 
 class Reader:

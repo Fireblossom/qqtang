@@ -2,9 +2,10 @@
 broadcasts and whispers.
 
 The lobby chat list shows public lines and whispers; the whisper tab shows
-whispers only. Bugle messages go to the scripts' NotifyBroadcast, which runs
-the scrolling banner on the lobby, room and game screens. Lobby chat that
-arrives while the player is in a room is not shown, as in the original.
+whispers only. Bugle messages wait in the section timer's queue
+(section_timer.py), which hands them to the scripts' NotifyBroadcast for the
+banner on the lobby, room and game screens. Lobby chat that arrives while the
+player is in a room is not shown, as in the original.
 """
 
 from __future__ import annotations
@@ -15,6 +16,7 @@ from . import slash
 from .net import chat
 from .runtime import UIRuntime
 from .script import call_script, log
+from .section_timer import Bugle, split_bugle
 from .session import Session
 
 LOBBY_CHAT = "UI.selRoom.chatArea.chatPanel.chatList"
@@ -123,7 +125,12 @@ def build_chat_natives(runtime: UIRuntime, session: Session) -> dict[str, Callab
         message = chat.parse_section_message(packet.payload)
         log(f"[chat] {'bugle' if message.bugle else 'lobby'} {message.nickname}: {message.text} (screen {runtime.current_screen})")
         if message.bugle:
-            script("NotifyBroadcast", message.nickname + chat.SAID, message.uin, message.text)
+            # 0x1001F3D6 -> 0x10008A0F: queued, shown by the 500 ms timer.
+            timer = getattr(session, "section_timer", None)
+            if timer is not None:
+                identity = session.profile.identity if session.profile else 0
+                name, text = split_bugle(message.line, message.uin, identity)
+                timer.bugles.push(Bugle(message.uin, name, text, message.effect))
         elif runtime.current_screen == "selRoom":
             show((LOBBY_CHAT,), message.nickname + chat.SAID + message.text, CHAT_COLOR)
 

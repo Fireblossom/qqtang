@@ -23,6 +23,7 @@ from typing import Any, Callable
 from .net import accountauth, directory, game, player
 from .runtime import UIRuntime
 from .script import call_script, log
+from .section_timer import SectionTimer
 
 # A second local server (for tests running side by side) can be reached
 # through QQT_AUTH_PORT and QQT_DIRECTORY_PORT.
@@ -47,6 +48,8 @@ class Session:
         self.pets: Any = None
         # The marriage records (marriage.py sets it); the room pairs couples.
         self.marriage: Any = None
+        # The section's 500 ms timer with the bugle queue (section_timer.py).
+        self.section_timer: SectionTimer | None = None
         self.uin = 0
         self.nickname = ""
         self.gender = 0
@@ -113,6 +116,29 @@ def build_session_natives(runtime: UIRuntime, session: Session) -> dict[str, Cal
 
     def notify(message: str) -> None:
         runtime.show_msgbox(message, "", 0, "UI.SysMsgbox", 0)  # 0: no ui_OnMsgBoxResult action
+
+    def callback(name: str, *args: Any) -> Any:
+        function = runtime.namespace.get(name)
+        return call_script(function, *args) if callable(function) else None
+
+    session.section_timer = SectionTimer(callback, lambda: session.profile is not None)
+    runtime.tick_hooks.append(session.section_timer.advance)
+
+    def on_event(event: Any) -> None:
+        """Client.exe's window procedure 0x0042F140 runs the script's
+        leaveSection() (uiSelRoom: the lobby's leave button, so a logout)
+        before Alt+F4 quits (WM_SYSKEYDOWN VK_F4, PostQuitMessage) and when
+        the title bar's close button sends the window to the tray (SC_CLOSE).
+        Here closing the window (or Cmd+Q) quits instead."""
+        import pygame
+
+        if event.type == pygame.KEYDOWN and event.key == pygame.K_F4 and event.mod & pygame.KMOD_ALT:
+            script("leaveSection")
+            runtime.quit_requested = True
+        elif event.type == pygame.QUIT and not runtime.quit_requested:
+            script("leaveSection")
+
+    runtime.event_hooks.append(on_event)
 
     # Account login ---------------------------------------------------------
 
@@ -229,6 +255,7 @@ def build_session_natives(runtime: UIRuntime, session: Session) -> dict[str, Cal
             notify(response.reason.decode("gbk", "replace") or "进入分区失败")
             return
         session.profile = response
+        session.section_timer.start()  # responselogin 0x1001B2EA -> 0x10021094
         log(f"[session] entered section {session.section.name if session.section else '?'} as player {response.player_id}")
         # Listeners prepare lobby state before the screen's OnInit reads it.
         for listener in session.on_entered:
@@ -268,6 +295,15 @@ def build_session_natives(runtime: UIRuntime, session: Session) -> dict[str, Cal
         threading.Thread(target=work, name="section-login", daemon=True).start()
 
     def LogoutSection(*_args):
+        """Client.exe 0x0048B800 -> QQTSection 0x10019E0D. Once logged in
+        (+0x1A8 holds the UIN), 0x1001C23E runs NotifyRemoveMsg(), restarts
+        the section timer and sends REQUEST_LOGOUT 0x0065; then the
+        connection is closed without waiting for the reply."""
+        if session.connection is not None and session.profile is not None:
+            script("NotifyRemoveMsg")
+            session.section_timer.start()
+            session.send(player.LOGOUT_COMMAND, player.build_logout_request(session.uin))
+            log(f"[session] logout {session.uin}")
         session.disconnect()
 
     zone_speeds: dict[str, int] = {}
@@ -334,5 +370,5 @@ def build_session_natives(runtime: UIRuntime, session: Session) -> dict[str, Cal
         mode, points, level, level_value = entries[int(index)] if 0 <= int(index) < len(entries) else (0, 0, 0, 0)
         return types.SimpleNamespace(m_byGameMode=mode, m_dwPatternPoint=points, m_wPatternLevel=level, m_dwLevelValue=level_value)
 
-    excluded = ("script", "notify", "zone_sections", "on_packet", "on_closed", "on_login", "pattern_points", "ping_ms")
+    excluded = ("script", "notify", "callback", "on_event", "zone_sections", "on_packet", "on_closed", "on_login", "pattern_points", "ping_ms")
     return {name: value for name, value in locals().items() if callable(value) and name not in excluded and not name.startswith("_")}

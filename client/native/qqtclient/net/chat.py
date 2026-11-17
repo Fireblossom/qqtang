@@ -42,6 +42,8 @@ class SectionMessage:
     text: str
     uin: int
     bugle: bool
+    line: str = ""  # the whole "<nickname>说:<text>"
+    effect: int = 0  # the bugle's bubble effect item (0: the plain bubble)
 
 
 @dataclasses.dataclass
@@ -82,7 +84,8 @@ def parse_section_message(payload: bytes) -> SectionMessage:
     message = _decode(payload[6:6 + length])
     nickname, _, text = message.partition(SAID)
     uin, identity = struct.unpack_from(">II", payload, 6 + length) if len(payload) >= 14 + length else (0, 0)
-    return SectionMessage(source, nickname, text, uin, bool(identity & BUGLE_IDENTITY))
+    effect = struct.unpack_from(">I", payload, 14 + length)[0] if len(payload) >= 18 + length else 0
+    return SectionMessage(source, nickname, text, uin, bool(identity & BUGLE_IDENTITY), message, effect)
 
 
 def parse_whisper(payload: bytes) -> Whisper:
