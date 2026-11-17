@@ -428,6 +428,8 @@ def build_natives(runtime: UIRuntime, resources: Resources, audio: Audio) -> dic
         # 0x005310B0 (F11) and 0x0048E620 do nothing in the final client.
         "sc_printScreen": lambda: None,
         "sc_LogOutMemoryStatus": lambda: None,
+        # 0x0048C710 warms Client.exe's resource cache; sprites load on demand here.
+        "PreLoadRes": lambda: None,
         # Click counters for the statistics service (0x00531430 and its
         # neighbours call service 0x0079E500); nothing visible.
         "SC_ClickCustomSettingBtn": lambda: None,
