@@ -57,6 +57,12 @@ func TestOfflineBench(t *testing.T) {
 		for index := 0; index < count; index++ {
 			entry := maps[index%len(maps)]
 			players := offlineTeams(2, 1, 2)
+			if os.Getenv("QQT_OFFLINE_BENCH_SWAP") != "" {
+				players = offlineTeams(2, 2, 1) // the arbitrator (player 1) on team 2
+				if os.Getenv("QQT_OFFLINE_BENCH_SWAP") == "mix" {
+					players = offlineTeams(1, 1, 2, 1, 2)
+				}
+			}
 			for seat := range players {
 				players[seat].AI = true
 				if players[seat].Team == 1 && teamPolicy != "" {

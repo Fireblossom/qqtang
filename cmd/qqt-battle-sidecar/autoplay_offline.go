@@ -45,13 +45,40 @@ func (bot *autoplayBot) bombsChanged(engine *battleengine.Engine) bool {
 	return changed
 }
 
-// hitsTeammate: a bubble at cell would reach a teammate, active or trapped.
+// hitsTeammate: a bubble at cell would catch a teammate: one already
+// trapped, or an active one that could not get out of the blast (with
+// every other known blast) in time. A teammate that can step aside is left
+// to do so, as people do.
 func (bot *autoplayBot) hitsTeammate(engine *battleengine.Engine, world autoplayWorld, actor battleengine.Actor, cell battleengine.Cell) bool {
+	var covered []battleengine.Actor
 	for _, other := range engine.Actors() {
 		if other.PlayerID == actor.PlayerID || other.TeamID != actor.TeamID || other.State == battleengine.ActorEliminated {
 			continue
 		}
 		if world.blastCovers(cell, actor.BombPower, other.Position.Cell()) {
+			if other.State == battleengine.ActorTrapped {
+				return true
+			}
+			covered = append(covered, other)
+		}
+	}
+	if len(covered) == 0 {
+		return false
+	}
+	clone := engine.Clone()
+	if _, err := clone.ApplyVerifiedBombPlacementAt(actor.PlayerID, cell, uint16(actor.BombPower)+1, 0, clone.ElapsedMS()); err != nil {
+		return true
+	}
+	timeline, err := clone.DangerTimeline(autoplayHorizonMS)
+	if err != nil {
+		return true
+	}
+	cloneWorld := newAutoplayWorld(clone)
+	cloneWorld.strict = true
+	for _, mate := range covered {
+		msPerCell := uint32(1000 * battleengine.CellSizePixels / max(1, int(mate.SpeedPixelsPerSecond)))
+		// Allow for the teammate noticing the bubble a little late.
+		if path := cloneWorld.escape(mate.Position.Cell(), timeline, clone.ElapsedMS()+autoplayReplanMS, msPerCell); len(path) <= 1 {
 			return true
 		}
 	}

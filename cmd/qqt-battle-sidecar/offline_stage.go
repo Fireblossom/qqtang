@@ -239,6 +239,16 @@ func (stage *offlineStage) tick(now uint32) {
 		stage.victory = false
 		stage.finishVictory(now, now, 0)
 	}
+	// The server sets no adventure timeout and what Client.exe does when the
+	// stage clock runs out is not known; offline the route is lost then.
+	if limit := hub.begin.GameTimeMS * 1000; stage.referee.result == nil && !stage.victory && limit > 0 && now >= limit {
+		over := game.GameOverData{Time: now, GameMode: game.SettlementGameModeAdventure}
+		for _, info := range hub.begin.Players {
+			over.Results = append(over.Results, stage.result(info.PlayerID, game.GameResultLoss))
+		}
+		stage.referee.result, stage.referee.dueAt = &over, now
+		hub.logf("stage %d time is up", stage.current.ID)
+	}
 }
 
 // nextMap is probe handleAdventureNextMap: the survivors go on to the next
