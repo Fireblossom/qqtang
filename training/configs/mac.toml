@@ -1,0 +1,59 @@
+# Real worker + QQTPolicy on an Apple Silicon Mac (MPS), for short local runs.
+#   training/tools/build-worker.sh   (once)
+#   cd training && uv run python -m qqtrain.train --config configs/mac.toml
+#   ... --set model.init_from_baseline=false          # from scratch instead of U2392
+# Client data: QQTang-Local's runtime/client-patched (set worker.client_root).
+
+[run]
+dir = "runs/mac"
+device = "mps"
+total_agent_steps = 20_000_000
+max_minutes = 3.0
+checkpoint_every = 20
+resume = ""
+
+[worker]
+client_root = "~/Downloads/QQTang-Local-v1.3.4/QQTang-Local/runtime/client-patched"
+num_workers = 4
+groups = 2
+
+[worker.env]
+GOMAXPROCS = "2"
+
+[worker.config]
+envs = 64
+agents = 4
+player_counts = [2, 2, 4]
+spatial_dtype = "f16"
+workers = 0
+decision_cadence = "server"
+random_phase = true
+
+[model]
+factory = "qqtrain.model"
+init_from_baseline = true
+
+[ppo]
+rollout_steps = 64
+seq_len = 16
+epochs = 2
+minibatches = 4
+lr = 1e-4
+lr_final = 3e-5
+lr_warmup_updates = 5
+value_warmup_updates = 5
+bf16 = false   # autocast is CUDA-only in the trainer
+
+[league]
+snapshot_every = 10
+resident = 2
+
+[eval]
+every = 0
+num_workers = 2
+episodes = 16
+opponents = ["baseline"]
+
+[eval.modes.1v1.worker_config]
+envs = 8
+player_counts = [2]
