@@ -37,25 +37,41 @@ var (
 
 type offlinePolicies struct {
 	loaded battleai.LoadedPolicy
-	onnx   bool // the model plays this match's AI seats
+	onnx   bool // the model is loaded for this match
 	begin  game.GameBeginData
 	reason string // why the bot plays rules 1/4
+	// Seats whose own policy is the bot.
+	botSeats map[uint16]bool
 }
 
-func newOfflinePolicies(options offlineInit, begin game.GameBeginData, entry mapdata.CompetitiveMap, competitive bool) (*offlinePolicies, error) {
-	policies := &offlinePolicies{begin: begin}
+func newOfflinePolicies(options offlineInit, begin game.GameBeginData, entry mapdata.CompetitiveMap, competitive, boss bool) (*offlinePolicies, error) {
+	policies := &offlinePolicies{begin: begin, botSeats: map[uint16]bool{}}
 	mode := options.Policy
 	if mode == "" {
 		mode = offlinePolicyAuto
 	}
-	switch mode {
-	case offlinePolicyBot:
-		return policies, nil
-	case offlinePolicyAuto, offlinePolicyONNX:
-	default:
-		return nil, fmt.Errorf("unknown offline AI policy %q", mode)
+	wanted := false
+	for _, seat := range options.Players {
+		seatMode := seat.Policy
+		if seatMode == "" {
+			seatMode = mode
+		}
+		switch seatMode {
+		case offlinePolicyBot:
+			policies.botSeats[seat.ID] = true
+		case offlinePolicyAuto, offlinePolicyONNX:
+			wanted = true
+			if seatMode == offlinePolicyONNX {
+				mode = offlinePolicyONNX // a seat that asks for the model needs it
+			}
+		default:
+			return nil, fmt.Errorf("unknown offline AI policy %q", seatMode)
+		}
 	}
-	combat := competitive && len(entry.BossCandidates) == 0 &&
+	if !wanted {
+		return policies, nil
+	}
+	combat := competitive && !boss &&
 		(entry.Rule == mapdata.CompetitiveRuleOrdinary || entry.Rule == mapdata.CompetitiveRuleWrestle)
 	if !combat {
 		if mode == offlinePolicyONNX {
@@ -107,7 +123,7 @@ func offlineONNXPaths(options offlineInit) (string, string) {
 }
 
 func (policies *offlinePolicies) forSeat(playerID uint16) localPolicy {
-	if !policies.onnx {
+	if !policies.onnx || policies.botSeats[playerID] {
 		return nil
 	}
 	steps := uint32(offlineONNXDecisionMS / tickMS)
@@ -122,7 +138,7 @@ func (policies *offlinePolicies) forSeat(playerID uint16) localPolicy {
 }
 
 func (policies *offlinePolicies) name(playerID uint16) string {
-	if policies.onnx {
+	if policies.onnx && !policies.botSeats[playerID] {
 		variant := policies.loaded.Contract.ModelVariant
 		if variant == "" {
 			variant = "model"

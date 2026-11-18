@@ -35,6 +35,9 @@ type player struct {
 	Team byte   `json:"team"`
 	// AI marks an offline opponent driven by the sidecar's wander policy.
 	AI bool `json:"ai"`
+	// Policy overrides the offline match's AI policy for this seat ("bot",
+	// "onnx").
+	Policy string `json:"policy,omitempty"`
 	// Props brought from the room (online, item rooms only).
 	Prepared []preparedView `json:"prepared,omitempty"`
 	// ExtPoint is GAME_BEGIN's adventure courage (the PVE level).

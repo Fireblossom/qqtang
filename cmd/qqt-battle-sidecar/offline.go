@@ -217,7 +217,7 @@ func newOfflineHub(clientRoot string, options offlineInit) (*offlineHub, error) 
 	if err != nil {
 		return nil, err
 	}
-	if hub.policies, err = newOfflinePolicies(options, hub.begin, entry, competitive); err != nil {
+	if hub.policies, err = newOfflinePolicies(options, hub.begin, entry, competitive, hub.boss != nil); err != nil {
 		return nil, err
 	}
 	if err := hub.startSeats(); err != nil {
