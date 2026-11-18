@@ -17,10 +17,12 @@
 #   (~2.6 active agents per env, ~75 % learner-controlled). Storage on the GPU:
 #   130 x 2048 x 45.6 KB = 12 GB of f16 observations + 0.4 GB scalars/memory.
 # * PPO: 3 epochs x 8 minibatches of ~16k samples (~500 chunks x 32 decisions). The
-#   3.2M-parameter U2392 net needs roughly 0.5-1 MB of bf16 activations per sample,
-#   i.e. <=16 GB per minibatch. Expected GPU-bound: ~75 us/sample/update vs ~16 us of
-#   collection, so the update dominates; lower ppo.epochs or try model.compile = true
-#   before adding workers.
+#   3.2M-parameter U2392 net (~170 MFLOP fwd+bwd per sample) needs roughly 0.5-1 MB
+#   of bf16 activations per sample, i.e. <=16 GB per minibatch. README "Model"
+#   estimates 80k-200k training samples/s on the H100 -> 3 epochs of 125k samples
+#   take ~2-5 s, about the ~2-4 s the workers need for the rollout (~32k env
+#   steps/s). If the update dominates, lower ppo.epochs or try model.compile = true;
+#   if the workers do, raise worker.num_workers (bandwidth permitting).
 # * Horizon: gamma 0.995 at 100 ms decisions = ~20 s effective horizon; GAE lambda 0.95.
 
 [run]

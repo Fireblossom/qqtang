@@ -4,10 +4,12 @@ The binding interface (training/README.md) is
 
     logits, value, next_memory = policy(spatial, scalars, legal, memory, reset)
 
-R2's ``qqtrain.model`` provides the real network, the U2392 loader and the
-ONNX export. Until it lands (or when a config asks for it) the trainer uses
-``StandInPolicy``, a small network with the exact same interface, and
-``RandomPolicy`` stands in for the frozen baseline.
+``qqtrain.model.QQTPolicy`` is the real network (``model.factory = "auto"``
+or ``"qqtrain.model"``); the frozen baseline is ``QQTPolicy.from_onnx`` of
+``baseline.onnx`` and exports go through ``qqtrain.export.export_onnx``.
+``StandInPolicy`` (``model.factory = "standin"``) is a small network with the
+same interface for fast CPU tests and the mock smoke run; ``RandomPolicy``
+replaces the baseline only when the model module or the ONNX file is missing.
 
 Sequence forward for truncated BPTT: if the policy has a ``forward_sequence``
 method it is used, else ``sequence_forward`` loops over time calling the

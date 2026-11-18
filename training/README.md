@@ -236,3 +236,175 @@ throughput for these small convolutions; measure with
 On CPU the dilated depthwise convolutions use nine shifted multiply-adds
 instead of `nn.Conv2d` (PyTorch's CPU `slow_conv_dilated2d` made a training
 step 9x slower); CUDA, MPS and ONNX export use the convolution itself.
+
+## Trainer
+
+Recurrent PPO with a self-play league, in `training/qqtrain/` (everything
+except `model.py`, `export.py`, `synthetic.py`, `dump.py`):
+
+| File | Role |
+| --- | --- |
+| `worker.py` | Worker processes and the binary protocol client |
+| `mock_worker.py` | Pure-Python worker with the same protocol (tests, smoke runs) |
+| `rollout.py` | Storage, per-slot transitions, GAE, BPTT chunks, the collector |
+| `ppo.py` | PPO loss and update |
+| `league.py` | Opponent pool, PFSP sampling, team assignment, result parsing |
+| `evaluate.py` | Fixed-seed matches, confidence intervals, Elo, best-policy export |
+| `checkpoint.py` | Checkpoints, metrics (JSON lines, optional TensorBoard) |
+| `policy_api.py` | Adapter to `QQTPolicy`, samplers, stand-in networks |
+| `config.py`, `train.py` | TOML configs, CLI, training loop |
+
+### Running
+
+```sh
+cd training
+uv run python -m qqtrain.train --config configs/smoke.toml      # mock worker, stand-in net, CPU, 2 min
+uv run python -m qqtrain.train --config configs/smoke.toml \
+    --set 'model.factory="qqtrain.model"' --set 'run.device="mps"'   # same with QQTPolicy
+uv run python -m qqtrain.train --config configs/h100.toml       # cluster (see below)
+uv run python -m qqtrain.evaluate --config configs/h100.toml --checkpoint RUN/checkpoints/ckpt_000500.pt
+uv run pytest tests/test_trainer_*.py
+```
+
+Every key can be overridden with `--set section.key=value` (TOML value).
+`worker.config` and `eval.modes.<name>.worker_config` are passed unchanged to
+the worker as its JSON config (schema in `cmd/qqt-train-worker/config.go`);
+the trainer only sets `seed` per worker (`run.seed * 1000003 + i * 1000`,
+shifted after a restart or resume). The worker executable defaults to
+`bin/qqt-train-worker-{platform}` (built by `tools/build-worker.sh`).
+`tests/test_trainer_integration.py::test_real_worker` runs the trainer
+against that binary when it and the client data (`QQT_CLIENT_ROOT`, default
+`~/Downloads/QQTang-Local-v1.3.4/QQTang-Local/runtime/client-patched`) exist.
+
+The run directory holds `train.log`, `metrics.jsonl` (one record per
+update), `eval.jsonl`, `checkpoints/ckpt_NNNNNN.pt` (model, optimizer, league,
+evaluator table, RNG states, counters, config), `league/snap_*.pt`,
+`export/` (best policy: `best_policy.pt`, `best.onnx` + `best.onnx.json` via
+`export_onnx`, `best_eval.json`) and `workers/` (per-worker JSON config and
+stderr log). With `run.resume = "auto"` the same command continues from the
+latest checkpoint; SIGTERM/SIGINT finish the update, checkpoint and exit.
+
+### Rollout pipeline
+
+* `WorkerPool` starts `worker.num_workers` processes and splits them into
+  `worker.groups` (2) pipelining groups. One I/O thread per worker reads each
+  response with `readinto` straight into that worker's slice of shared
+  observation buffers (`[all slots, ...]` torch tensors, pinned on CUDA; 1 MiB
+  pipes on Linux). Per step and group: wait for its observations, run the
+  learner and the opponents on the GPU, store the learner entries, send the
+  actions; the other group's workers simulate meanwhile. The first step of
+  the next rollout is sent before the PPO update, so workers also run during
+  the update (its actions carry the old policy's log-probabilities).
+* A worker that exits, hangs (`worker.step_timeout_s`), writes a bad magic or
+  malformed payload, or rejects a request is killed, restarted with a new seed
+  and RESET; its pending transitions are truncated (bootstrapped with their
+  own value) and its environments start new episodes. More than
+  `worker.max_restarts` restarts of one worker abort the run.
+* Storage is `[T+2, slots]` on the GPU (spatial f16). A transition is per slot,
+  from one of its decisions to its next one; entries exist only for active,
+  learner-controlled slots. Rewards that arrive while a slot is inactive (an
+  eliminated agent's terminal win/loss) go to its last decision, and the gap
+  is discounted as `gamma ** steps`. A decision still waiting for its reward
+  at the end of a rollout (agent eliminated, episode running) is carried into
+  row 0 of the next rollout instead of being trained with a wrong target. The
+  GRU memory advances only on the slot's own decisions and is cleared on
+  `reset` or `done`, as on the server.
+
+### PPO
+
+Clipped surrogate (0.2), clipped value loss (max of clipped/unclipped
+squared error), entropy bonus over legal actions (linearly decayed),
+advantage normalisation over the rollout, approximate-KL early stop
+(`ppo.target_kl`), AdamW with global gradient clipping, warm-up plus cosine
+LR schedule driven by `agent_steps / total_agent_steps`. Truncated BPTT:
+each slot's decisions are cut into chunks of `ppo.seq_len`, replayed with
+`QQTPolicy.forward_sequence` from the memory recorded at the chunk start
+(stored state, no burn-in) with the stored reset flags. bf16 autocast and
+TF32 on CUDA; `model.compile` wraps the sequence forward in `torch.compile`
+(not yet tried on CUDA). `model.init_from_baseline` starts from U2392 and
+`ppo.value_warmup_updates` first trains only the new value head (policy loss
+and entropy off, no KL stop; the shared trunk still receives value
+gradients).
+
+Sampling: the learner samples from the full masked softmax (temperature 1),
+so the stored log-probabilities are exactly the behaviour policy. The server
+decodes differently (`battleai.SampledCandidatePolicy`): the best action is
+always eligible, others only if `exp(logit - best) >= min_p` (0.1) and they
+keep a refuge according to `scalars[162:167]`, `scalars[172:177]` and
+`scalars[95]` (item actions always). `policy_api.deployed_sample` reproduces
+that decoder; frozen league members and all evaluation games use it, so U2392
+plays as deployed and evaluation measures the deployed behaviour.
+
+### League
+
+Pool: `latest` (the learner itself), `baseline` (U2392,
+`QQTPolicy.from_onnx(baseline.onnx)`), snapshots every
+`league.snapshot_every` updates (oldest evicted beyond `max_snapshots`).
+Each environment draws its opponent when an episode starts: `latest` with
+`self_play_prob`, otherwise a frozen member with PFSP weight
+`(1 - score) ** pfsp_power` (score = the learner's decayed, smoothed score
+against it), the baseline keeping at least `baseline_prob` of those games.
+`resident` frozen members are drawn per rollout and kept on the device, so a
+step runs at most `1 + resident` networks, each batched over its slots. Roles
+are per team: against a frozen member one team (uniformly chosen) is the
+learner and the others the opponent; against `latest` every team is trained
+(`train_both_sides`). Only learner entries are stored and trained. Results
+come from the worker's episode info (`teams[].result`, or `outcome` /
+`winner_team`).
+
+### Evaluation
+
+Every `eval.every` updates, for each mode in `eval.modes` (1v1, 2v2) and
+each opponent (`baseline`, the last N snapshots): a fresh pool with the mode's
+worker config (curriculum removed) and a fixed seed, so every opponent gets
+the same starting states; each environment plays a fixed number of episodes
+and the learner side alternates between teams. Reported: W/D/L, win rate with
+a Wilson 95 % interval, score with a normal 95 % interval, mean length; the
+accumulated match table gives Bradley-Terry ratings on the Elo scale with
+U2392 anchored at 1000. A new best mean score against U2392 saves
+`export/best_policy.pt` and exports `export/best.onnx` (+ `.json`).
+Training pauses during evaluation.
+
+### H100 configuration (`configs/h100.toml`)
+
+The comments in the file give the arithmetic. In short: 16 worker processes
+(`GOMAXPROCS=1`, `workers=1`) x 32 environments x 4 slots, 2 groups;
+`T=128`, chunks of 32, 3 epochs x 8 minibatches (~16k samples each);
+gamma 0.995 (100 ms decisions, ~20 s horizon), lambda 0.95; LR 2.5e-4 ->
+2.5e-5; start from U2392 with 30 value warm-up updates; league 50 %
+self-play, at least 30 % U2392 among the rest. Measured on the Mac, one
+worker process delivers >= 11k decisions/s (3.7k env steps/s, limited by the
+Python reader); every env step ships 182 KB (four f16 slots, empty slots of
+2-player episodes included), so the observation stream (~6 GB/s at 16
+workers) rather than the core count bounds useful workers. Rollout storage is
+~12 GB. Check `learner_decisions_per_s`, `collect_s`, `worker_wait_s` and
+`update_s` in `metrics.jsonl` on the first run and adjust workers/epochs.
+
+### Cluster (42, `ssh 42`)
+
+1. On the Mac: `training/scripts/push_to_cluster.sh` builds the Linux worker
+   (`tools/build-worker.sh`) and rsyncs `training/` (with the binary),
+   `configs/models/` and the client data the worker reads (`map/`, `config/`,
+   `object/mapElem/` of `runtime/client-patched`, plus
+   `data/qqt_competitive_map_rules.json`) to `/mlde/qqtang-rl/`.
+2. In the container: `bash /mlde/qqtang-rl/repo/training/scripts/cluster_run.sh`
+   installs uv if needed, `uv sync`s into `/mlde/qqtang-rl/venv` (cache on
+   /mlde), picks `min(config, nproc - 4)` workers and starts training in tmux
+   session `qqtrain-$RUN` (nohup fallback), everything under
+   `/mlde/qqtang-rl/runs/$RUN`. `--status` and `--stop` (SIGTERM, checkpoint)
+   are included. After the container is reclaimed, re-running the script
+   resumes from the last checkpoint. Neither script has been run against the
+   cluster yet.
+
+### Interface notes and deviations
+
+* Response `payload bytes`: the client accepts the size with or without the
+  info block (the worker counts it).
+* The episode info is read for `env`, `length` and the result (`teams` list
+  or map, else `outcome`/`winner_team`/`draw`); other fields are logged only.
+* Memory is also cleared after `done` (not only on `reset`), and an active
+  slot with an all-zero legal mask gets "wait" made legal (counted as
+  `empty_legal`) instead of crashing the sampler.
+* Team IDs index a 256-entry mask, so any `u8` team value works.
+* `StandInPolicy` remains for CPU tests and the mock smoke run (QQTPolicy
+  trains at ~400 samples/s on CPU); everything else uses `QQTPolicy`.
