@@ -1,0 +1,63 @@
+# Local smoke run: mock worker, stand-in policy, CPU, about two minutes.
+#   cd training && uv run python -m qqtrain.train --config configs/smoke.toml
+# The mock's reward is trivially learnable (pick the action flagged in the
+# scalars), so reward_per_decision should rise from ~0.004 towards 0.05.
+
+[run]
+dir = "runs/smoke"
+seed = 1
+device = "cpu"
+total_agent_steps = 400_000
+max_minutes = 2.0
+checkpoint_every = 20
+keep_checkpoints = 2
+resume = ""          # always start fresh
+
+[worker]
+command = ["{python}", "-m", "qqtrain.mock_worker"]
+num_workers = 4
+groups = 2
+step_timeout_s = 30.0
+
+[worker.config]
+envs = 8
+agents = 4
+spatial_dtype = "f16"
+player_counts = [2, 4]
+decision_cadence = "server"   # like the real worker's default for training: early re-decisions, unequal steps
+min_len = 20
+max_len = 60
+hit_reward = 0.05
+
+[model]
+factory = "standin"
+
+[ppo]
+rollout_steps = 32
+seq_len = 16
+epochs = 4
+minibatches = 4
+gamma = 0.99
+lr = 1e-3
+lr_final = 3e-4
+lr_warmup_updates = 2
+entropy_coef = 0.01
+entropy_coef_final = 0.001
+target_kl = 0.05
+
+[league]
+snapshot_every = 10
+max_snapshots = 5
+resident = 2
+
+[eval]
+every = 25
+num_workers = 2
+episodes = 32
+opponents = ["baseline", "snapshots:1"]
+
+[eval.modes.1v1.worker_config]
+player_counts = [2]
+
+[eval.modes.2v2.worker_config]
+player_counts = [4]
