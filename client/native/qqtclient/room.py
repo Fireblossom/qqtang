@@ -37,6 +37,14 @@ NATIVE_SEAT_OPEN, NATIVE_SEAT_CLOSED, NATIVE_SEAT_OCCUPIED = 0, 1, 2
 # Where room_setPlayerPos points relative to the 100x100 avatar canvas.
 AVATAR_ANCHOR = (60, 98)
 CHAT_ROOM_TYPE = 4
+# The offline practice room (host addition, docs/offline-ai-re.md): the room
+# screen with the room natives answered locally; AI seats instead of people.
+PRACTICE_ROOM_ID = 1
+PRACTICE_ROOM_NAME = "练习房间"
+PRACTICE_DEFAULT_MAP = 311  # 自由练习's map (QQTSection 0x1001C6F2)
+PRACTICE_AI_UIN = 10_000  # AI seat UINs: this plus the seat
+PRACTICE_AI_ROLES = 8  # AIs pick among the eight ordinary roles
+PRACTICE_MAX_AI_TEAM = 4  # clicking an AI seat cycles its team 2, 3, 4, 1, then frees the seat
 WEDDING_ROOM_FLAG = 2  # RoomFlag of a wedding chat room (docs/wedding-re.md §4)
 
 
@@ -66,6 +74,7 @@ class RoomState:
         self.avatars = [SeatAvatar() for _ in range(room.MAX_SEATS)]
         self.pending_password = ""
         self.backgrounds: list[int] = []  # chat-room backgrounds the server offers
+        self.offline = False  # the offline practice room: nothing goes to the server
 
     @property
     def room_id(self) -> int:
@@ -95,13 +104,33 @@ def native_room_player(member: room.RoomPlayer | None) -> types.SimpleNamespace:
     )
 
 
+def practice_ai_member(seat: int, team: int, role: int) -> room.RoomPlayer:
+    """An AI seat of the practice room: always ready."""
+    info = empty_game_info()
+    info.role_id = role
+    return room.RoomPlayer(uin=PRACTICE_AI_UIN + seat, nickname=f"电脑{seat - 1}", player_id=seat, team=team, seat=seat, status=1,
+                           gender=seat % 2, icon_id=0, identity=0, game_info=info, items=[], kin_index=0, kin_name="",
+                           kin_flag=b"", pet=b"")
+
+
+def practice_players(members: dict[int, room.RoomPlayer], local_uin: int) -> list[dict[str, Any]]:
+    """The offline sidecar's seats from the practice room, by seat."""
+    return [{"id": member.player_id, "role": member.game_info.role_id or 1, "team": member.team, "ai": member.uin != local_uin,
+             "name": member.nickname, "seat": member.seat - 1, "points": member.game_info.points,
+             "ext_point": member.game_info.extended_points}
+            for _, member in sorted(members.items())]
+
+
 def build_room_natives(runtime: UIRuntime, session: Session, avatars: AvatarCache,
                        start_battle: Callable[[bytes, Any], None] | None = None, sprites: Any = None,
-                       font: Callable[[int], pygame.font.Font] | None = None) -> tuple[dict[str, Callable[..., Any]], Callable]:
+                       font: Callable[[int], pygame.font.Font] | None = None,
+                       start_offline: Callable[..., None] | None = None) -> tuple[dict[str, Callable[..., Any]], Callable]:
     """Return the natives and the SC_room_drawPlayer draw callback.
 
     start_battle(GameBegin payload, battle.online.MatchContext) switches to
-    the match when the server starts it."""
+    the match when the server starts it. start_offline(map_id, players,
+    local_id, free_rule, game_type, wear, back) starts a practice room's
+    offline match (battle/offline.py)."""
     state = RoomState()
     walk = RoomWalk(runtime, session, state, avatars, sprites, font)
 
@@ -197,7 +226,7 @@ def build_room_natives(runtime: UIRuntime, session: Session, avatars: AvatarCach
         enter(snapshot)
 
     def leave_to_lobby() -> None:
-        state.snapshot, state.members = None, {}
+        state.snapshot, state.members, state.offline = None, {}, False
         if runtime.current_screen == "room":
             runtime.goto_screen("selRoom")
             runtime.namespace["NotifyRoom"](session.game_type)  # refresh the room list now
@@ -373,6 +402,76 @@ def build_room_natives(runtime: UIRuntime, session: Session, avatars: AvatarCach
     session.handlers.update(handlers)
     session.on_disconnected.append(lambda: setattr(state, "snapshot", None))
 
+    # The offline practice room ------------------------------------------
+
+    def open_practice_room() -> None:
+        """Enter the practice room: the local player on seat 1 (team 1) and
+        one AI opponent on seat 2 (team 2), map 311 as 自由练习."""
+        profile = session.profile
+        info = dataclasses.replace(profile.game_info) if profile is not None else empty_game_info()
+        info.role_id = int(session.state.get("last_role", 0) or 0) or info.role_id or 1
+        player_id = 1
+        mine = room.RoomPlayer(uin=session.uin, nickname=session.nickname or "我", player_id=player_id, team=1, seat=1, status=0,
+                               gender=session.gender, icon_id=0, identity=profile.identity if profile else 0, game_info=info,
+                               items=[], kin_index=0, kin_name="", kin_flag=b"", pet=b"")
+        snapshot = room.RoomSnapshot(result=0, room_id=PRACTICE_ROOM_ID, room_name=PRACTICE_ROOM_NAME, local_team=1, local_seat=1,
+                                     map_id=PRACTICE_DEFAULT_MAP, room_flag=0, owner_id=player_id,
+                                     seat_status=[room.SEAT_OPEN] * room.MAX_SEATS,
+                                     players=[mine, practice_ai_member(2, 2, info.role_id % PRACTICE_AI_ROLES + 1)], game_type=0)
+        snapshot.seat_status[0] = snapshot.seat_status[1] = room.SEAT_OCCUPIED
+        state.pending_password = ""
+        state.offline = True
+        enter(snapshot)
+        add_chat("练习房间：点空座位加电脑对手，点电脑换队伍（2→3→4→1 队友→移走），点开始。", SYSTEM_CHAT_COLOR)
+
+    def click_practice_seat(seat: int) -> None:
+        snapshot = state.snapshot
+        member = state.members.get(seat)
+        if member is not None:
+            if member.uin == session.uin:
+                return
+            # An AI joins as an opponent (team 2) and each click moves it on:
+            # 2, 3, 4, 1 (a teammate of team 1), then the seat empties.
+            if member.team == 1:
+                del state.members[seat]
+                snapshot.seat_status[seat - 1] = room.SEAT_OPEN
+            else:
+                member.team = member.team % PRACTICE_MAX_AI_TEAM + 1
+            refresh_seat(seat)
+            return
+        if snapshot.seat_status[seat - 1] == room.SEAT_LOCKED:
+            snapshot.seat_status[seat - 1] = room.SEAT_OPEN
+        else:
+            mine = me()
+            mine_team = mine.team if mine is not None else 1
+            role = (seat * 3) % PRACTICE_AI_ROLES + 1
+            state.members[seat] = practice_ai_member(seat, 2 if mine_team == 1 else 1, role)
+            snapshot.seat_status[seat - 1] = room.SEAT_OCCUPIED
+        refresh_seat(seat)
+
+    def start_practice() -> None:
+        mine = me()
+        if start_offline is None or state.snapshot is None or mine is None:
+            notify("离线对战不可用")
+            return
+        if len(state.members) < 2:
+            notify("请至少加入一个电脑")
+            return
+
+        def back_to_room() -> None:
+            if state.snapshot is not None:
+                show_room()
+            else:
+                runtime.goto_screen("selRoom")
+
+        wear = {member.player_id: tuple(sorted(state.avatars[member.seat - 1].wear.items())) for member in state.members.values()}
+        try:
+            start_offline(state.snapshot.map_id, practice_players(state.members, session.uin), mine.player_id,
+                          bool(state.snapshot.room_flag & room.PROPERTY_FREE_RULE), state.snapshot.game_type, wear, back_to_room)
+        except Exception as error:  # noqa: BLE001 - keep the room usable
+            log(f"[room] cannot start the practice match: {error}")
+            notify(f"无法开始练习：{error}")
+
     # Natives: lobby side -------------------------------------------------
 
     def CreateRoom(name, flag, _role_id, password):
@@ -392,7 +491,7 @@ def build_room_natives(runtime: UIRuntime, session: Session, avatars: AvatarCach
     # Natives: room screen ------------------------------------------------
 
     def LeaveRoom(_uin=0):
-        if state.snapshot is None:
+        if state.snapshot is None or state.offline:
             leave_to_lobby()
             return
         if not session.send(room.LEAVE_ROOM_COMMAND, room.build_simple_request(session.uin)):
@@ -423,6 +522,12 @@ def build_room_natives(runtime: UIRuntime, session: Session, avatars: AvatarCach
 
     def sc_modifyRoom(name, flag, password):
         name, flag, password = str(name), int(flag), str(password)
+        if state.offline:
+            state.name, state.password = name, password
+            if state.snapshot:
+                state.snapshot.room_flag = flag & room.PROPERTY_FREE_RULE
+            script("NotifyRoomPropChange")
+            return
         changes = room.MODIFY_NAME if name != state.name else 0
         if password:
             changes |= room.MODIFY_PASSWORD_PRESENT | room.MODIFY_PASSWORD_ENABLED
@@ -440,6 +545,9 @@ def build_room_natives(runtime: UIRuntime, session: Session, avatars: AvatarCach
         mine = me()
         if mine is None:
             return
+        if state.offline:
+            start_practice()
+            return
         if am_owner():
             session.send(room.START_GAME_COMMAND, room.build_simple_request(session.uin))
         else:
@@ -447,16 +555,29 @@ def build_room_natives(runtime: UIRuntime, session: Session, avatars: AvatarCach
             session.send(command, room.build_simple_request(session.uin))
 
     def UserSelRoleInRoom(_selected, role):
+        if state.offline and (mine := me()) is not None:
+            mine.game_info.role_id = int(role)
+            session.save_state(last_role=int(role))
+            refresh_seat(mine.seat)
+            return
         session.send(room.CHANGE_ROLE_COMMAND, room.build_change_role_request(session.uin, int(role)))
         session.save_state(last_role=int(role))
 
     def UserSelTeamInRoom(_selected, team):
+        if state.offline and (mine := me()) is not None:
+            mine.team = int(team)
+            refresh_seat(mine.seat)
+            return
         session.send(room.CHANGE_TEAM_COMMAND, room.build_change_team_request(session.uin, int(team)))
 
     def UserSelMapInRoom(map_id, continue_id=0):
         if state.snapshot is None:
             return
         game_type = state.snapshot.game_type
+        if state.offline:
+            state.snapshot.map_id = int(map_id)
+            script("ui_NotifyMapChange", int(map_id))
+            return
         if session.send(room.MODIFY_ROOM_INFO_COMMAND, room.build_modify_room_info_request(session.uin, int(map_id), game_type, int(continue_id))):
             # Only peers receive NOTIFY_CHANGE_MAP.
             state.snapshot.map_id = int(map_id)
@@ -467,6 +588,9 @@ def build_room_natives(runtime: UIRuntime, session: Session, avatars: AvatarCach
         NOTIFY 0x00D1."""
         if state.snapshot is None:
             return
+        if state.offline:
+            state.snapshot.game_type = int(game_type)
+            return
         if session.send(room.CHANGE_ROOM_TYPE_COMMAND, room.build_change_room_type_request(session.uin, int(game_type), int(continue_id))):
             state.snapshot.game_type = int(game_type)
             session.game_type = int(game_type)
@@ -476,6 +600,9 @@ def build_room_natives(runtime: UIRuntime, session: Session, avatars: AvatarCach
         seat. Button 1 (view profile) needs no server request."""
         seat = int(index) + 1
         if int(button) != 0 or state.snapshot is None or not am_owner() or not 1 <= seat <= room.MAX_SEATS:
+            return
+        if state.offline:
+            click_practice_seat(seat)
             return
         member = state.members.get(seat)
         if member is not None:
@@ -491,6 +618,9 @@ def build_room_natives(runtime: UIRuntime, session: Session, avatars: AvatarCach
         commands = getattr(session, "slash", None)
         if text and commands is not None and commands.handle(text):
             return  # FUN_100291EA -> FUN_10023BD1: a command is not chat
+        if text and state.offline:
+            add_chat(f"{session.nickname or '我'}说:{text}", CHAT_COLOR)
+            return
         if text:
             session.send(room.ROOM_CHAT_COMMAND, room.build_room_chat_request(session.uin, text))
 
@@ -513,6 +643,8 @@ def build_room_natives(runtime: UIRuntime, session: Session, avatars: AvatarCach
         return list(state.backgrounds)
 
     def RequestBackgroundList():
+        if state.offline:
+            return
         session.send(room.BACKGROUND_LIST_COMMAND, room.build_background_request(session.uin), room.BACKGROUND_ROUTE)
 
     def RequestUseBackground(background):
@@ -623,7 +755,9 @@ def build_room_natives(runtime: UIRuntime, session: Session, avatars: AvatarCach
         walk.draw(screen, AVATAR_ANCHOR)
 
     excluded = {"script", "notify", "in_room_screen", "me", "am_owner", "role_id", "refresh_seat", "refresh_all_seats",
-                "add_chat", "enter", "leave_to_lobby", "member_update", "ignore", "draw_players", "walk", "room_view", "seat_pet", "pair_couple"}
+                "add_chat", "enter", "leave_to_lobby", "member_update", "ignore", "draw_players", "walk", "room_view", "seat_pet", "pair_couple",
+                "click_practice_seat", "start_practice", "practice_ai_member", "practice_players"}
     natives = {name: value for name, value in locals().items()
-               if callable(value) and name not in excluded and not name.startswith("on_")}
+               if callable(value) and name not in excluded and not name.startswith("on_") and name != "open_practice_room"}
+    natives["sc_openPracticeRoom"] = open_practice_room  # host addition, called by sc_beginFreePractice
     return natives, draw_players

@@ -19,10 +19,17 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--server", default="127.0.0.1", help="QQTang server address")
     parser.add_argument("--screen", default="logo", help="first UI screen (logo, login, selSect, ...)")
     parser.add_argument("--report", type=pathlib.Path, default=PACKAGE_ROOT / "generated" / "missing-natives.json", help="where to write the missing-native report on exit")
-    practice = parser.add_argument_group("offline practice battle (needs tools/build-sidecar.sh)")
-    practice.add_argument("--practice", type=int, metavar="MAP_ID", help="start a practice battle on this map (ordinary rule maps)")
-    practice.add_argument("--opponents", type=int, default=1, help="number of wandering opponents (default 1)")
+    practice = parser.add_argument_group("offline match against AI seats (needs tools/build-sidecar.sh)")
+    practice.add_argument("--practice", type=int, metavar="MAP_ID", help="start an offline match on this map (any rule, adventure stages too)")
+    practice.add_argument("--opponents", type=int, default=1, help="AI opponents on team 2 (default 1)")
+    practice.add_argument("--teammates", type=int, default=0, help="AI teammates on your team 1 (default 0)")
+    practice.add_argument("--teams", metavar="T1,T2,...", help="team of every seat, yours first (e.g. 1,1,2,2 or 1,2,3); overrides the counts")
     practice.add_argument("--role", type=int, default=1, help="your role ID (default 1)")
+    practice.add_argument("--boss", action="store_true", help="bring the map's Boss overlay (maps 11 and 124 always have it)")
+    practice.add_argument("--policy", default="", choices=("", "auto", "bot", "onnx"),
+                          help="AI seats: auto (the rule-1 model on rules 1/4 when built in, else the bot), bot or onnx")
+    practice.add_argument("--level", type=int, default=0, metavar="POINTS", help="adventure courage points of every player (PVE level)")
+    practice.add_argument("--free-rule", action="store_true", help="free rule (自由模式) spawn layout")
     automation = parser.add_argument_group("automation (for tests and screenshots)")
     automation.add_argument("--headless", action="store_true", help="render off-screen")
     automation.add_argument("--exit-after", type=int, metavar="MS", help="quit after this many milliseconds")
@@ -37,7 +44,7 @@ def parse_args() -> argparse.Namespace:
     automation.add_argument("--key", action="append", default=[], metavar="NAME@MS", help="press a key (pygame name, e.g. tab, return) after MS milliseconds")
     automation.add_argument("--hold", action="append", default=[], metavar="NAME@FROM:TO", help="hold a key down from FROM to TO milliseconds")
     automation.add_argument("--autoplay", action="store_true",
-                            help="in online matches, let the sidecar's test bot play the local player")
+                            help="let the sidecar's test bot (offline: the seat's AI) play the local player")
     automation.add_argument("--call", action="append", default=[], metavar="EXPR@MS",
                             help="evaluate a native call such as Login(1000001,0,'123456') after MS milliseconds")
     return parser.parse_args()
@@ -172,18 +179,37 @@ def main() -> int:
         runtime.activity = OnlineBattle(runtime, renderer, resources, session, begin, context, start_battle)
 
     def begin_free_practice() -> None:
-        """sc_beginFreePractice (0x0048E780 -> QQTSection 0x1001C6F2): a local
-        game on map 311. Finished or left, it only goes back to selRoom
-        (0x005A4181 jumps over NewPlayerPractice() when +0x56F04 is set). The
-        engine needs two players, so one wandering opponent joins."""
-        from .battle.practice import PracticeSession
-
+        """sc_beginFreePractice (0x0048E780 -> QQTSection 0x1001C6F2): the
+        original starts a local game on map 311 at once. Here it opens the
+        offline practice room instead (host addition, docs/offline-ai-re.md):
+        the original room screen on map 311 with one AI opponent, where any
+        map, mode, team and AI seats can be chosen before 开始. With
+        QQT_DIRECT_FREE_PRACTICE=1 the original direct map-311 game remains
+        (one wandering opponent joins, the engine needs two players);
+        finished or left, it only goes back to selRoom (0x005A4181)."""
         if runtime.activity is not None:
             return
+        if os.environ.get("QQT_DIRECT_FREE_PRACTICE") != "1" and callable(open_room := namespace.get("sc_openPracticeRoom")):
+            open_room()
+            return
+        from .battle.practice import PracticeSession
+
         role = int(session.state.get("last_role", 1) or 1)
         runtime.activity = PracticeSession(runtime, renderer, resources, FREE_PRACTICE_MAP, role, 1,
                                            on_leave=lambda _ended: runtime.goto_screen("selRoom"))
         runtime.activity.start()
+
+    def start_offline(map_id, players, local_id, free_rule, game_type, wear, back) -> None:
+        """A practice room's 开始: the offline match, then back to the room."""
+        from .battle.offline import OfflineBattle
+
+        if runtime.activity is not None:
+            runtime.activity.close()
+            runtime.activity = None
+        battle = OfflineBattle(runtime, renderer, resources, map_id, players, local_id, on_leave=lambda _ended: back(),
+                               free_rule=free_rule, game_type=game_type, wear=wear, uin=session.uin or None)
+        battle.start()
+        runtime.activity = battle
 
     from .battle.replay import build_replay_natives
     from .battle.tutorial import build_tutorial_natives, needs_first_tutorial
@@ -202,7 +228,7 @@ def main() -> int:
     session.on_entered.append(lambda: runtime.post(first_tutorial))
 
     room_natives, draw_room_players = build_room_natives(runtime, session, AvatarCache(resources), start_battle,
-                                                         sprites=renderer.sprites, font=renderer.font)
+                                                         sprites=renderer.sprites, font=renderer.font, start_offline=start_offline)
     namespace.update(room_natives)
     shop_natives, draw_shop_preview = build_shop_natives(runtime, session, resources, AvatarCache(resources))
     namespace.update(shop_natives)
@@ -221,9 +247,11 @@ def main() -> int:
     started = pygame.time.get_ticks()
     try:
         if args.practice is not None:
-            from .battle.practice import PracticeSession
+            from .battle.offline import OfflineBattle, offline_players, team_layout
 
-            runtime.activity = PracticeSession(runtime, renderer, resources, args.practice, args.role, args.opponents)
+            players = offline_players(args.role, team_layout(args.teammates, args.opponents, args.teams), ext_point=args.level)
+            runtime.activity = OfflineBattle(runtime, renderer, resources, args.practice, players, boss=args.boss,
+                                             policy=args.policy, free_rule=args.free_rule, autoplay=args.autoplay)
             runtime.start("game")
             runtime.activity.start()
         else:

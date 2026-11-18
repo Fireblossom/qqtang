@@ -430,6 +430,8 @@ class RoomWalk:
     # Network ----------------------------------------------------------------
 
     def recipients(self) -> list[int]:
+        if getattr(self.state, "offline", False):
+            return []  # the practice room has nobody to tell
         mine = self.session.profile.player_id if self.session.profile else 0
         return sorted({member.player_id for member in self.state.members.values() if member.player_id not in (0, mine)})
 

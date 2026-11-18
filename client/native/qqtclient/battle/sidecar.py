@@ -83,6 +83,19 @@ class Sidecar:
             **({"prepared_order": prepared_order} if prepared_order is not None else {}),
         }})
 
+    def start_offline(self, client_root: pathlib.Path, map_id: int, players: list[dict[str, Any]], local_id: int,
+                      spawn_seed: int, item_seed: int, free_rule: bool = False, boss: bool = False,
+                      policy: str = "") -> dict[str, Any]:
+        """A whole match without a server (cmd/qqt-battle-sidecar/offline.go):
+        every rule, the AI seats ("ai": true) played by the sidecar. The
+        reply has "begin" as online; every step advances the given ticks
+        and its "offline" part carries the GAME_OVER body once it ends."""
+        seats = [{key: player[key] for key in ("id", "role", "team", "ai", "policy", "ext_point") if key in player} for player in players]
+        return self._call({"cmd": "init", "client_root": str(client_root), "offline": {
+            "map_id": map_id, "players": seats, "local_id": local_id, "spawn_seed": spawn_seed, "item_seed": item_seed,
+            "free_rule": free_rule, "boss": boss, "policy": policy,
+        }})
+
     def step(self, actions: list[dict[str, Any]], ticks: int = 1, tcp: list[tuple[int, bytes]] | None = None) -> dict[str, Any]:
         command: dict[str, Any] = {"cmd": "step", "ticks": ticks, "actions": actions}
         if tcp:
