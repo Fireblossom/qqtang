@@ -116,6 +116,18 @@ type offlineHub struct {
 	overBody   []byte
 	logs       map[uint16]io.Writer
 	policyName map[uint16]string
+	clientRoot string
+	policies   *offlinePolicies
+	// Rule 12: the route's stages; restage moves the survivors on.
+	stage       *offlineStage
+	stageNumber int
+	shownStage  int
+	nextStage   *offlinePendingStage
+}
+
+type offlinePendingStage struct {
+	players    []player
+	arbitrator uint16
 }
 
 func runOffline(init command, lines interface {
@@ -166,7 +178,7 @@ func newOfflineHub(clientRoot string, options offlineInit) (*offlineHub, error) 
 	hub := &offlineHub{
 		seats: map[uint16]*onlineMatch{}, ai: map[uint16]bool{}, tcp: map[uint16][]tcpPacket{}, logs: map[uint16]io.Writer{},
 		random: rand.New(rand.NewSource(int64(options.SpawnSeed)<<32 | int64(options.ItemSeed))), options: options,
-		policyName: map[uint16]string{},
+		policyName: map[uint16]string{}, clientRoot: clientRoot,
 	}
 	hub.link = &offlineLink{hub: hub}
 	hub.local = options.LocalID
@@ -194,9 +206,10 @@ func newOfflineHub(clientRoot string, options offlineInit) (*offlineHub, error) 
 		hub.entry = entry
 		hub.begin, hub.boss, err = offlineCompetitiveBegin(entry, options, arbitrator)
 	} else if stageMap, isStage := catalog.Map(options.MapID); isStage {
-		stage, err = newOfflineStage(clientRoot, stageMap)
+		stage, err = newOfflineStage(clientRoot, catalog, stageMap)
 		if err == nil {
-			hub.begin, err = stage.begin(options, arbitrator)
+			hub.stage = stage
+			hub.begin, err = stage.begin(options, arbitrator, options.Players)
 		}
 	} else {
 		err = fmt.Errorf("map %d is neither a competitive map nor an adventure stage", options.MapID)
@@ -204,51 +217,12 @@ func newOfflineHub(clientRoot string, options offlineInit) (*offlineHub, error) 
 	if err != nil {
 		return nil, err
 	}
-	payload, err := hub.begin.MarshalLengthPrefixedNetworkBinary()
-	if err != nil {
+	if hub.policies, err = newOfflinePolicies(options, hub.begin, entry, competitive); err != nil {
 		return nil, err
 	}
-	uins := map[string]uint32{}
-	for _, info := range hub.begin.Players {
-		uins[strconv.Itoa(int(info.PlayerID))] = offlineUINBase + uint32(info.PlayerID)
-	}
-	policies, err := newOfflinePolicies(options, hub.begin, entry, competitive)
-	if err != nil {
+	if err := hub.startSeats(); err != nil {
+		hub.close()
 		return nil, err
-	}
-	hub.order = append(hub.order, arbitrator)
-	for _, info := range hub.begin.Players {
-		if info.PlayerID != arbitrator {
-			hub.order = append(hub.order, info.PlayerID)
-		}
-	}
-	for _, playerID := range hub.order {
-		online := &onlineInit{
-			Begin: hex.EncodeToString(payload), LocalID: playerID, LocalUIN: offlineUINBase + uint32(playerID),
-			UINs: uins, FreeRule: options.FreeRule, offline: hub.link,
-		}
-		if hub.ai[playerID] || options.LocalID == 0 {
-			online.policy = policies.forSeat(playerID)
-			if online.policy == nil {
-				online.Autoplay = true
-			}
-			hub.policyName[playerID] = policies.name(playerID)
-		}
-		match, view, err := newOnlineMatch(command{Cmd: "init", ClientRoot: clientRoot, Online: online})
-		if err != nil {
-			hub.close()
-			return nil, fmt.Errorf("seat %d: %w", playerID, err)
-		}
-		if match.bot != nil {
-			// Offline the bot is an opponent and a teammate, not a test
-			// driver: no special-element tours.
-			match.bot.special = nil
-			match.bot.offline = true
-		}
-		hub.seats[playerID] = match
-		if playerID == hub.local {
-			hub.view = view
-		}
 	}
 	hub.referee, err = newOfflineReferee(hub, entry, competitive, stage)
 	if err != nil {
@@ -265,6 +239,95 @@ func newOfflineHub(clientRoot string, options offlineInit) (*offlineHub, error) 
 	}
 	hub.logf("offline map %d (%s): arbitrator %d, seats %s", hub.begin.MapID, hub.view.Rule, arbitrator, strings.Join(names, " "))
 	return hub, nil
+}
+
+// startSeats creates every participant's client for hub.begin.
+func (hub *offlineHub) startSeats() error {
+	payload, err := hub.begin.MarshalLengthPrefixedNetworkBinary()
+	if err != nil {
+		return err
+	}
+	uins := map[string]uint32{}
+	for _, info := range hub.begin.Players {
+		uins[strconv.Itoa(int(info.PlayerID))] = offlineUINBase + uint32(info.PlayerID)
+	}
+	arbitrator := hub.begin.ArbitratorPlayerID
+	hub.order = []uint16{arbitrator}
+	for _, info := range hub.begin.Players {
+		if info.PlayerID != arbitrator {
+			hub.order = append(hub.order, info.PlayerID)
+		}
+	}
+	hub.seats = map[uint16]*onlineMatch{}
+	hub.tcp = map[uint16][]tcpPacket{}
+	for _, playerID := range hub.order {
+		online := &onlineInit{
+			Begin: hex.EncodeToString(payload), LocalID: playerID, LocalUIN: offlineUINBase + uint32(playerID),
+			UINs: uins, FreeRule: hub.options.FreeRule, offline: hub.link,
+		}
+		if hub.ai[playerID] || hub.options.LocalID == 0 {
+			online.policy = hub.policies.forSeat(playerID)
+			if online.policy == nil {
+				online.Autoplay = true
+			}
+			hub.policyName[playerID] = hub.policies.name(playerID)
+		}
+		match, view, err := newOnlineMatch(command{Cmd: "init", ClientRoot: hub.clientRoot, Online: online})
+		if err != nil {
+			return fmt.Errorf("seat %d: %w", playerID, err)
+		}
+		if match.bot != nil {
+			// Offline the bot is an opponent and a teammate, not a test
+			// driver: no special-element tours.
+			match.bot.special = nil
+			match.bot.offline = true
+		}
+		hub.seats[playerID] = match
+		if playerID == hub.local {
+			hub.view = view
+		}
+	}
+	return nil
+}
+
+// restage moves the survivors of a cleared adventure stage to the next one:
+// a new GAME_BEGIN, every client rebuilt, the scene clock restarted.
+func (hub *offlineHub) restage() {
+	pending := hub.nextStage
+	hub.nextStage = nil
+	if hub.options.LocalID != 0 && !hasPlayer(pending.players, hub.local) {
+		// The keyboard's player died on the way: the route ends for it.
+		over := game.GameOverData{Time: hub.link.clock, GameMode: game.SettlementGameModeAdventure}
+		for _, info := range hub.begin.Players {
+			over.Results = append(over.Results, hub.stage.result(info.PlayerID, game.GameResultLoss))
+		}
+		hub.referee.result, hub.referee.dueAt = &over, hub.link.clock
+		return
+	}
+	if hub.options.LocalID == 0 {
+		hub.local = pending.arbitrator
+	}
+	begin, err := hub.stage.begin(hub.options, pending.arbitrator, pending.players)
+	if err == nil {
+		err = hub.stage.newBattle(begin)
+	}
+	if err != nil {
+		hub.logf("next stage: %v", err)
+		over := game.GameOverData{Time: hub.link.clock, GameMode: game.SettlementGameModeAdventure}
+		for _, info := range hub.begin.Players {
+			over.Results = append(over.Results, hub.stage.result(info.PlayerID, game.GameResultWin))
+		}
+		hub.referee.result, hub.referee.dueAt = &over, hub.link.clock
+		return
+	}
+	hub.close()
+	hub.begin = begin
+	hub.link.clock, hub.link.jitter = 0, 0
+	if err := hub.startSeats(); err != nil {
+		hub.logf("next stage seats: %v", err)
+		return
+	}
+	hub.stageNumber++
 }
 
 func hasPlayer(players []player, playerID uint16) bool {
@@ -449,6 +512,10 @@ func (hub *offlineHub) step(step command) ([]battleengine.Event, error) {
 		if tick > 0 {
 			actions = heldOnly(step.Actions)
 		}
+		if hub.nextStage != nil {
+			hub.restage()
+			hub.serverTick()
+		}
 		for _, playerID := range hub.order {
 			var seatActions []action
 			if playerID == hub.local {
@@ -568,11 +635,12 @@ func (hub *offlineHub) state(events []battleengine.Event, first bool) offlineSta
 	seat := hub.seats[hub.local]
 	state := offlineStateView{stateView: seat.stateView(events)}
 	_ = seat.takeTCP()
-	if first {
+	if first || hub.shownStage != hub.stageNumber {
+		hub.shownStage = hub.stageNumber
 		begin := hub.view
 		state.Begin = &begin
 	}
-	state.Offline = &offlineView{Clock: hub.link.clock, AI: map[string]string{}}
+	state.Offline = &offlineView{Clock: hub.link.clock, Stage: hub.stageNumber, AI: map[string]string{}}
 	for playerID, name := range hub.policyName {
 		state.Offline.AI[strconv.Itoa(int(playerID))] = name
 	}
@@ -590,6 +658,8 @@ type offlineStateView struct {
 
 type offlineView struct {
 	Clock uint32 `json:"clock"`
+	// Adventure stages passed (a new begin comes with each).
+	Stage int `json:"stage"`
 	// The GAME_OVER body (hex) once the match has ended.
 	GameOver string `json:"game_over,omitempty"`
 	// Policy of each AI seat by player ID.

@@ -2,6 +2,7 @@ package main
 
 import (
 	"os"
+	"strconv"
 	"testing"
 
 	"qqtang/internal/game/battleengine"
@@ -87,6 +88,38 @@ func TestOfflineEveryRule(t *testing.T) {
 			t.Logf("map %d (%s) ended at %d ms: %+v", entry.ID, rule, hub.link.clock, over.Results)
 		})
 	}
+}
+
+// TestOfflineBossOverlay: map 11 always brings its sailor Boss; the AI
+// players fight it together.
+func TestOfflineBossOverlay(t *testing.T) {
+	root := offlineClientRoot(t)
+	for _, mapID := range []uint32{11, 12} {
+		t.Run(strconv.Itoa(int(mapID)), func(t *testing.T) {
+			hub, over := offlineRun(t, root, offlineInit{MapID: mapID, Players: offlineTeams(1, 1, 2, 3), SpawnSeed: 11, ItemSeed: 13, Boss: true, Policy: offlinePolicyBot}, 400_000)
+			if hub.boss == nil || !hub.bossSent {
+				t.Fatal("no Boss was announced")
+			}
+			t.Logf("map %d ended at %d ms: %+v", mapID, hub.link.clock, over.Results)
+		})
+	}
+}
+
+// TestOfflineAdventure plays an adventure route with two AI players: the
+// stages must chain (or the route end) without errors.
+func TestOfflineAdventure(t *testing.T) {
+	root := offlineClientRoot(t)
+	catalog, err := mapdata.LoadCatalog(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ids := catalog.SelectableIDs()
+	if len(ids) == 0 {
+		t.Skip("no adventure stages")
+	}
+	players := []player{{ID: 1, Role: 1, Team: 1, AI: true, ExtPoint: 3000}, {ID: 2, Role: 2, Team: 1, AI: true, ExtPoint: 3000}}
+	hub, over := offlineRun(t, root, offlineInit{MapID: ids[0], Players: players, SpawnSeed: 5, ItemSeed: 6, Policy: offlinePolicyBot}, 3_000_000)
+	t.Logf("route from %d ended on stage %d (%d stages passed) at %d ms: %+v", ids[0], hub.begin.MapID, hub.stageNumber, hub.link.clock, over.Results)
 }
 
 func offlineMapForRule(catalog *mapdata.Catalog, rule mapdata.CompetitiveRuleKind, players int) (mapdata.CompetitiveMap, bool) {
