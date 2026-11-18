@@ -37,6 +37,10 @@ type autoplayBot struct {
 	special   *specialRule   // teleporters and halos to try out
 	// Rule 2: no own bubbles; kick the dropped ones instead.
 	kick bool
+	// offline: the bot is an AI seat of an offline match (offline.go), an
+	// opponent or teammate rather than a test driver: it spares teammates,
+	// defends and plays the objectives (autoplay_offline.go).
+	offline bool
 }
 
 func newAutoplayBot(player uint16) *autoplayBot {
@@ -105,6 +109,11 @@ func (bot *autoplayBot) act(engine *battleengine.Engine) battleengine.Action {
 	safe := func(cell battleengine.Cell) bool {
 		_, threatened := bot.timeline.ImpactAt(cell)
 		return !threatened
+	}
+	if bot.offline {
+		if path := bot.contactPath(engine, world, actor, here, safe); len(path) > 0 {
+			return bot.follow(action, actor, path)
+		}
 	}
 	if bot.machine != nil && bot.machine.ready(bot.machine.side(actor.TeamID), now) {
 		for _, gate := range bot.machine.gates {
@@ -247,7 +256,8 @@ func (bot *autoplayBot) act(engine *battleengine.Engine) battleengine.Action {
 		return bot.follow(action, actor, path)
 	}
 	worthBombing := func(cell battleengine.Cell) bool {
-		return world.worthBombing(cell, actor) || bot.tank != nil && bot.tank.worthBombing(world, cell, actor) || bot.bossInReach(world, cell, actor) || bot.adventureNPCInReach(world, cell, actor)
+		worth := world.worthBombing(cell, actor) || bot.tank != nil && bot.tank.worthBombing(world, cell, actor) || bot.bossInReach(world, cell, actor) || bot.adventureNPCInReach(world, cell, actor)
+		return worth && !(bot.offline && bot.hitsTeammate(engine, world, actor, cell))
 	}
 	// 4. Place a bubble beside a breakable wall or an opponent, if it can be
 	// escaped.
@@ -256,8 +266,22 @@ func (bot *autoplayBot) act(engine *battleengine.Engine) battleengine.Action {
 		return action
 	}
 	// 5. Walk toward the nearest cell where a bubble would be worth it.
-	if path := world.nearest(here, safe, worthBombing); len(path) > 0 {
+	if path := world.nearest(here, safe, worthBombing); len(path) > 0 && !(bot.offline && len(path) == 1) {
 		return bot.follow(action, actor, path)
+	}
+	if bot.offline {
+		// Nothing to do from here (walled in, or the bubble cannot be
+		// escaped): push a box aside, else walk toward an opponent.
+		if direction := bot.pushOut(engine, world, here); direction != battleengine.DirectionNone && onCentre(actor.Position) {
+			action.Move = direction
+			return action
+		}
+		if path := bot.huntPath(engine, world, actor, here, safe); len(path) > 1 {
+			return bot.follow(action, actor, path)
+		}
+		if !onCentre(actor.Position) {
+			action.Move = steer(actor.Position, here)
+		}
 	}
 	return action
 }

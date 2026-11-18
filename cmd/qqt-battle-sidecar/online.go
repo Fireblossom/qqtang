@@ -84,6 +84,12 @@ type onlineInit struct {
 	Autoplay      bool              `json:"autoplay"` // the test bot plays the local player
 	// Replay plays this .qbv file instead: no local player, no socket.
 	Replay string `json:"replay"`
+	// offline joins the match to an in-process hub (offline.go) instead of
+	// the server: no socket, the hub's clock, the hub relays every datagram.
+	offline *offlineLink
+	// policy plays the local player instead of the keyboard (offline AI
+	// seats); it takes precedence over Autoplay.
+	policy localPolicy
 }
 
 type tcpPacket struct {
@@ -204,6 +210,12 @@ type onlineMatch struct {
 	kills, streaks map[uint16]int
 
 	bot *autoplayBot // --autoplay; nil when the keyboard plays
+	// policy plays the local player of an offline AI seat (offline.go).
+	policy localPolicy
+	// offline: the in-process hub this match is joined to, and the
+	// datagrams it has delivered here; nil online.
+	offline      *offlineLink
+	offlineInbox [][]byte
 	// The carry rule (3 or 6), nil otherwise; bun and sculpture are the same
 	// rule with its own type, for drawing.
 	carry     carryRule
@@ -445,7 +457,7 @@ func newOnlineMatch(init command) (*onlineMatch, beginView, error) {
 		return nil, beginView{}, err
 	}
 	var conn *net.UDPConn
-	if feed == nil {
+	if feed == nil && options.offline == nil {
 		address, err := net.ResolveUDPAddr("udp4", net.JoinHostPort(options.ServerHost, strconv.Itoa(options.ServerUDPPort)))
 		if err != nil {
 			return nil, beginView{}, err
@@ -470,6 +482,15 @@ func newOnlineMatch(init command) (*onlineMatch, beginView, error) {
 		pickupRequests:    map[pickupKey]pickupRequest{}, sceneRequests: map[sceneRequestKey]uint32{},
 		box: box, machine: machine, tank: tank, boss: boss, adventure: adventure, special: special, respawn: respawn, clientRoot: init.ClientRoot, eliminatedAt: map[uint16]uint32{}, departed: map[uint16]bool{},
 		kills: map[uint16]int{}, streaks: map[uint16]int{},
+		offline: options.offline, policy: options.policy,
+	}
+	if match.offline != nil {
+		// The hub delivers every datagram at once: no presence or rendezvous.
+		match.presence = true
+		for playerID := range uins {
+			match.peerReady[playerID] = playerID != match.local
+		}
+		match.log = match.offline.log(match.local)
 	}
 	if box != nil {
 		match.installBoxLaunchers()
@@ -512,7 +533,7 @@ func newOnlineMatch(init command) (*onlineMatch, beginView, error) {
 	}
 	match.filterPreparedDefinitions()
 	match.initSlotOrder()
-	if feed == nil {
+	if feed == nil && match.offline == nil {
 		go match.receive()
 		// Register before returning init: the Python host loads the scene before
 		// its first step, which can otherwise postpone presence past Ready/Go.
@@ -650,6 +671,9 @@ func (match *onlineMatch) sceneClock() uint32 {
 		return match.replay.clock / tickMS * tickMS
 	}
 	elapsed := uint32(time.Since(match.started) / time.Millisecond)
+	if match.offline != nil {
+		elapsed = match.offline.clock
+	}
 	if elapsed < battleengine.NativeRoundStartClockMS {
 		return battleengine.NativeRoundStartClockMS
 	}
@@ -659,6 +683,9 @@ func (match *onlineMatch) sceneClock() uint32 {
 func (match *onlineMatch) clientTag() uint32 {
 	if match.replay != nil {
 		return match.replay.clock
+	}
+	if match.offline != nil {
+		return match.offline.clock + match.offline.jitter
 	}
 	return uint32(time.Since(match.started) / time.Millisecond)
 }
@@ -678,7 +705,7 @@ func (match *onlineMatch) step(step command) ([]battleengine.Event, error) {
 	}
 	if match.replay != nil {
 		match.replay.clock = max(step.ReplayMS, battleengine.NativeRoundStartClockMS)
-	} else {
+	} else if match.offline == nil {
 		match.negotiate()
 	}
 	var events []battleengine.Event
@@ -719,8 +746,13 @@ func (match *onlineMatch) step(step command) ([]battleengine.Event, error) {
 		beforeLocal, _ := actorByID(before.Actors(), match.local)
 		action := local
 		action.PlaceBomb, match.bombPressed = match.bombPressed, false
-		if match.bot != nil && match.localActive() {
-			chosen := match.bot.act(match.engine)
+		if (match.policy != nil || match.bot != nil) && match.localActive() {
+			var chosen battleengine.Action
+			if match.policy != nil {
+				chosen = match.policy.act(match.engine)
+			} else {
+				chosen = match.bot.act(match.engine)
+			}
 			action.Move, action.PlaceBomb = chosen.Move, chosen.PlaceBomb
 			if chosen.UseActionID != 0 {
 				match.requestItemUse(chosen.UseActionID)
@@ -819,6 +851,10 @@ func (match *onlineMatch) sendControl(packet game.LegacyUDPControlPacket) {
 		match.logf("encode UDP type %d: %v", packet.Header.Type, err)
 		return
 	}
+	if match.offline != nil {
+		match.offline.deliver(match.local, data)
+		return
+	}
 	if match.conn != nil {
 		_, _ = match.conn.Write(data)
 	}
@@ -869,6 +905,11 @@ func (match *onlineMatch) peerIDs() []uint16 {
 
 func (match *onlineMatch) drain() []battleengine.Event {
 	var events []battleengine.Event
+	for len(match.offlineInbox) > 0 {
+		data := match.offlineInbox[0]
+		match.offlineInbox = match.offlineInbox[1:]
+		events = append(events, match.handleDatagram(data)...)
+	}
 	for {
 		select {
 		case data := <-match.inbound:

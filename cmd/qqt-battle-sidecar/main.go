@@ -67,6 +67,9 @@ type command struct {
 	FreeRule   bool        `json:"free_rule"`
 	Players    []player    `json:"players"`
 	Online     *onlineInit `json:"online"`
+	// Offline plays every rule against AI seats without a server
+	// (offline.go).
+	Offline *offlineInit `json:"offline"`
 
 	// step
 	Ticks   int      `json:"ticks"`
@@ -229,6 +232,9 @@ func run(input io.Reader, output io.Writer) error {
 	if init.Online != nil {
 		return runOnline(init, lines, out)
 	}
+	if init.Offline != nil {
+		return runOffline(init, lines, out)
+	}
 	runtime, err := newRuntime(init)
 	if err != nil {
 		return err
@@ -261,8 +267,44 @@ func runOnline(init command, lines *bufio.Scanner, out *json.Encoder) error {
 		return err
 	}
 	defer match.close()
-	state := view(match.runtime, nil)
-	state.Begin, state.Net, state.Prepared = &begin, match.netView(), match.preparedView()
+	state := match.stateView(nil)
+	state.Begin = &begin
+	if err := out.Encode(state); err != nil {
+		return err
+	}
+	for lines.Scan() {
+		var step command
+		if err := json.Unmarshal(lines.Bytes(), &step); err != nil {
+			return fmt.Errorf("step: %w", err)
+		}
+		if step.Cmd == "record" {
+			// The messages so far, for writing a .qbv (保存录像).
+			if err := out.Encode(map[string]any{"recorded": match.recordedView()}); err != nil {
+				return err
+			}
+			continue
+		}
+		if step.Cmd != "step" {
+			return fmt.Errorf("unknown command %q", step.Cmd)
+		}
+		events, err := match.step(step)
+		if err != nil {
+			return err
+		}
+		state := match.stateView(events)
+		state.TCPOut = match.takeTCP()
+		if err := out.Encode(state); err != nil {
+			return err
+		}
+	}
+	return lines.Err()
+}
+
+// stateView is the client's view of an online (or offline) match after a
+// step: the engine state plus every rule's own view.
+func (match *onlineMatch) stateView(events []battleengine.Event) stateView {
+	state := view(match.runtime, events)
+	state.Net, state.Prepared = match.netView(), match.preparedView()
 	state.Slots = match.mixedSlots()
 	state.Kills, state.Streaks = byPlayer(match.kills), byPlayer(match.streaks)
 	if match.bun != nil {
@@ -291,63 +333,7 @@ func runOnline(init command, lines *bufio.Scanner, out *json.Encoder) error {
 	state.PropEffects = match.propEffectView()
 	state.Replay = match.replayView()
 	state.Emotions = match.emotionView()
-	if err := out.Encode(state); err != nil {
-		return err
-	}
-	for lines.Scan() {
-		var step command
-		if err := json.Unmarshal(lines.Bytes(), &step); err != nil {
-			return fmt.Errorf("step: %w", err)
-		}
-		if step.Cmd == "record" {
-			// The messages so far, for writing a .qbv (保存录像).
-			if err := out.Encode(map[string]any{"recorded": match.recordedView()}); err != nil {
-				return err
-			}
-			continue
-		}
-		if step.Cmd != "step" {
-			return fmt.Errorf("unknown command %q", step.Cmd)
-		}
-		events, err := match.step(step)
-		if err != nil {
-			return err
-		}
-		state := view(match.runtime, events)
-		state.Net, state.TCPOut, state.Prepared = match.netView(), match.takeTCP(), match.preparedView()
-		state.Slots = match.mixedSlots()
-		state.Kills, state.Streaks = byPlayer(match.kills), byPlayer(match.streaks)
-		if match.bun != nil {
-			state.Bun = match.bun.view()
-		}
-		if match.tank != nil {
-			state.Tank = match.tank.view()
-		}
-		if match.sculpture != nil {
-			state.Sculpture = match.sculpture.view()
-			match.markStyleNine(state.Bombs)
-		}
-		if match.box != nil {
-			state.Box = match.boxView()
-		}
-		if match.machine != nil {
-			state.Machine = match.machineView()
-		}
-		if match.kick != nil {
-			state.Kick = match.kick.view()
-			match.kick.markStyles(state.Bombs)
-		}
-		state.Boss = match.bossView()
-		state.Adventure = match.adventureView()
-		state.Special = match.specialView()
-		state.PropEffects = match.propEffectView()
-	state.Replay = match.replayView()
-		state.Emotions = match.emotionView()
-		if err := out.Encode(state); err != nil {
-			return err
-		}
-	}
-	return lines.Err()
+	return state
 }
 
 func newRuntime(init command) (*battleengine.Runtime, error) {
