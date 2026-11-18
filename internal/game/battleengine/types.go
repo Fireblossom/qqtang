@@ -336,6 +336,9 @@ type Rules struct {
 	NativeBoxPhysics bool
 	// NativeMachineSupply enables rule-7's immediate 0x115A floor pickups.
 	NativeMachineSupply bool
+	// NativeMachineSkills enables rule-7's charged-skill dodge
+	// (ApplyMachineSkillDodge). Off by default.
+	NativeMachineSkills bool
 	// NativeActionInventory retains the original ordered inventory beyond
 	// the seven visible slots. Offline training keeps its fixed projection.
 	NativeActionInventory bool

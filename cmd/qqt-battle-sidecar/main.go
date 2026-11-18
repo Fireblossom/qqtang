@@ -85,6 +85,8 @@ type action struct {
 	// A prop brought from the room (item ID 20001..22999) to use.
 	Prop    uint32 `json:"prop"`
 	Emotion uint32 `json:"emotion,omitempty"`
+	// Rule 7: a charged skill (0..7) or the charging notice (8) to request.
+	Skill *int8 `json:"skill,omitempty"`
 }
 
 type cell struct {

@@ -102,7 +102,7 @@
 现有 `cmd/qqt-battle-sidecar/online.go` 的收发框架可以直接沿用，只需为新消息号增加编码和解码。这些编解码在 `internal/protocol/game` 里全部现成（`bun.go`、`dispatch_bomb.go`、`competitive_rule_event.go`、`native_rule_event.go`、`player_relive.go`、`move_bomb.go`、`game_result.go`），sidecar 已经依赖这个包 [代码]。
 
 **消息的权威方分三类** [代码]：
-- **服务端转换**：玩家发请求，服务端回复并经 TCP 推送通知。包括 0x115C→0x115B（比武技能）、0x10E2→0x10E3（吃泡）、0x0FAF→0x0FB0、0x1174→0x1175、0x10F5→0x10F6。
+- **服务端转换**：玩家发请求，服务端回复并经 TCP 推送通知。包括 0x10E2→0x10E3（吃泡）、0x0FAF→0x0FB0、0x1174→0x1175、0x10F5→0x10F6。
 - **只能由仲裁方发**（TCP 副本会被校验）：0x0FB7/0x0FB9、0x10E1、0x115A、0x10F0～0x10F3、0x115D、0x115F、0x1160、0x1167、0x1168、CREATE_NPC_BOSS、0x0FBA、0x0FAD、0x0FAE、0x0FA9、0x116B，以及特殊规则下的 0x0FBB。
 - **玩家自己发**：0x0FB6、0x0FB8、0x10EF、0x115E、0x1163、0x15B3、0x1159、0x0FB4。规则 8 的 0x1161、0x1162、0x1166 任何观察到的玩家都可以发。
 
@@ -198,12 +198,12 @@
 
 **服务端** [代码]：
 - 定时复活。
-- 0x115C REQUEST_WRESTLE（9 字节：技能类型、FirstTeam、PlayerPos、玩家、时间）由服务端转换为 0x115B 并经 TCP 推送给全房间（`game_event_dispatch.go:592-610`）。这是少有的"服务端转发"型规则消息。
+- ~~0x115C REQUEST_WRESTLE 由服务端转换为 0x115B~~：更正（2026-11-18）——0x115C/0x115B 是规则 7 的蓄力招式，由仲裁方客户端转换（`0x005FFF01`），比武没有招式，见 `wrestle-skills-re.md`。
 - 中途不判胜负，超时按全队杀敌数判定（`competitive.go:652-657`）。
 - 有独立的"15 秒补给"（延迟道具，`competitive_supply.go:42`）。
 - 地图 1001 的出生点组 A 只有 2 个、组 B 为空，会走"自由站位"分配（`spawn_placement.go:24-29`）[代码，验证见 `rulestat.txt`]。
 
-**客户端要做的**：仓库里没有任何关于比武玩法的说明（技能类型、FirstTeam、PlayerPos 的含义都不知道），也没有录像，**必须先逆向**规则 4 的虚表 `0x007A4464` 和 0x115B/0x115C 的处理函数。
+**客户端要做的**：（已完成，见 README）规则 4 的虚表 `0x007A4464` 已逆向；0x115B/0x115C 不属于规则 4。
 
 **工作量**：先花 2～3 天逆向；玩法清楚后再做 5～10 天 [推断]。
 
