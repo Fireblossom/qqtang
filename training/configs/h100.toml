@@ -1,0 +1,115 @@
+# One H100 80GB plus the CPU cores of its 42-cluster container (Linux x86-64).
+#   cd /mlde/qqtang-rl/repo/training
+#   uv run python -m qqtrain.train --config configs/h100.toml --set run.dir=/mlde/qqtang-rl/runs/h100-001
+# scripts/cluster_run.sh does this under tmux/nohup and sets worker.num_workers
+# from the core count (nproc - 4).
+#
+# Sizing (assumptions to re-check on the first real run; see README "Trainer"):
+# * Env speed (measured 2026-11-18, R1 worker on an M4 Max core, GOMAXPROCS=1, 32 envs,
+#   2/4 players): >=11k agent decisions/s = ~3.7k env steps/s per process, limited by
+#   the Python reader; assume ~2k env steps/s per x86 core on the node.
+# * Bandwidth: every env step ships 4 slots x 117x13x15 f16 = 182 KB (empty slots of
+#   2-player episodes included). 16 workers x 2k env steps/s = ~6 GB/s into one Python
+#   process (readinto straight into pinned memory, 1 MiB pipes on Linux). This, not
+#   the core count, caps useful workers; cluster_run.sh uses min(16, nproc - 4).
+# * Envs: 32 per worker -> 512 envs, 2048 slots; 2 pipelining groups of 8 workers.
+# * Rollout T=128 (12.8 s of game time): 65k env steps, ~125k learner samples
+#   (~2.6 active agents per env, ~75 % learner-controlled). Storage on the GPU:
+#   130 x 2048 x 45.6 KB = 12 GB of f16 observations + 0.4 GB scalars/memory.
+# * PPO: 3 epochs x 8 minibatches of ~16k samples (~500 chunks x 32 decisions). The
+#   3.2M-parameter U2392 net needs roughly 0.5-1 MB of bf16 activations per sample,
+#   i.e. <=16 GB per minibatch. Expected GPU-bound: ~75 us/sample/update vs ~16 us of
+#   collection, so the update dominates; lower ppo.epochs or try model.compile = true
+#   before adding workers.
+# * Horizon: gamma 0.995 at 100 ms decisions = ~20 s effective horizon; GAE lambda 0.95.
+
+[run]
+dir = "/mlde/qqtang-rl/runs/h100"
+seed = 1
+device = "cuda"
+total_agent_steps = 3_000_000_000
+checkpoint_every = 25
+keep_checkpoints = 4
+resume = "auto"
+tensorboard = false
+
+[worker]
+command = ["bin/qqt-train-worker-{platform}"]
+client_root = "/mlde/qqtang-rl/qqtang-local/runtime/client-patched"
+num_workers = 16
+groups = 2
+step_timeout_s = 120.0
+max_restarts = 50
+
+[worker.env]
+GOMAXPROCS = "1"
+
+# Opaque: passed to the worker as JSON (schema: cmd/qqt-train-worker/config.go).
+[worker.config]
+envs = 32
+agents = 4
+player_counts = [2, 2, 4]
+team_count = 2
+spatial_dtype = "f16"
+workers = 1
+
+[model]
+factory = "qqtrain.model"
+init_from_baseline = true
+compile = false
+
+[baseline]
+onnx = "../configs/models/qqtang-rule1.onnx"
+
+[ppo]
+rollout_steps = 128
+seq_len = 32
+epochs = 3
+minibatches = 8
+gamma = 0.995
+gae_lambda = 0.95
+clip = 0.2
+value_clip = 0.2
+value_coef = 0.5
+entropy_coef = 0.01
+entropy_coef_final = 0.002
+target_kl = 0.03
+max_grad_norm = 0.5
+lr = 2.5e-4
+lr_final = 2.5e-5
+lr_warmup_updates = 20
+lr_schedule = "cosine"
+value_warmup_updates = 30
+bf16 = true
+tf32 = true
+storage_device = "auto"
+
+[league]
+self_play_prob = 0.5
+train_both_sides = true
+baseline_prob = 0.3
+snapshot_every = 25
+max_snapshots = 30
+resident = 4
+pfsp_power = 2.0
+opponent_min_p = 0.1
+opponent_temperature = 1.0
+
+[eval]
+every = 100
+num_workers = 16
+episodes = 256
+seed = 777
+min_p = 0.1
+temperature = 1.0
+opponents = ["baseline", "snapshots:2"]
+export_best = true
+
+# Opaque worker-config overrides per evaluation mode (no curricula).
+[eval.modes.1v1.worker_config]
+envs = 16
+player_counts = [2]
+
+[eval.modes.2v2.worker_config]
+envs = 16
+player_counts = [4]
