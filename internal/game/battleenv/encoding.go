@@ -80,9 +80,12 @@ type TensorBatch struct {
 	// observation, so separating course gradients cannot constrain exploration.
 	CurriculumIDs []uint8
 	Spatial       []float32
-	Scalars       []float32
-	Legal         []uint8
-	Active        []uint8
+	// SpatialHalf replaces Spatial (IEEE binary16 bits, same layout; Spatial
+	// is then nil) when the batch was configured with HalfSpatial.
+	SpatialHalf []uint16
+	Scalars     []float32
+	Legal       []uint8
+	Active      []uint8
 	// DecisionReady is scheduler metadata, separate from life-state Active.
 	// A live actor retains recurrent memory while its held input continues.
 	DecisionReady []uint8
