@@ -10,6 +10,8 @@ package main
 // visible items and the danger timeline of the bubbles already placed.
 
 import (
+	"runtime"
+
 	"qqtang/internal/game/battleengine"
 )
 
@@ -41,6 +43,16 @@ type autoplayBot struct {
 	// opponent or teammate rather than a test driver: it spares teammates,
 	// defends and plays the objectives (autoplay_offline.go).
 	offline bool
+	// Offline: the good cell the bot waits on, since when, and cells given
+	// up on until a time.
+	waitCell  battleengine.Cell
+	waitSince uint32
+	avoid     map[battleengine.Cell]uint32
+	// trace records the caller of follow (diagnostics).
+	trace         bool
+	traceLine     int
+	tracePath     []battleengine.Cell
+	bombSignature uint64
 }
 
 func newAutoplayBot(player uint16) *autoplayBot {
@@ -73,6 +85,9 @@ func (bot *autoplayBot) act(engine *battleengine.Engine) battleengine.Action {
 		return action
 	}
 	now := engine.ElapsedMS()
+	if bot.offline && bot.bombsChanged(engine) {
+		bot.planned = false // a new or moved bubble: plan with it at once
+	}
 	if !bot.planned || now-bot.plannedAt >= autoplayReplanMS {
 		timeline, err := engine.DangerTimeline(autoplayHorizonMS)
 		if err != nil {
@@ -83,6 +98,7 @@ func (bot *autoplayBot) act(engine *battleengine.Engine) battleengine.Action {
 	msPerCell := uint32(1000 * battleengine.CellSizePixels / max(1, int(actor.SpeedPixelsPerSecond)))
 	here := actor.Position.Cell()
 	world := newAutoplayWorld(engine)
+	world.strict = bot.offline
 	if bot.adventure != nil {
 		// Rule 12 flames keep hurting for as long as they burn, not only at
 		// the impact instant: never walk into one.
@@ -101,7 +117,14 @@ func (bot *autoplayBot) act(engine *battleengine.Engine) battleengine.Action {
 
 	// 1. Leave a cell a known blast will reach.
 	if _, threatened := bot.timeline.ImpactAt(here); threatened {
-		if path := world.escape(here, bot.timeline, now, msPerCell); len(path) > 1 {
+		path := world.escape(here, bot.timeline, now, msPerCell)
+		if len(path) <= 1 && world.strict {
+			// No safe way out: take the chance the relaxed timing gives.
+			loose := world
+			loose.strict = false
+			path = loose.escape(here, bot.timeline, now, msPerCell)
+		}
+		if len(path) > 1 {
 			action.Move = steer(actor.Position, path[1])
 		}
 		return action
@@ -113,6 +136,9 @@ func (bot *autoplayBot) act(engine *battleengine.Engine) battleengine.Action {
 	if bot.offline {
 		if path := bot.contactPath(engine, world, actor, here, safe); len(path) > 0 {
 			return bot.follow(action, actor, path)
+		}
+		if next, ok := bot.baseAttack(engine, world, actor, action, here, safe, msPerCell); ok {
+			return next
 		}
 	}
 	if bot.machine != nil && bot.machine.ready(bot.machine.side(actor.TeamID), now) {
@@ -256,20 +282,32 @@ func (bot *autoplayBot) act(engine *battleengine.Engine) battleengine.Action {
 		return bot.follow(action, actor, path)
 	}
 	worthBombing := func(cell battleengine.Cell) bool {
-		worth := world.worthBombing(cell, actor) || bot.tank != nil && bot.tank.worthBombing(world, cell, actor) || bot.bossInReach(world, cell, actor) || bot.adventureNPCInReach(world, cell, actor)
-		return worth && !(bot.offline && bot.hitsTeammate(engine, world, actor, cell))
+		worth := world.worthBombing(cell, actor) || bot.tank != nil && bot.tank.worthBombing(world, cell, actor) || bot.bossInReach(world, cell, actor) || bot.adventureNPCInReach(world, cell, actor) ||
+			bot.offline && bot.opponentInReach(engine, world, actor, cell)
+		return worth && !(bot.offline && bot.avoiding(cell, now))
 	}
 	// 4. Place a bubble beside a breakable wall or an opponent, if it can be
-	// escaped.
-	if worthBombing(here) && onCentre(actor.Position) && bot.canEscapeOwnBubble(engine, actor, msPerCell) {
+	// escaped (offline: and it spares the teammates).
+	if worthBombing(here) && onCentre(actor.Position) && !(bot.offline && bot.hitsTeammate(engine, world, actor, here)) && bot.canEscapeOwnBubble(engine, actor, msPerCell) {
 		action.PlaceBomb = true
 		return action
 	}
 	// 5. Walk toward the nearest cell where a bubble would be worth it.
-	if path := world.nearest(here, safe, worthBombing); len(path) > 0 && !(bot.offline && len(path) == 1) {
+	path := world.nearest(here, safe, worthBombing)
+	if !bot.offline && len(path) > 0 {
 		return bot.follow(action, actor, path)
 	}
 	if bot.offline {
+		if len(path) > 1 || len(path) == 1 && !onCentre(actor.Position) {
+			bot.waitCell = battleengine.Cell{Row: -1}
+			return bot.follow(action, actor, path)
+		}
+		if len(path) == 1 && !bot.waitedTooLong(here, now) {
+			// On a good cell but no bubble now (a teammate in the blast,
+			// no way out): wait for it to change rather than wander off and
+			// come back.
+			return action
+		}
 		// Nothing to do from here (walled in, or the bubble cannot be
 		// escaped): push a box aside, else walk toward an opponent.
 		if direction := bot.pushOut(engine, world, here); direction != battleengine.DirectionNone && onCentre(actor.Position) {
@@ -312,6 +350,10 @@ func (bot *autoplayBot) adventureNPCInReach(world autoplayWorld, cell battleengi
 }
 
 func (bot *autoplayBot) follow(action battleengine.Action, actor battleengine.Actor, path []battleengine.Cell) battleengine.Action {
+	if bot.trace {
+		_, _, bot.traceLine, _ = runtime.Caller(1)
+		bot.tracePath = path
+	}
 	if len(path) > 1 {
 		action.Move = steer(actor.Position, path[1])
 	} else if !onCentre(actor.Position) {
@@ -332,7 +374,9 @@ func (bot *autoplayBot) canEscapeOwnBubble(engine *battleengine.Engine, actor ba
 	if err != nil {
 		return false
 	}
-	path := newAutoplayWorld(clone).escape(here, timeline, clone.ElapsedMS(), msPerCell)
+	cloneWorld := newAutoplayWorld(clone)
+	cloneWorld.strict = bot.offline
+	path := cloneWorld.escape(here, timeline, clone.ElapsedMS(), msPerCell)
 	return len(path) > 1
 }
 
@@ -381,6 +425,11 @@ type autoplayWorld struct {
 	grid    battleengine.Grid
 	bombs   map[battleengine.Cell]bool
 	pickups map[battleengine.Cell]uint32
+	// strict (offline AI seats): a threatened cell on the way out is only
+	// entered once its last blast is over, not when the next blast is
+	// predicted to come after a full cell's walk. The actor's body reaches
+	// the next cell well before its centre does.
+	strict bool
 }
 
 func newAutoplayWorld(engine *battleengine.Engine) autoplayWorld {
@@ -458,6 +507,10 @@ func (world autoplayWorld) escape(start battleengine.Cell, timeline battleengine
 		}
 		leave := now + uint32(steps+1)*msPerCell + autoplayMarginMS
 		clear, _ := timeline.ClearAt(cell)
+		if world.strict {
+			enter := now + uint32(max(steps-1, 0))*msPerCell
+			return impact > leave || clear+autoplayMarginMS < enter
+		}
 		return impact > leave || clear < now+uint32(steps)*msPerCell
 	}
 	goal := func(cell battleengine.Cell, _ int) bool {

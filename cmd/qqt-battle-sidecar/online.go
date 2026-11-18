@@ -216,6 +216,9 @@ type onlineMatch struct {
 	// datagrams it has delivered here; nil online.
 	offline      *offlineLink
 	offlineInbox [][]byte
+	// Diagnostics: the last policy input and the clock of the last self-trap.
+	lastAction   battleengine.Action
+	lastSelfTrap uint32
 	// The carry rule (3 or 6), nil otherwise; bun and sculpture are the same
 	// rule with its own type, for drawing.
 	carry     carryRule
@@ -758,6 +761,7 @@ func (match *onlineMatch) step(step command) ([]battleengine.Event, error) {
 				match.requestItemUse(chosen.UseActionID)
 			}
 		}
+		match.lastAction = action
 		match.boxInput(&action)
 		match.bossInput(&action)
 		match.adventureInput(&action)

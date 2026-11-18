@@ -32,6 +32,19 @@ func (bot *autoplayBot) contactPath(engine *battleengine.Engine, world autoplayW
 	return path
 }
 
+// bombsChanged reports a bubble placed, moved or gone since the last call,
+// so the danger timeline is rebuilt at once instead of up to 100 ms later.
+func (bot *autoplayBot) bombsChanged(engine *battleengine.Engine) bool {
+	var signature uint64
+	for _, bomb := range engine.Bombs() {
+		signature = signature*31 + uint64(bomb.ID)<<20 ^ uint64(uint16(bomb.Cell.Row))<<8 ^ uint64(uint16(bomb.Cell.Col))
+	}
+	signature = signature*31 + uint64(len(engine.Bombs()))
+	changed := signature != bot.bombSignature
+	bot.bombSignature = signature
+	return changed
+}
+
 // hitsTeammate: a bubble at cell would reach a teammate, active or trapped.
 func (bot *autoplayBot) hitsTeammate(engine *battleengine.Engine, world autoplayWorld, actor battleengine.Actor, cell battleengine.Cell) bool {
 	for _, other := range engine.Actors() {
@@ -43,6 +56,58 @@ func (bot *autoplayBot) hitsTeammate(engine *battleengine.Engine, world autoplay
 		}
 	}
 	return false
+}
+
+// opponentInReach: a bubble at cell would reach an active opponent (not
+// only one standing next to it), with a bubble left to place.
+func (bot *autoplayBot) opponentInReach(engine *battleengine.Engine, world autoplayWorld, actor battleengine.Actor, cell battleengine.Cell) bool {
+	if world.bombs[cell] {
+		return false
+	}
+	active := 0
+	for _, bomb := range engine.Bombs() {
+		if bomb.OwnerID == actor.PlayerID {
+			active++
+		}
+	}
+	if active >= int(actor.BombCapacity) {
+		return false
+	}
+	for _, other := range engine.Actors() {
+		if other.TeamID != actor.TeamID && other.State == battleengine.ActorActive && other.HarmProtectionExpiresAt <= engine.ElapsedMS() &&
+			world.blastCovers(cell, actor.BombPower, other.Position.Cell()) {
+			return true
+		}
+	}
+	return false
+}
+
+// baseAttack (rule 13) goes for the opposing base before anything else but
+// trapped players: a bubble whose blast crosses its centre takes 10 HP.
+func (bot *autoplayBot) baseAttack(engine *battleengine.Engine, world autoplayWorld, actor battleengine.Actor, action battleengine.Action, here battleengine.Cell, safe func(battleengine.Cell) bool, msPerCell uint32) (battleengine.Action, bool) {
+	if bot.tank == nil {
+		return action, false
+	}
+	worth := func(cell battleengine.Cell) bool {
+		return bot.tank.worthBombing(world, cell, actor) && !bot.hitsTeammate(engine, world, actor, cell)
+	}
+	if worth(here) {
+		if !onCentre(actor.Position) {
+			// Line up on the cell first; deciding from the cell edge makes
+			// the bot swing between two cells.
+			action.Move = steer(actor.Position, here)
+			return action, true
+		}
+		if bot.canEscapeOwnBubble(engine, actor, msPerCell) {
+			action.PlaceBomb = true
+			return action, true
+		}
+		return action, false
+	}
+	if path := world.nearest(here, safe, worth); len(path) > 1 && len(path) <= 20 {
+		return bot.follow(action, actor, path), true
+	}
+	return action, false
 }
 
 // huntPath leads next to the nearest active opponent.
@@ -99,4 +164,27 @@ func (bot *autoplayBot) pushOut(engine *battleengine.Engine, world autoplayWorld
 		}
 	}
 	return best
+}
+
+// waitedTooLong tracks waiting on a good cell where no bubble can be placed;
+// after 1.5 s the cell is given up for 5 s.
+func (bot *autoplayBot) waitedTooLong(here battleengine.Cell, now uint32) bool {
+	if bot.waitCell != here {
+		bot.waitCell, bot.waitSince = here, now
+		return false
+	}
+	if now-bot.waitSince < 1500 {
+		return false
+	}
+	if bot.avoid == nil {
+		bot.avoid = map[battleengine.Cell]uint32{}
+	}
+	bot.avoid[here] = now + 5000
+	bot.waitCell = battleengine.Cell{Row: -1}
+	return true
+}
+
+func (bot *autoplayBot) avoiding(cell battleengine.Cell, now uint32) bool {
+	until, ok := bot.avoid[cell]
+	return ok && now < until
 }

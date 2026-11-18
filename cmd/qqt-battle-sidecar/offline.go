@@ -566,6 +566,7 @@ func (hub *offlineHub) measure(seat *onlineMatch, events []battleengine.Event) {
 		stats := hub.referee.stat(seat.local)
 		if event.PlayerID == seat.local {
 			stats.SelfTraps++
+			seat.lastSelfTrap = event.TimeMS
 		} else if owner, ok := actorByID(seat.engine.Actors(), event.PlayerID); ok {
 			if victim, found := actorByID(seat.engine.Actors(), seat.local); found && owner.TeamID == victim.TeamID {
 				stats.TeamTraps++
