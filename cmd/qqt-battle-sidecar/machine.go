@@ -47,6 +47,7 @@ type machineRule struct {
 	requestedAt uint32
 	supplyCells [2][]battleengine.Cell
 	supplyLast  [2]uint32
+	skill       machineSkillState // charged skills, machine_skill.go
 }
 
 func newMachineRule(entry mapdata.CompetitiveMap, begin game.GameBeginData) *machineRule {
@@ -479,10 +480,14 @@ type machineView struct {
 	Aim     *cell                 `json:"aim,omitempty"`
 	Gates   []machineGateView     `json:"gates"`
 	Flights map[string]kickFlight `json:"flights"`
+	// Charged skills (machine_skill.go): the first team (0x4B0C), whose
+	// players face right, and the 0x115B applied since the last step.
+	FirstTeam byte                 `json:"first_team"`
+	Skills    []machineSkillNotice `json:"skills,omitempty"`
 }
 
 func (rule *machineRule) view(now uint32) *machineView {
-	v := &machineView{Flights: map[string]kickFlight{}}
+	v := &machineView{Flights: map[string]kickFlight{}, FirstTeam: rule.teams[0]}
 	for _, g := range rule.gates {
 		v.Gates = append(v.Gates, machineGateView{rule.destroyed[g.side], g.anchor.Row, g.anchor.Col, rule.teams[g.side], g.side == 0, rule.ready(g.side, now), g.pattern, g.fired})
 	}
@@ -499,7 +504,8 @@ func (match *onlineMatch) machineRemote(sender uint16, event game.GameEvent) ([]
 	switch event.Schema {
 	case game.PlayerThrowBomb:
 		request, err := game.ParseKickBombAction(event)
-		if err != nil || request.PlayerID != sender {
+		// The arbitrator throws skill bubbles for other players (0x005FFE30).
+		if err != nil || (request.PlayerID != sender && sender != match.arbitrator) {
 			return nil, true
 		}
 		return match.applyMachineThrow(request), true
@@ -623,7 +629,9 @@ func (match *onlineMatch) throwMachine(action *battleengine.Action) []battleengi
 	return events
 }
 func (match *onlineMatch) applyMachineThrow(request game.KickBombAction) []battleengine.Event {
-	key := [3]uint32{game.PlayerThrowBomb, uint32(request.PlayerID), request.Time}
+	// 0x005D3D74 keys a thrown bubble by destination, owner and time: a
+	// skill's bubbles share one time.
+	key := [3]uint32{game.PlayerThrowBomb, uint32(request.PlayerID) | uint32(request.BombDestRowAndCol)<<16, request.Time}
 	if match.machine.seen[key] {
 		return nil
 	}
@@ -642,6 +650,7 @@ func (match *onlineMatch) applyMachineThrow(request game.KickBombAction) []battl
 
 func (match *onlineMatch) machineView() *machineView {
 	v := match.machine.view(match.engine.ElapsedMS())
+	v.Skills = match.takeMachineSkillNotices()
 	if actor, ok := actorByID(match.engine.Actors(), match.local); ok && actor.State == battleengine.ActorActive {
 		if charge := match.machine.charges[actor.PlayerID]; charge != nil {
 			elapsed := match.engine.ElapsedMS() - charge.last

@@ -578,6 +578,7 @@ func ruleOptions(entry mapdata.CompetitiveMap, local, arbitrator uint16) (battle
 	case mapdata.CompetitiveRuleMachine:
 		rules.NativeDurabilityLayers = 4
 		rules.NativeMachineSupply = true
+		rules.NativeMachineSkills = true // charged skills, machine_skill.go
 		rules.DisableBombPlacement = true
 		rules.ExternalConclusion = true
 		return rules, nil, nil
@@ -600,9 +601,9 @@ func ruleOptions(entry mapdata.CompetitiveMap, local, arbitrator uint16) (battle
 		// Rule 4 (比武): ordinary combat scored by kills on the server.
 		// Slots 4 and 5 (vtable 0x007A4464): relive after 5 s once the spawn
 		// cell is free; slot 6 (0x0060B264): the death drop goes to the bird.
-		// The charged skills (0x115C/0x115B) are left out: their key combos
-		// are in protected code and their pose images (misc214..219) are not
-		// in this client's files.
+		// The charged skills (0x115C/0x115B) are not part of this rule: in
+		// Client.exe only rule 7 feeds the combo recognizer and registers
+		// their sender (machine_skill.go).
 		rules.ExternalConclusion = true
 		rules.DeathDropRecycle = true
 		return rules, &respawnRule{delayMS: 5000, waitFree: true}, nil
@@ -734,6 +735,9 @@ func (match *onlineMatch) step(step command) ([]battleengine.Event, error) {
 			}
 			if entry.Emotion != 0 {
 				match.requestEmotion(entry.Emotion)
+			}
+			if entry.Skill != nil {
+				events = append(events, match.requestMachineSkill(*entry.Skill)...)
 			}
 		}
 	}
@@ -1015,6 +1019,9 @@ func (match *onlineMatch) applyRemote(sender uint16, message game.BattleMessageD
 		return events
 	}
 	if events, handled := match.specialRemote(sender, event); handled {
+		return events
+	}
+	if events, handled := match.machineSkillRemote(sender, event); handled {
 		return events
 	}
 	if events, handled := match.machineRemote(sender, event); handled {

@@ -756,3 +756,50 @@ func TestMachinePlayerThrowUsesNative1159(t *testing.T) {
 		t.Fatalf("rule7 throw rejected or echoed: %+v", result)
 	}
 }
+
+func TestMachineSkillRequestAndNoticeAreArbitratedNativeMirrors(t *testing.T) {
+	server, owner, peer, _ := newSculptureDamageTestServer(t)
+	owner.CurrentMapID, peer.CurrentMapID = 1302, 1302
+	if err := server.replaceCompetitiveBattle(1, 1302, owner.Profile.PlayerID, []match.CompetitiveParticipant{
+		{PlayerID: owner.Profile.PlayerID, RoleID: 1, TeamID: 1}, {PlayerID: peer.Profile.PlayerID, RoleID: 2, TeamID: 2},
+	}, match.CompetitiveRuleConfig{ConclusionPolicy: match.CompetitiveConclusionClientRule, PlayerLifecycle: match.CompetitivePlayerNativeDurability, NativeHitLimit: 4}); err != nil {
+		t.Fatal(err)
+	}
+	if !nativePeerMulticastMirrorSchema(game.RequestWrestle) || !nativePeerMulticastMirrorSchema(game.NotifyWrestleSkill) {
+		t.Fatal("charged-skill schemas are not native mirrors")
+	}
+	body := func(player uint16) []byte {
+		encoded, err := (game.WrestleAction{SkillType: 2<<4 | 3, PlayerPos: 0x2c, PlayerID: player, Time: 5000}).MarshalNetworkBinary()
+		if err != nil {
+			t.Fatal(err)
+		}
+		return encoded
+	}
+	accepted := func(result gameEventMessageResult) bool {
+		return result.handled && len(result.response) != 0 && len(result.followUp) == 0 && result.afterResponse == nil
+	}
+	// The player's own request is acknowledged but not turned into 0x115B.
+	if result := sendReliableBossRuleEvent(t, server, peer, 1, game.RequestWrestle, body(peer.Profile.PlayerID)); !accepted(result) {
+		t.Fatalf("request rejected or converted: %+v", result)
+	}
+	if result := sendReliableBossRuleEvent(t, server, peer, 2, game.RequestWrestle, body(owner.Profile.PlayerID)); len(result.response) != 0 {
+		t.Fatal("accepted a request for another player")
+	}
+	// Only the arbitrator sends 0x115B, for any participant.
+	if result := sendReliableBossRuleEvent(t, server, owner, 3, game.NotifyWrestleSkill, body(peer.Profile.PlayerID)); !accepted(result) {
+		t.Fatalf("arbitrator notice rejected: %+v", result)
+	}
+	if result := sendReliableBossRuleEvent(t, server, peer, 4, game.NotifyWrestleSkill, body(peer.Profile.PlayerID)); len(result.response) != 0 {
+		t.Fatal("accepted a notice from a non-arbitrator")
+	}
+	// The arbitrator throws the skill's bubbles for the player.
+	throw, _ := (game.KickBombAction{BombRowAndCol: 0x2c, BombDestRowAndCol: 0x25, Direction: 2, Power: 2, BombPower: 2, Time: 5000, PlayerID: peer.Profile.PlayerID}).MarshalNetworkBinary()
+	if result := sendReliableBossRuleEvent(t, server, owner, 5, game.PlayerThrowBomb, throw); !accepted(result) {
+		t.Fatalf("arbitrator skill throw rejected: %+v", result)
+	}
+	// Not on another rule.
+	owner.CurrentMapID, peer.CurrentMapID = 1001, 1001
+	if result := sendReliableBossRuleEvent(t, server, peer, 6, game.RequestWrestle, body(peer.Profile.PlayerID)); len(result.response) != 0 {
+		t.Fatal("accepted a charged skill on rule 4")
+	}
+}

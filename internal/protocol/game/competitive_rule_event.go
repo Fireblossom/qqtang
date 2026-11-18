@@ -209,9 +209,12 @@ func (item ProduceItem) MarshalNetworkBinary() ([]byte, error) {
 }
 
 // WrestleAction is the common wire body of REQUEST_WRESTLE (0x115C) and
-// NOTIFY_WRESTLE_SKILL (0x115B). QQTMsgData.bin confirms both records have
-// the same five fields and nine-byte layout; only the schema direction
-// changes.
+// NOTIFY_WRESTLE_SKILL (0x115B), rule 7's charged skills. QQTMsgData.bin
+// confirms both records have the same five fields and nine-byte layout.
+// SkillType holds the skill in its low nibble (0..7, 8 charging, 9 refused)
+// and the player's facing in the high one; PlayerPos is row<<4|col. The
+// player multicasts the request and the elected arbitrator answers with the
+// notice (Client.exe 0x006184BA, 0x005FFF01; docs/wrestle-skills-re.md).
 type WrestleAction struct {
 	SkillType byte
 	FirstTeam byte
@@ -246,12 +249,4 @@ func (action WrestleAction) MarshalNetworkBinary() ([]byte, error) {
 	body = binary.BigEndian.AppendUint16(body, action.PlayerID)
 	body = binary.BigEndian.AppendUint32(body, action.Time)
 	return body, nil
-}
-
-func BuildLocalWrestleNotify(requestPacket []byte, roomID uint16, gameDataSequence uint32, action WrestleAction) ([]byte, error) {
-	body, err := action.MarshalNetworkBinary()
-	if err != nil {
-		return nil, err
-	}
-	return buildLocalGameEventPush(requestPacket, roomID, gameDataSequence, NotifyWrestleSkill, body, nil)
 }
