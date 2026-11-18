@@ -2,3 +2,5 @@
 runs/
 *.egg-info/
 .pytest_cache/
+bin/
+__pycache__/
