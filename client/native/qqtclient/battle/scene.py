@@ -24,6 +24,7 @@ from . import mapfile, prepared
 from .bomb_animation import BombAnimation
 from .effect import EffectPlayer
 from .machine_projectile import MachineGateAnimation
+from .machine_skill import SkillInput, SkillPose, held_move_keys, pose_image, vertical
 from .result import ResultDisplay, scene_game_type
 from .result_portrait import ResultPortrait
 from .sculpture_animation import StatueAnimation
@@ -320,6 +321,12 @@ class BattleScene:
     the sidecar keeps its own clock, so it is stepped every frame."""
 
     keys = BattleKeys.from_layout(DEFAULT_LAYOUT)  # the session sets the player's own layout
+    # Rule 7's charged skills; immutable defaults for scenes built without
+    # __init__ (tests). Instances replace, never mutate, the key collections.
+    skill_input: SkillInput | None = None
+    skill_poses: Any = types.MappingProxyType({})
+    move_keys_down: tuple[int, ...] = ()
+    bubble_keys_down: frozenset[int] = frozenset()
 
     def __init__(self, resources: Resources, sprites: SpriteCache, avatars: AvatarCache, sidecar: Sidecar,
                  map_id: int, players: list[dict[str, Any]], local_id: int, state: dict[str, Any], realtime: bool = False,
@@ -382,6 +389,10 @@ class BattleScene:
         self.pig_fear: dict[tuple[int, int], int] = {}  # scared pig beds -> clock
         self.held: list[int] = []
         self.bomb_pressed = False
+        # Physically held keys (rule 7's charged skills keep direction keys
+        # pressed with the bubble key out of the move stack).
+        self.skill_input = SkillInput() if self.map.rule == 7 else None
+        self.skill_poses = {}
         self.use_pressed = 0  # held-item action to use on the next step
         self.prop_pressed = 0  # room prop (item ID) to use on the next step
         self.emotion_pressed = 0
@@ -544,11 +555,15 @@ class BattleScene:
                         self._slots()
                 if event.key in keys.moves:
                     move = keys.moves[event.key]
-                    if move in self.held:
-                        self.held.remove(move)
-                    self.held.append(move)  # the latest key wins
+                    if move not in self.move_keys_down:
+                        self.move_keys_down = (*self.move_keys_down, move)
+                    if self.skill_input is None or not self.bubble_keys_down:
+                        if move in self.held:
+                            self.held.remove(move)
+                        self.held.append(move)  # the latest key wins
                 if event.key in keys.bomb:
                     self.bomb_pressed = True
+                    self.bubble_keys_down = self.bubble_keys_down | {event.key}
                 if event.key in keys.slots:
                     self._press_use(self._slots()[keys.slots[event.key]][0])
                 if event.key in keys.smart_use:
@@ -556,10 +571,13 @@ class BattleScene:
         elif event.type == pygame.KEYUP:
             if event.key == pygame.K_F8:
                 self.name_key_down = False
-            elif event.key in self.keys.moves:
+            if event.key in self.keys.bomb:
+                self.bubble_keys_down = self.bubble_keys_down - {event.key}
+            if event.key in self.keys.moves:
                 move = self.keys.moves[event.key]
                 if move in self.held:
                     self.held.remove(move)
+                self.move_keys_down = tuple(held for held in self.move_keys_down if held != move)
 
     def _local_actor(self) -> dict[str, Any] | None:
         return next((actor for actor in self.state["actors"] if actor["id"] == self.local_id), None)
@@ -645,8 +663,11 @@ class BattleScene:
         if ticks <= 0 and not self.realtime:
             return
         self.accumulated_ms -= ticks * TICK_MS
+        skill = self._poll_skill()
         action = {"id": self.local_id, "move": self.held[-1] if self.held else MOVE_NONE, "bomb": self.bomb_pressed,
                   "use": self.use_pressed, "prop": self.prop_pressed, "emotion": self.emotion_pressed}
+        if skill is not None:
+            action["skill"] = skill
         self.bomb_pressed, self.use_pressed, self.prop_pressed = False, 0, 0
         self.emotion_pressed = 0
         previous = {actor["id"]: (actor["x"], actor["y"]) for actor in self.state["actors"]}
@@ -656,6 +677,7 @@ class BattleScene:
         self.name_effect_ms += self.clock - previous_clock
         self._update_machine_projectiles(self.clock - previous_clock)
         self._update_bomb_pictures(self.clock - previous_clock)
+        self._update_skill_poses(previous, self.clock - previous_clock)
         for packet in self.state.get("tcp_out") or ():
             if self.on_tcp_out is not None:
                 self.on_tcp_out(packet["cmd"], bytes.fromhex(packet["payload"]))
@@ -684,6 +706,41 @@ class BattleScene:
         if self.outcome["ended"] and not self.end_logged:
             self.end_logged = True
             log(f"[battle] ended: {self.outcome}")
+
+    def _poll_skill(self) -> int | None:
+        """Rule 7's charged-skill input for this frame (machine_skill.py)."""
+        if self.skill_input is None:
+            return None
+        bubble_held = bool(self.bubble_keys_down)
+        if not bubble_held:
+            # 0x005A4C52 pushes a held direction key once the bubble key is up.
+            for move in self.move_keys_down:
+                if move not in self.held:
+                    self.held.append(move)
+        actor = self._local_actor()
+        chat_open = self.runtime is not None and self.runtime.namespace["Win_IsVisible"]("UI.game.chat")
+        if self.over or chat_open or actor is None or actor["state"] != ACTOR_ACTIVE or self.clock < READY_MS:
+            return None
+        self.skill_input.poll(self.clock, bubble_held, held_move_keys(set(self.move_keys_down)))
+        first_team = actor["team"] == (self.state.get("machine") or {}).get("first_team")
+        return self.skill_input.send(self.clock, actor["facing"], first_team)
+
+    def _update_skill_poses(self, previous: dict[int, tuple[int, int]], elapsed_ms: int) -> None:
+        """Start poses from the sidecar's 0x115B notices; advance and end them."""
+        if self.skill_input is None:
+            return
+        for notice in (self.state.get("machine") or {}).get("skills") or ():
+            if notice["player"] == self.local_id:
+                self.skill_input.notice()
+            if notice["pose"] >= 0:
+                frames = len(self.sprites.get(pose_image(notice["pose"])) or ()) or 1
+                self.skill_poses[notice["player"]] = SkillPose.start(notice["pose"], self.clock, frames)
+        actors = {actor["id"]: actor for actor in self.state["actors"]}
+        for player, pose in list(self.skill_poses.items()):
+            actor = actors.get(player)
+            moved = actor is not None and previous.get(player) != (actor["x"], actor["y"])
+            if actor is None or not pose.advance(self.clock, elapsed_ms) or (pose.offset(actor["facing"]) is None and (moved or vertical(actor["facing"]))):
+                del self.skill_poses[player]
 
     def _apply(self, event: dict[str, Any]) -> None:
         kind, cell = event["kind"], event["cell"]
@@ -1451,6 +1508,11 @@ class BattleScene:
         if actor["state"] == ACTOR_TRAPPED:
             self._draw_syrup(surface, trapped_for, x - AVATAR_ANCHOR[0], y - AVATAR_ANCHOR[1])
         self._draw_flash(surface, actor, x, y)
+        pose = self.skill_poses.get(actor["id"])
+        offset = pose.offset(actor["facing"]) if pose is not None else None
+        if pose is not None and offset is not None and actor["state"] != ACTOR_ELIMINATED:
+            # 0x005AC6A2 draws the skill picture over the avatar (rule 7).
+            self._draw_frames(surface, pose_image(pose.pose), pose.picture.frame, x + offset[0], y + offset[1])
         self._draw_nameplate(surface, actor, x, y)
         emotions = self.state.get("emotions") or ([self.practice_emotion] if self.practice_emotion else [])
         for emotion in emotions:

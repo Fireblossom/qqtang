@@ -97,6 +97,8 @@ func nativePeerMulticastMirrorSchema(schema uint16) bool {
 		game.NotifyGenerateBox,
 		game.NotifyMapElement,
 		game.NotifyPlayerMoveBomb,
+		game.RequestWrestle,
+		game.NotifyWrestleSkill,
 		game.CreateNPCBossEvent:
 		return true
 	default:
@@ -531,6 +533,11 @@ func (server *Server) handleGameEventMessage(config ListenerConfig, session *con
 					}
 					if relayErr == nil {
 						_, relayErr = authorizeCompetitiveActor(session, battle, action.PlayerID, "kick-bomb")
+						// Rule 7's arbitrator throws charged-skill bubbles for the
+						// skill's player (0x005FFE30).
+						if relayErr != nil && rule == mapdata.CompetitiveRuleMachine && battle.IsArbitrator(session.Profile.PlayerID) && battle.HasParticipant(action.PlayerID) {
+							relayErr = nil
+						}
 					}
 					if relayErr == nil {
 						response, event, relayErr = game.BuildLocalGameEventRelay(data)
@@ -621,25 +628,30 @@ func (server *Server) handleGameEventMessage(config ListenerConfig, session *con
 							result += "_transport_duplicate"
 						}
 					}
-				case game.RequestWrestle:
+				case game.RequestWrestle, game.NotifyWrestleSkill:
+					// Rule 7's charged skills (docs/wrestle-skills-re.md). Only rule
+					// 7 sends them (Client.exe registers the 0x006184BA sender for
+					// rule 7 alone). The player multicasts 0x115C; the elected
+					// arbitrator answers with 0x115B (0x005FFF01). Both reliable
+					// copies are audits of that native Type-2 traffic.
 					var action game.WrestleAction
 					action, relayErr = game.ParseWrestleAction(event)
+					var battle *match.CompetitiveBattle
 					if relayErr == nil {
-						_, relayErr = server.requireMatchParticipantActor(session, action.PlayerID, "wrestle")
+						battle, relayErr = server.requireCompetitiveRule(session, mapdata.CompetitiveRuleMachine, action.PlayerID)
 					}
-					if relayErr == nil {
-						_, relayErr = server.requireCompetitiveRule(session, mapdata.CompetitiveRuleWrestle, action.PlayerID)
+					if relayErr == nil && event.Schema == game.RequestWrestle && action.PlayerID != session.Profile.PlayerID {
+						relayErr = fmt.Errorf("wrestle request player %d is not sender %d", action.PlayerID, session.Profile.PlayerID)
+					}
+					if relayErr == nil && event.Schema == game.NotifyWrestleSkill && !battle.IsArbitrator(session.Profile.PlayerID) {
+						relayErr = fmt.Errorf("wrestle skill notice from %d, who is not the match arbitrator", session.Profile.PlayerID)
 					}
 					if relayErr == nil {
 						response, event, relayErr = game.BuildLocalGameEventRelay(data)
 					}
 					if relayErr == nil {
-						followUp, relayErr = game.BuildLocalWrestleNotify(data, session.RoomID, server.nextGameDataSequence(), action)
-						result = fmt.Sprintf("qqt_game_event_ack_wrestle_player_%d_skill_%d", action.PlayerID, action.SkillType)
-						followUpResult = fmt.Sprintf("qqt_game_event_notify_wrestle_player_%d_skill_%d", action.PlayerID, action.SkillType)
+						result = fmt.Sprintf("qqt_game_event_ack_wrestle_0x%04X_player_%d_skill_%d", event.Schema, action.PlayerID, action.SkillType)
 					}
-				case game.NotifyWrestleSkill:
-					relayErr = fmt.Errorf("NOTIFY_WRESTLE_SKILL is server-generated and cannot be submitted by a peer")
 				case game.RequestUseItem:
 					var use game.WorldUseItemEvent
 					use, relayErr = game.ParseWorldUseItemEvent(event)
