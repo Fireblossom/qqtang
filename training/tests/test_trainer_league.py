@@ -90,6 +90,16 @@ def test_outcome_parsing(entry, teams, expect):
     assert outcome_for_teams(entry, teams) == expect
 
 
+def test_episode_teams_includes_delayed_players():
+    from qqtrain.league import episode_teams
+
+    active = np.array([1, 0, 0, 0], bool)  # random phase: team 2 not due yet
+    reset = np.array([1, 1, 0, 0], bool)
+    team = np.array([1, 2, 0, 0], np.uint8)
+    assert episode_teams(active, reset, team) == [1, 2]
+    assert episode_teams(np.zeros(4, bool), np.zeros(4, bool), team) == [1, 2]
+
+
 def test_wilson_and_elo():
     lo, hi = wilson_interval(50, 100)
     assert lo < 0.5 < hi and hi - lo < 0.21

@@ -24,6 +24,7 @@ envs = 8
 agents = 4
 spatial_dtype = "f16"
 player_counts = [2, 4]
+decision_cadence = "server"   # like the real worker's default for training: early re-decisions, unequal steps
 min_len = 20
 max_len = 60
 hit_reward = 0.05

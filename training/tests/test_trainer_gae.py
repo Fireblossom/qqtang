@@ -15,13 +15,13 @@ def _st(T, S):
     return RolloutStorage(T, S, torch.device("cpu"))
 
 
-def _entry(st, row, slot, value, reward=0.0, done=False, train=True, gstep=None):
+def _entry(st, row, slot, value, reward=0.0, done=False, train=True, gtime=None):
     st.valid[row, slot] = True
     st.train[row, slot] = train
     st.value[row, slot] = value
     st.reward[row, slot] = reward
     st.done[row, slot] = done
-    st.gstep[row, slot] = row if gstep is None else gstep
+    st.gtime[row, slot] = row if gtime is None else gtime
 
 
 def test_plain_sequence_with_bootstrap():
@@ -78,9 +78,9 @@ def test_carried_pending_entry_truncates_lambda():
 
 
 def test_carried_entry_gets_delayed_terminal():
-    """Row-0 carry from an earlier rollout (gstep before row 1) closed by a done."""
+    """Row-0 carry from an earlier rollout (gtime before row 1) closed by a done."""
     st = _st(3, 1)
-    _entry(st, 0, 0, 0.4, reward=-1.0, done=True, gstep=-5)
+    _entry(st, 0, 0, 0.4, reward=-1.0, done=True, gtime=-5)
     _entry(st, 2, 0, 0.1, 0.0)
     _entry(st, 4, 0, 0.3, train=False)
     adv, _ = compute_gae(st, G, LAM)
@@ -96,6 +96,18 @@ def test_inactive_and_independent_slots():
     assert (adv[:, 1] == 0).all() and (ret[:, 1] == 0).all()  # never-active slot
     np.testing.assert_allclose(adv[1, 0], 1.0)
     np.testing.assert_allclose(adv[1, 2], G**2 * 1.0 - 0.5, rtol=1e-6)
+
+
+def test_unequal_step_lengths_discount_by_time():
+    """Server cadence: decisions 0.4 and 1.0 decision units (100 ms) apart."""
+    st = _st(3, 1)
+    _entry(st, 1, 0, 0.5, 1.0, gtime=0.0)
+    _entry(st, 2, 0, 0.2, 0.0, gtime=0.4)
+    _entry(st, 3, 0, 0.3, train=False, gtime=1.4)
+    adv, _ = compute_gae(st, G, LAM)
+    a2 = G**1.0 * 0.3 - 0.2
+    a1 = 1.0 + G**0.4 * 0.2 - 0.5 + G**0.4 * LAM * a2
+    np.testing.assert_allclose(adv[1:3, 0], [a1, a2], rtol=1e-6)
 
 
 def test_missing_successor_is_an_error():

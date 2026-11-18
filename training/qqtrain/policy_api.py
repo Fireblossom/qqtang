@@ -182,6 +182,40 @@ def export_onnx(policy: nn.Module, path: str | Path) -> bool:
 # --------------------------------------------------------------------------- forward helpers
 
 
+def bucket_size(n: int, minimum: int = 64) -> int:
+    """Round a batch size up to 64, 96, 128, 192, 256, 384, ... (at most 1.5x padding).
+
+    Accelerators compile/tune per input shape (MPS graphs, cuDNN autotuning,
+    torch.compile); with per-step varying batch sizes that recompilation
+    dominated (~150 ms per forward on MPS). Padding to a few buckets avoids it.
+    """
+    b = minimum
+    while b < n:
+        b = b * 3 // 2 if b & (b - 1) == 0 else b // 3 * 4
+    return b
+
+
+def pad_dim(t: torch.Tensor, size: int, dim: int = 0, value=0) -> torch.Tensor:
+    extra = size - t.shape[dim]
+    if extra <= 0:
+        return t
+    shape = list(t.shape)
+    shape[dim] = extra
+    return torch.cat([t, torch.full(shape, value, dtype=t.dtype, device=t.device)], dim=dim)
+
+
+def padded_forward(net: nn.Module, spatial, scalars, legal, memory, reset, enabled: bool = True):
+    """``net(...)`` on a batch padded to ``bucket_size`` (padding rows: only "wait" legal, reset)."""
+    n = spatial.shape[0]
+    size = bucket_size(n) if enabled else n
+    if size == n:
+        return net(spatial, scalars, legal, memory, reset)
+    legal = pad_dim(legal, size, 0, False)
+    legal[n:, 0] = True
+    out = net(pad_dim(spatial, size), pad_dim(scalars, size), legal, pad_dim(memory, size), pad_dim(reset, size, 0, True))
+    return tuple(o[:n] for o in out)
+
+
 def sequence_forward(policy: nn.Module, spatial, scalars, legal, memory, reset):
     """Time-major replay used by PPO (see module docstring)."""
     fn = getattr(policy, "forward_sequence", None)

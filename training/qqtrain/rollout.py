@@ -12,8 +12,11 @@ unused tensor capacity) and opponent slots have none.
 
 Transitions are per slot, from one decision to the slot's next decision.
 Rewards that arrive while the slot is inactive (e.g. an eliminated agent's
-team winning later) are added to its pending entry, and the time gap enters
-the discount as ``gamma ** (step gap)``. ``done`` closes the pending entry
+team winning later, or between decisions with the server cadence) are added
+to its pending entry. Each env keeps a clock in 100 ms units (5 engine ticks
+per STEP with the fixed cadence, the worker's per-env ``ticks`` with the
+server cadence) and the discount between two decisions of a slot is
+``gamma ** (clock difference)``, so unequal step lengths are handled. ``done`` closes the pending entry
 (terminal; no bootstrap). The GRU memory is only advanced on the slot's own
 decisions, exactly like the server, and is cleared on ``reset``/``done``.
 
@@ -45,8 +48,8 @@ import numpy as np
 import torch
 import torch.nn as nn
 
-from .league import LATEST, League, outcome_for_teams
-from .policy_api import ACTIONS, CHANNELS, HEIGHT, MEMORY, SCALARS, WIDTH, deployed_sample, sample_actions
+from .league import LATEST, League, episode_teams, outcome_for_teams
+from .policy_api import ACTIONS, CHANNELS, HEIGHT, MEMORY, SCALARS, WIDTH, deployed_sample, padded_forward, sample_actions
 from .worker import OP_RESET, OP_STEP, GroupResult, WorkerPool
 
 log = logging.getLogger(__name__)
@@ -70,7 +73,7 @@ class RolloutStorage:
         self.done = np.zeros((R, S), bool)
         self.valid = np.zeros((R, S), bool)
         self.train = np.zeros((R, S), bool)
-        self.gstep = np.zeros((R, S), np.int64)
+        self.gtime = np.zeros((R, S), np.float64)  # decision time in 100 ms units (env clock)
 
     def nbytes(self) -> int:
         return sum(t.numel() * t.element_size() for t in (self.spatial, self.scalars, self.legal, self.memory, self.reset))
@@ -89,7 +92,7 @@ class RolloutStorage:
         sl = torch.as_tensor(slots, device=self.device)
         for t in (self.spatial, self.scalars, self.legal, self.memory, self.reset):
             t[dst_row, sl] = t[sr, sl]
-        for a in (self.action, self.logp, self.value, self.reward, self.done, self.valid, self.train, self.gstep):
+        for a in (self.action, self.logp, self.value, self.reward, self.done, self.valid, self.train, self.gtime):
             a[dst_row, slots] = a[src_rows, slots]
 
 
@@ -104,7 +107,7 @@ def compute_gae(st: RolloutStorage, gamma: float, lam: float) -> tuple[np.ndarra
     adv = np.zeros((R, S), np.float32)
     next_val = np.zeros(S, np.float64)
     next_adv = np.zeros(S, np.float64)
-    next_g = np.zeros(S, np.int64)
+    next_g = np.zeros(S, np.float64)
     has_next = np.zeros(S, bool)
     for r in range(R - 1, -1, -1):
         v = st.valid[r]
@@ -118,20 +121,20 @@ def compute_gae(st: RolloutStorage, gamma: float, lam: float) -> tuple[np.ndarra
             missing = ~term & ~has_next[idx]
             if missing.any():
                 raise AssertionError(f"trainable entries without successor at row {r}: slots {idx[missing][:8]}")
-            gap = np.maximum(next_g[idx] - st.gstep[r, idx], 1)
+            gap = next_g[idx] - st.gtime[r, idx]
             disc = np.where(term, 0.0, gamma ** gap)
             delta = st.reward[r, idx] + disc * next_val[idx] - st.value[r, idx]
             a = delta + disc * lam * next_adv[idx]
             adv[r, idx] = a
             next_val[idx] = st.value[r, idx]
             next_adv[idx] = a
-            next_g[idx] = st.gstep[r, idx]
+            next_g[idx] = st.gtime[r, idx]
             has_next[idx] = True
         if boot.any():
             idx = np.nonzero(boot)[0]
             next_val[idx] = st.value[r, idx]
             next_adv[idx] = 0.0
-            next_g[idx] = st.gstep[r, idx]
+            next_g[idx] = st.gtime[r, idx]
             has_next[idx] = True
     trainable = st.valid & st.train
     ret = np.where(trainable, adv + st.value, 0.0).astype(np.float32)
@@ -200,6 +203,9 @@ class Collector:
         self.env_opp = [LATEST] * E
         self.env_learner = np.zeros((E, 256), bool)  # learner team mask per env
         self.ep_return = np.zeros(S, np.float64)
+        self.env_clock = np.zeros(E, np.float64)  # per env, in 100 ms decision units
+        self._staging: dict[tuple[int, str], torch.Tensor] = {}
+        self.pad = device.type != "cpu"  # bucketed batch sizes on accelerators
         self.rollouts = 0
         self.autocast = device.type == "cuda" and bool(self.ppo.get("bf16", True))
         self.reset_stats()
@@ -213,9 +219,6 @@ class Collector:
         self.ep_infos: list[dict] = []
 
     # ------------------------------------------------------------------ helpers
-    def _row_gstep(self, row: int) -> int:
-        return self.rollouts * self.T + row
-
     def _is_learner(self, sl: slice) -> np.ndarray:
         team = self.pool.buffers.np["team"][sl]
         return self.env_learner[self.slot_env[sl], team]
@@ -238,6 +241,13 @@ class Collector:
         gs = np.arange(sl.start, sl.stop)
         reward = b["reward"][sl]
         done = b["done"][sl]
+        # Advance each env's clock: 5 ticks per STEP with the fixed cadence, the
+        # worker's per-env "ticks" with the server cadence (discount is per 100 ms).
+        envs_sl = np.arange(sl.start // self.P, sl.stop // self.P)
+        if res.ticks is not None:
+            self.env_clock[envs_sl] += res.ticks / 5.0
+        elif not res.reset_op:
+            self.env_clock[envs_sl] += 1.0
         # 1. Rewards go to each slot's pending learner entry.
         pend = self.last_row[gs] >= 0
         if pend.any():
@@ -274,7 +284,6 @@ class Collector:
             self.ep_return[cs] = 0.0
             self.stats["worker_crashes"] += 1
         # 5. New episodes -> league assignment.
-        envs_sl = np.arange(sl.start // self.P, sl.stop // self.P)
         if res.reset_op:
             new_envs = envs_sl
         else:
@@ -289,10 +298,8 @@ class Collector:
             s0 = e * self.P
             # Any entry still pending in this env belongs to a finished episode.
             self._close_pending(np.arange(s0, s0 + self.P), truncate=True)
-            act = b["active"][s0 : s0 + self.P]
-            team = b["team"][s0 : s0 + self.P]
-            present = team[act] if act.any() else team
-            teams = sorted({int(t) for t in present})
+            q = slice(s0, s0 + self.P)
+            teams = episode_teams(b["active"][q], b["reset"][q], b["team"][q])
             self.env_opp[e] = opp
             self.env_learner[e] = False
             for t in self.league.assign_teams(teams, opp):
@@ -300,6 +307,17 @@ class Collector:
             self.stats[f"games_vs_{opp}"] += 1
 
     # ------------------------------------------------------------------ acting
+    def _stage(self, g: int, name: str, src: torch.Tensor, idx: torch.Tensor) -> torch.Tensor:
+        """Gather rows ``idx`` of ``src`` into a reusable (pinned on CUDA) host buffer."""
+        key = (g, name)
+        buf = self._staging.get(key)
+        if buf is None or buf.shape[0] < src.shape[0]:
+            buf = torch.empty_like(src, pin_memory=self.device.type == "cuda")
+            self._staging[key] = buf
+        out = buf[: len(idx)]
+        torch.index_select(src, 0, idx, out=out)
+        return out
+
     def _act(self, g: int, row: int) -> None:
         sl = self.pool.group_slots[g]
         b = self.pool.buffers
@@ -312,21 +330,31 @@ class Collector:
             self.stats["empty_legal"] += int(bad.sum())
         learner = active & self._is_learner(sl)
         actions = np.full(sl.stop - sl.start, -1, np.int16)
-        nb = self.device.type == "cuda"
-        spatial = b.spatial[sl].to(self.device, non_blocking=nb)
-        scalars = b.scalars[sl].to(self.device, non_blocking=nb)
-        legal = b.legal[sl].to(self.device, non_blocking=nb)
-        reset = torch.from_numpy(self.need_reset[sl]).to(self.device, non_blocking=nb)
         base = sl.start
+        act_idx = np.nonzero(active)[0]
+        if len(act_idx) == 0:
+            self.pool.submit(g, OP_STEP, actions)
+            return
+        # Only active rows go to the device (inactive slots are zero padding); they
+        # are gathered on the host into (pinned) staging buffers.
+        nb = self.device.type == "cuda"
+        n = len(act_idx)
+        ai = torch.from_numpy(act_idx)
+        spatial = self._stage(g, "spatial", b.spatial[sl], ai).to(self.device, non_blocking=nb)
+        scalars = self._stage(g, "scalars", b.scalars[sl], ai).to(self.device, non_blocking=nb)
+        legal = self._stage(g, "legal", b.legal[sl], ai).to(self.device, non_blocking=nb)
+        reset = torch.from_numpy(self.need_reset[sl][act_idx]).to(self.device, non_blocking=nb)
+        pos = np.full(sl.stop - sl.start, -1, np.int64)
+        pos[act_idx] = np.arange(n)
         ac = torch.autocast("cuda", dtype=torch.bfloat16) if self.autocast else nullcontext()
         with torch.inference_mode(), ac:
             # learner
             li = np.nonzero(learner)[0]
             if len(li):
-                lt = torch.as_tensor(li, device=self.device)
-                gi = lt + base
+                lt = torch.as_tensor(pos[li], device=self.device)
+                gi = torch.as_tensor(li + base, device=self.device)
                 mem_in = self.memory[gi]
-                logits, value, nmem = self.policy(spatial[lt], scalars[lt], legal[lt], mem_in, reset[lt])
+                logits, value, nmem = padded_forward(self.policy, spatial[lt], scalars[lt], legal[lt], mem_in, reset[lt], self.pad)
                 a, logp = sample_actions(logits, legal[lt])
                 self.memory[gi] = nmem.float()
                 gsl = li + base
@@ -338,15 +366,16 @@ class Collector:
                 st.legal[row, gst] = legal[lt].to(sdev)
                 st.memory[row, gst] = mem_in.to(sdev)
                 st.reset[row, gst] = reset[lt].to(sdev)
-                a_np = a.cpu().numpy()
+                host = torch.stack([a.float(), logp.float(), value.float()]).cpu().numpy()  # one sync
+                a_np = host[0].astype(np.int64)
                 st.action[row, gsl] = a_np
-                st.logp[row, gsl] = logp.float().cpu().numpy()
-                st.value[row, gsl] = value.float().cpu().numpy()
+                st.logp[row, gsl] = host[1]
+                st.value[row, gsl] = host[2]
                 st.reward[row, gsl] = 0.0
                 st.done[row, gsl] = False
                 st.valid[row, gsl] = True
                 st.train[row, gsl] = True
-                st.gstep[row, gsl] = self._row_gstep(row)
+                st.gtime[row, gsl] = self.env_clock[self.slot_env[gsl]]
                 self.last_row[gsl] = row
                 actions[li] = a_np
                 self.stats["learner_decisions"] += len(li)
@@ -359,10 +388,10 @@ class Collector:
                     groups[self.env_opp[e]].append(k)
                 for opp, ks in groups.items():
                     idx = oi[np.asarray(ks)]
-                    ot = torch.as_tensor(idx, device=self.device)
-                    gi = ot + base
+                    ot = torch.as_tensor(pos[idx], device=self.device)
+                    gi = torch.as_tensor(idx + base, device=self.device)
                     net = self.policy if opp == LATEST else self.league.model(opp)
-                    logits, _v, nmem = net(spatial[ot], scalars[ot], legal[ot], self.memory[gi], reset[ot])
+                    logits, _v, nmem = padded_forward(net, spatial[ot], scalars[ot], legal[ot], self.memory[gi], reset[ot], self.pad)
                     if opp == LATEST:
                         a, _ = sample_actions(logits, legal[ot])
                     else:  # frozen members play with the server's decoder
@@ -441,5 +470,4 @@ class Collector:
         moved = self.last_row == T + 1
         self.last_row[moved] = 1
         self.rollouts += 1
-        # Row 1 of the next rollout keeps its original gstep: rollouts * T + 1.
         self.league.choose_resident()

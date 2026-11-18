@@ -226,6 +226,19 @@ class League:
         self.resident = []
 
 
+def episode_teams(active: np.ndarray, reset: np.ndarray, team: np.ndarray) -> list[int]:
+    """Team IDs of the real players of an env's new episode.
+
+    Real slots carry ``reset`` (or are active) on the episode's first row; with
+    the server cadence's random phase some players are not active yet, so
+    ``active`` alone can miss a team. Falls back to non-zero team values.
+    """
+    real = active | reset
+    if real.any():
+        return sorted({int(t) for t in team[real]})
+    return sorted({int(t) for t in team[team > 0]} or {int(t) for t in team})
+
+
 def _unwrap(policy: nn.Module) -> nn.Module:
     return getattr(policy, "_orig_mod", policy)
 

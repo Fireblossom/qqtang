@@ -50,7 +50,8 @@ class ScriptedPool:
         b["reward"][:] = step.get("reward", [0.0] * S)
         b["legal"][:] = False
         b["legal"][b["active"], :3] = True
-        return GroupResult(0, slice(0, S), step.get("episodes", []), np.zeros(0, np.int64), self._op == OP_RESET)
+        ticks = np.asarray(step["ticks"]) if "ticks" in step else None
+        return GroupResult(0, slice(0, S), step.get("episodes", []), np.zeros(0, np.int64), self._op == OP_RESET, 0.0, ticks)
 
 
 def _collector(tmp_path, script, self_play=1.0, T=2):
@@ -83,8 +84,8 @@ def test_eliminated_agent_carry_and_delayed_terminal(tmp_path):
     assert adv[1, 1] == 0
     assert (pool.sent[0] >= 0).all() and pool.sent[1][1] == -1  # inactive slot sends -1
     col.advance()
-    assert st.valid[0, 1] and st.train[0, 1] and st.gstep[0, 1] == 1
-    assert st.valid[1, 0] and st.gstep[1, 0] == 3 and not st.valid[2:, :].any()
+    assert st.valid[0, 1] and st.train[0, 1] and st.gtime[0, 1] == 0
+    assert st.valid[1, 0] and st.gtime[1, 0] == 2 and not st.valid[2:, :].any()
     col.collect()
     # The terminal arrived for both: slot 1's carried entry (row 0) and slot 0's row 1.
     np.testing.assert_allclose(st.reward[0, 1], -0.3 + 1.0)
@@ -107,3 +108,30 @@ def test_only_learner_team_is_stored(tmp_path):
     assert st.valid[1:4, slot].all() and not st.valid[:, 1 - slot].any()
     assert all((a >= 0).all() for a in pool.sent)  # the opponent also acted
     assert col.stats["opponent_decisions"] == 3 and col.stats["learner_decisions"] == 3
+
+
+def test_server_cadence_holding_slots_and_tick_clock(tmp_path):
+    """Only due slots act; rewards of holding steps accrue; time follows the worker's ticks."""
+    script = [
+        dict(active=[1, 1], reset=[1, 1]),  # t=0: both decide (row 1)
+        dict(active=[1, 0], reward=[0.1, 0.2], ticks=[2]),  # t=0.4: slot 0 re-decides early, slot 1 holds
+        dict(active=[0, 1], reward=[0.0, 0.3], ticks=[3]),  # t=1.0: slot 1 due, slot 0 holds
+        dict(active=[1, 1], ticks=[5]),
+    ]
+    col, pool = _collector(tmp_path, script, T=2)
+    col.collect()
+    st = col.storage
+    assert st.valid[1].all() and st.valid[2, 0] and not st.valid[2, 1] and st.valid[3, 1] and not st.valid[3, 0]
+    np.testing.assert_allclose(st.gtime[1], [0.0, 0.0])
+    np.testing.assert_allclose([st.gtime[2, 0], st.gtime[3, 1]], [0.4, 1.0])
+    np.testing.assert_allclose([st.reward[1, 0], st.reward[1, 1]], [0.1, 0.5])  # slot 1 held through two steps
+    assert pool.sent[0][1] >= 0 and pool.sent[1][1] == -1 and pool.sent[2][0] == -1
+    # Slot 1's memory input at its second decision is its memory after the first:
+    # nothing advanced it while it held.
+    with torch.no_grad():
+        b = (st.spatial[1, 1:2], st.scalars[1, 1:2], st.legal[1, 1:2], st.memory[1, 1:2], st.reset[1, 1:2])
+        _, _, m1 = col.policy(*b)
+    torch.testing.assert_close(st.memory[3, 1], m1[0])
+    assert not st.train[2, 0]  # slot 0 inactive at T+1 and its episode runs on: carried
+    adv, _ = compute_gae(st, 0.9, 0.95)
+    np.testing.assert_allclose(adv[1, 1], 0.5 + 0.9**1.0 * st.value[3, 1] - st.value[1, 1], rtol=1e-5)

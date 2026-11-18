@@ -29,7 +29,8 @@ Info JSON per finished episode::
 
 Config keys (all optional): envs, agents, spatial_dtype, seed, player_counts (as the real worker),
 min_len, max_len, hit_reward, elim_prob, elim_reward, win_reward, draw_reward,
-legal_prob, crash_after_steps, crash_mode ("exit" | "garbage" | "hang"), step_sleep_ms.
+legal_prob, decision_cadence ("fixed" | "server", as the real worker), early_prob,
+crash_after_steps, crash_mode ("exit" | "garbage" | "hang"), step_sleep_ms.
 """
 
 from __future__ import annotations
@@ -67,6 +68,9 @@ class MockEnv:
         self.crash_after = int(cfg.get("crash_after_steps", 0))
         self.crash_mode = cfg.get("crash_mode", "exit")
         self.step_sleep = float(cfg.get("step_sleep_ms", 0)) / 1000.0
+        self.cadence = cfg.get("decision_cadence", "fixed")
+        assert self.cadence in ("fixed", "server")
+        self.early_prob = float(cfg.get("early_prob", 0.2))
         E, P = self.E, self.P
         self.team = np.zeros((E, P), np.uint8)
         self.alive = np.zeros((E, P), bool)
@@ -80,6 +84,8 @@ class MockEnv:
         self.legal = np.zeros((E, P, A), np.uint8)
         self.spatial = np.zeros((E, P, C, H, W), self.dtype)
         self.steps = 0
+        self.active = np.zeros((E, P), bool)
+        self.due = np.zeros((E, P), np.int64)  # ticks until the slot's next decision
 
     def _reset_env(self, e: int):
         n = int(self.rng.choice(self.players))
@@ -93,6 +99,8 @@ class MockEnv:
         self.score[e] = 0
         self.ret[e] = 0
         self.hits[e] = 0
+        self.due[e] = 0
+        self.active[e] = self.alive[e]
 
     def _observe(self):
         E, P = self.E, self.P
@@ -100,18 +108,18 @@ class MockEnv:
         legal[:, :, 0] = 1
         target = self.rng.integers(0, A, size=(E, P))
         legal[np.arange(E)[:, None], np.arange(P)[None, :], target] = 1
-        legal[~self.alive] = 0
+        legal[~self.active] = 0
         self.legal = legal
         self.target = target
         scalars = np.zeros((E, P, S), np.float32)
-        ee, pp = np.nonzero(self.alive)
+        ee, pp = np.nonzero(self.active)
         scalars[ee, pp, target[ee, pp]] = 1.0
-        scalars[:, :, 45] = (self.t / np.maximum(self.length, 1))[:, None]
+        scalars[:, :, 45] = (self.t / np.maximum(5 * self.length, 1))[:, None]
         scalars[:, :, 46] = self.team
-        scalars[~self.alive] = 0
+        scalars[~self.active] = 0
         self.spatial[:] = 0
         self.spatial[:, :, 0] = (self.team.astype(self.dtype) / 2.0)[:, :, None, None]
-        self.spatial[~self.alive] = 0
+        self.spatial[~self.active] = 0
         return scalars
 
     def reset(self):
@@ -119,7 +127,7 @@ class MockEnv:
             self._reset_env(e)
         scalars = self._observe()
         z = np.zeros((self.E, self.P), np.uint8)
-        return self._pack(scalars, self.alive.astype(np.uint8), self.alive.astype(np.uint8), np.zeros((self.E, self.P), np.float32), z, [])
+        return self._pack(scalars, self.active.astype(np.uint8), self.active.astype(np.uint8), np.zeros((self.E, self.P), np.float32), z, [])
 
     def step(self, actions: np.ndarray):
         E, P = self.E, self.P
@@ -135,9 +143,9 @@ class MockEnv:
         if self.step_sleep:
             time.sleep(self.step_sleep)
         actions = actions.reshape(E, P).astype(np.int64)
-        if np.any(actions[~self.alive] != -1):
+        if np.any(actions[~self.active] != -1):
             die("action for an inactive slot")
-        ee, pp = np.nonzero(self.alive)
+        ee, pp = np.nonzero(self.active)
         a = actions[ee, pp]
         if np.any(a < 0) or np.any(a >= A) or np.any(self.legal[ee, pp, np.clip(a, 0, A - 1)] == 0):
             die("illegal or missing action for an active slot")
@@ -150,7 +158,20 @@ class MockEnv:
         elim &= self.alive
         reward[elim] += self.elim_reward
         self.alive &= ~elim
-        self.t += 1
+        # Decision cadence: fixed = every live slot decides every 5 ticks; server =
+        # some decisions come early (1-4 ticks) and a STEP advances each env only to
+        # its next due slot, whose number of ticks is reported in the info JSON.
+        if self.cadence == "server":
+            early = self.rng.random(len(ee)) < self.early_prob
+            self.due[ee, pp] = np.where(early, self.rng.integers(1, 5, len(ee)), 5)
+            due = np.where(self.alive, self.due, 99)
+            ticks = np.clip(due.min(axis=1), 1, 5)
+        else:
+            self.due[ee, pp] = 5
+            ticks = np.full(E, 5, np.int64)
+        self.due -= ticks[:, None]
+        self.active = self.alive & (self.due <= 0)
+        self.t += ticks
         done = np.zeros((E, P), np.uint8)
         reset = np.zeros((E, P), np.uint8)
         episodes = []
@@ -158,7 +179,7 @@ class MockEnv:
         for e in range(E):
             n = self.nplayers[e]
             alive_teams = {int(self.team[e, p]) for p in range(n) if self.alive[e, p]}
-            ended = self.t[e] >= self.length[e] or len(alive_teams) < 2
+            ended = self.t[e] >= 5 * self.length[e] or len(alive_teams) < 2
             if not ended:
                 continue
             if len(alive_teams) == 1:
@@ -178,9 +199,10 @@ class MockEnv:
                     "env": e,
                     "map": 0,
                     "rule": 1,
-                    "length": int(self.t[e]),
+                    "length": int(self.t[e] // 5),
+                    "ticks": int(self.t[e]),
                     "players": int(n),
-                    "outcome": {"draw": draw, "winner_team": winner, "timed_out": bool(self.t[e] >= self.length[e])},
+                    "outcome": {"draw": draw, "winner_team": winner, "timed_out": bool(self.t[e] >= 5 * self.length[e])},
                     "teams": {str(t): ("draw" if draw else ("win" if t == winner else "loss")) for t in (1, 2)},
                     "agents": [
                         {"slot": p, "team": int(self.team[e, p]), "return": float(self.ret[e, p]), "hits": int(self.hits[e, p])}
@@ -189,12 +211,15 @@ class MockEnv:
                 }
             )
             self._reset_env(e)
-            reset[e, :] = self.alive[e]
+            reset[e, :] = self.active[e]
         scalars = self._observe()
-        return self._pack(scalars, self.alive.astype(np.uint8), reset, reward, done, episodes)
+        return self._pack(scalars, self.active.astype(np.uint8), reset, reward, done, episodes, ticks if self.cadence == "server" else None)
 
-    def _pack(self, scalars, active, reset, reward, done, episodes) -> list[bytes]:
-        info = json.dumps({"episodes": episodes}).encode()
+    def _pack(self, scalars, active, reset, reward, done, episodes, ticks=None) -> list[bytes]:
+        doc = {"episodes": episodes}
+        if ticks is not None:
+            doc["ticks"] = [int(x) for x in ticks]
+        info = json.dumps(doc).encode()
         parts = [
             self.spatial.tobytes(),
             scalars.astype("<f4").tobytes(),

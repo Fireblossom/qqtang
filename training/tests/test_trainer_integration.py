@@ -56,7 +56,8 @@ CLIENT = os.environ.get("QQT_CLIENT_ROOT", str(Path.home() / "Downloads/QQTang-L
 
 
 @pytest.mark.skipif(not (WORKER.exists() and Path(CLIENT, "map").is_dir()), reason="worker binary or client data missing")
-def test_real_worker(tmp_path):
+@pytest.mark.parametrize("cadence", ["fixed", "server"])
+def test_real_worker(tmp_path, cadence):
     cfg = load_config(
         None,
         {
@@ -65,7 +66,7 @@ def test_real_worker(tmp_path):
                 "command": [str(WORKER)],
                 "client_root": CLIENT,
                 "num_workers": 2,
-                "config": {"envs": 4, "agents": 4, "player_counts": [2, 4], "workers": 1},
+                "config": {"envs": 4, "agents": 4, "player_counts": [2, 4], "workers": 1, "decision_cadence": cadence},
             },
             "model": {"factory": "standin"},
             "ppo": {"rollout_steps": 16, "seq_len": 8, "epochs": 1},

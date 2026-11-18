@@ -50,10 +50,11 @@ if pgrep -f "qqtrain.train --config" >/dev/null; then
 	echo "training already running:"; pgrep -af "qqtrain.train --config"; exit 1
 fi
 
-# One worker process per core, leaving 4 cores for the trainer process; the
-# config's value wins when it asks for fewer.
+# Workers run GOMAXPROCS=4 each (worker.env); leave 4 cores for the trainer
+# process. The config's value wins when it asks for fewer. Keep it even (2 groups).
 cores=$(nproc)
-want=$(( cores > 8 ? cores - 4 : 4 ))
+want=$(( (cores - 4) / 4 ))
+want=$(( want < 2 ? 2 : want - want % 2 ))
 cfg_workers=$(uv run python - "$CONFIG" <<'EOF'
 import sys, tomllib
 print(tomllib.load(open(sys.argv[1], "rb")).get("worker", {}).get("num_workers", 0))

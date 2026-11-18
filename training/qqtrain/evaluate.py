@@ -34,8 +34,8 @@ import torch
 import torch.nn as nn
 
 from .config import load_config, parse_override, resolve_path, worker_command
-from .league import BASELINE, League, outcome_for_teams, wilson_interval
-from .policy_api import MEMORY, deployed_sample, export_onnx
+from .league import BASELINE, League, episode_teams, outcome_for_teams, wilson_interval
+from .policy_api import MEMORY, deployed_sample, export_onnx, padded_forward
 from .worker import OP_RESET, OP_STEP, WorkerPool, worker_configs
 
 log = logging.getLogger(__name__)
@@ -72,9 +72,8 @@ def play_matches(
     def assign(envs):
         for e in envs:
             s0 = e * P
-            act = bn["active"][s0 : s0 + P]
-            team = bn["team"][s0 : s0 + P]
-            teams = sorted({int(t) for t in (team[act] if act.any() else team)})
+            q = slice(s0, s0 + P)
+            teams = episode_teams(bn["active"][q], bn["reset"][q], bn["team"][q])
             learner_team[e] = teams[(e + done_count[e]) % len(teams)] if teams else -1
 
     pool.submit(0, OP_RESET)
@@ -119,7 +118,7 @@ def play_matches(
                 if len(idx) == 0:
                     continue
                 it = torch.as_tensor(idx, device=device)
-                logits, _v, nmem = net(spatial[it], scalars[it], legal[it], memory[it], reset[it])
+                logits, _v, nmem = padded_forward(net, spatial[it], scalars[it], legal[it], memory[it], reset[it], device.type != "cpu")
                 a = deployed_sample(logits, legal[it], scalars[it], min_p=min_p, temperature=temperature, generator=gen)
                 memory[it] = nmem.float()
                 actions[idx] = a.cpu().numpy()

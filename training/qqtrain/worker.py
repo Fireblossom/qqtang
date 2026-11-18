@@ -167,8 +167,12 @@ class Worker:
     def send(self, op: int, payload: bytes = b"") -> None:
         _write_all(self.proc.stdin, struct.pack("<IBI", REQ_MAGIC, op, len(payload)) + payload)
 
-    def recv(self, views: list[memoryview]) -> list[dict]:
-        """Read one response; fixed fields go into ``views`` (wire order)."""
+    def recv(self, views: list[memoryview]) -> dict:
+        """Read one response; fixed fields go into ``views`` (wire order).
+
+        Returns the info JSON: ``episodes`` (list) and, with the server
+        decision cadence, ``ticks`` (engine ticks each env advanced).
+        """
         f = self.proc.stdout
         magic, size = struct.unpack("<II", _read_exact(f, 8))
         if magic != RESP_MAGIC:
@@ -185,10 +189,12 @@ class Worker:
             raise WorkerError(f"info length {info_len} too large")
         info = _read_exact(f, info_len) if info_len else b""
         if not info:
-            return []
+            return {"episodes": []}
         try:
-            return list(json.loads(info).get("episodes", []))
-        except (json.JSONDecodeError, AttributeError) as exc:
+            doc = json.loads(info)
+            doc["episodes"] = list(doc.get("episodes") or [])
+            return doc
+        except (json.JSONDecodeError, AttributeError, TypeError) as exc:
             raise WorkerError(f"bad info JSON {info[:200]!r}") from exc
 
     def kill(self) -> None:
@@ -226,6 +232,9 @@ class GroupResult:
     crashed_envs: np.ndarray  # global env indices whose worker restarted (all start new episodes)
     reset_op: bool  # response to RESET (every env starts a new episode)
     wait_s: float = 0.0
+    # Engine ticks (20 ms) each env of the group advanced during this STEP: the
+    # worker's "ticks" list with the server cadence, else 5 (0 after RESET).
+    ticks: np.ndarray | None = None
 
 
 @dataclass
@@ -324,7 +333,7 @@ class WorkerPool:
         return out
 
     # ------------------------------------------------------------------ exchange
-    def _exchange(self, i: int, op: int, payload: bytes) -> tuple[list[dict], bool]:
+    def _exchange(self, i: int, op: int, payload: bytes) -> tuple[dict, bool]:
         w = self.workers[i]
         try:
             w.send(op, payload)
@@ -373,24 +382,31 @@ class WorkerPool:
         t0 = time.perf_counter()
         episodes: list[dict] = []
         crashed: list[np.ndarray] = []
+        g0 = int(self.env_offsets[self.group_workers[group][0]])
+        g1 = int(self.env_offsets[self.group_workers[group][-1] + 1])
+        ticks = np.full(g1 - g0, 0 if reset_op else 5, np.int64)
         for i, fut in zip(self.group_workers[group], futures):
             try:
-                eps, was_crash = fut.result(timeout=self.step_timeout_s)
+                info, was_crash = fut.result(timeout=self.step_timeout_s)
             except cf.TimeoutError:
                 log.error("worker %d timed out after %.0fs; killing it", i, self.step_timeout_s)
                 self.workers[i].kill()  # unblocks the reader thread, which restarts the worker
-                eps, was_crash = fut.result(timeout=self.step_timeout_s * 2)
+                info, was_crash = fut.result(timeout=self.step_timeout_s * 2)
             off = int(self.env_offsets[i])
-            for ep in eps:
+            if was_crash:
+                crashed.append(np.arange(off, off + self.env_counts[i]))
+                ticks[off - g0 : off - g0 + self.env_counts[i]] = 0
+                continue
+            for ep in info["episodes"]:
                 ep = dict(ep)
                 ep["env"] = off + int(ep.get("env", 0))
                 ep["worker"] = i
                 episodes.append(ep)
-            if was_crash:
-                crashed.append(np.arange(off, off + self.env_counts[i]))
-                episodes = [ep for ep in episodes if ep["worker"] != i]
+            wt = info.get("ticks")
+            if wt is not None and len(wt) == self.env_counts[i]:
+                ticks[off - g0 : off - g0 + self.env_counts[i]] = wt
         crashed_envs = np.concatenate(crashed) if crashed else np.zeros(0, np.int64)
-        return GroupResult(group, self.group_slots[group], episodes, crashed_envs, reset_op, time.perf_counter() - t0)
+        return GroupResult(group, self.group_slots[group], episodes, crashed_envs, reset_op, time.perf_counter() - t0, ticks)
 
     def close(self) -> None:
         for g in list(self.pending):

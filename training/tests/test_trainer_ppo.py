@@ -125,7 +125,7 @@ def test_update_moves_policy_towards_advantage(tmp_path):
             st.value[r] = v.numpy()
     st.valid[1:] = True
     st.train[1 : T + 1] = True
-    st.gstep[:] = np.arange(T + 2)[:, None]
+    st.gtime[:] = np.arange(T + 2)[:, None]
     st.reward[:] = np.where(st.action == 1, 1.0, np.where(st.action == 2, -1.0, 0.0))
     adv, ret = compute_gae(st, 0.0, 0.0)  # gamma 0: advantage = reward - value
     ppo = PPO(pol, cfg, torch.device("cpu"))

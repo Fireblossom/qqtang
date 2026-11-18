@@ -22,7 +22,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 
-from .policy_api import masked_entropy, masked_log_probs, sequence_forward
+from .policy_api import bucket_size, masked_entropy, masked_log_probs, pad_dim, sequence_forward
 from .rollout import RolloutStorage, build_chunks
 
 
@@ -180,6 +180,14 @@ class PPO:
                 mem0 = st.memory[r[0], s[0]].to(dev, non_blocking=True)
                 mbd = torch.as_tensor(mb, device=dev)
                 m = mask_t[:, mbd]
+                action, old_logp, old_value = action_t[:, mbd], old_logp_t[:, mbd], old_value_t[:, mbd]
+                adv_mb, ret_mb = adv_t[:, mbd], ret_t[:, mbd]
+                if dev.type != "cpu":  # bucketed chunk counts: no per-shape recompilation
+                    B = bucket_size(len(mb), minimum=8)
+                    spatial, scalars, legal = pad_dim(spatial, B, 1), pad_dim(scalars, B, 1), pad_dim(legal, B, 1, False)
+                    reset, mem0, m = pad_dim(reset, B, 1, True), pad_dim(mem0, B, 0), pad_dim(m, B, 1, False)
+                    action, old_logp, old_value = pad_dim(action, B, 1), pad_dim(old_logp, B, 1), pad_dim(old_value, B, 1)
+                    adv_mb, ret_mb = pad_dim(adv_mb, B, 1), pad_dim(ret_mb, B, 1)
                 legal = legal.clone()
                 legal[..., 0] |= ~m  # padding: keep the softmax finite
                 with ac:
@@ -188,11 +196,11 @@ class PPO:
                     logits.float(),
                     value.float(),
                     legal,
-                    action_t[:, mbd],
-                    old_logp_t[:, mbd],
-                    old_value_t[:, mbd],
-                    adv_t[:, mbd],
-                    ret_t[:, mbd],
+                    action,
+                    old_logp,
+                    old_value,
+                    adv_mb,
+                    ret_mb,
                     m,
                     float(c["clip"]),
                     float(c["value_clip"]),
