@@ -109,8 +109,19 @@ func offlineONNXPaths(options offlineInit) (string, string) {
 		model = defaultONNXModel
 	}
 	if model == "" {
+		var candidates []string
 		if executable, err := os.Executable(); err == nil {
-			model = filepath.Join(filepath.Dir(executable), "..", "..", "..", "..", "configs", "models", "qqtang-rule1.onnx")
+			candidates = append(candidates, filepath.Join(filepath.Dir(executable), "..", "..", "..", "..", "configs", "models", "qqtang-rule1.onnx"))
+		}
+		if working, err := os.Getwd(); err == nil {
+			candidates = append(candidates, filepath.Join(working, "configs", "models", "qqtang-rule1.onnx"),
+				filepath.Join(working, "..", "..", "configs", "models", "qqtang-rule1.onnx"))
+		}
+		for _, candidate := range candidates {
+			if _, err := os.Stat(candidate); err == nil {
+				model = candidate
+				break
+			}
 		}
 	}
 	if library == "" {

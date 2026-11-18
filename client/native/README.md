@@ -41,7 +41,7 @@
    - `lobby.py`：大厅的房间分页、玩家列表和定时刷新；
    - `room.py`：建房、进房、快速加入和房间界面；本地状态只在服务端通知到达后改变；
    - `avatar.py`：按 `object/player/player<角色>.ini` 叠加部件画人物，并按 `colorlist.dat` 给队伍颜色染色；
-   - `battle/`：对战。`mapfile.py` 读地图和地图元素属性，`sidecar.py` 驱动规则辅助进程，`scene.py` 绘制对战画面和处理键盘，`practice.py` 离线练习，`online.py` 联网对局（TCP 一侧）；
+   - `battle/`：对战。`mapfile.py` 读地图和地图元素属性，`sidecar.py` 驱动规则辅助进程，`scene.py` 绘制对战画面和处理键盘，`practice.py` 旧的单机练习（只剩 `QQT_DIRECT_FREE_PRACTICE=1` 时的自由练习用），`offline.py` 离线对战（任何玩法），`online.py` 联网对局（TCP 一侧）；
    - `chat.py`：大厅聊天、悄悄话和小喇叭；
    - `props.py`：房间的装备道具栏和道具仓库；
    - `roomwalk.py`：房间场景的走动和装饰泡泡（依据 `docs/chatroom-move-re.md`）。主循环通过 `runtime.event_hooks`/`tick_hooks` 每帧调用它；它在房间里开一个 UDP 套接字做 Type-1 登记（从对局回来要重新登记），发送走 TCP 0x0065 房间快速包；
@@ -72,16 +72,19 @@ uv pip install --python .venv/bin/python -r requirements.txt
 
 `--screen login` 可跳过开场画面。
 
-### 离线练习
+### 离线对战（全部玩法，电脑对手和队友）
 
-对战规则由仓库中的 Go 程序 `cmd/qqt-battle-sidecar` 演算（复用服务端的 `internal/game/battleengine`，与服务端 AI 用的规则一致），客户端以子进程方式启动它。先用 Go 编译：
+对战规则由仓库中的 Go 程序 `cmd/qqt-battle-sidecar` 演算（复用服务端的 `internal/game/battleengine`，与服务端 AI 用的规则一致），客户端以子进程方式启动它。先用 Go 编译（macOS 上找到 ONNX Runtime 库时会带上 rule-1 模型，见 `docs/offline-ai-re.md`）：
 
 ```sh
 tools/build-sidecar.sh          # 输出 generated/bin/qqt-battle-sidecar
 .venv/bin/python -m qqtclient --client-root <客户端目录> --practice 211 --opponents 2
+.venv/bin/python -m qqtclient --client-root <客户端目录> --practice 801 --teams 1,1,2,2   # 抢包子 2 对 2
 ```
 
-方向键移动，空格放泡，1～7 键（或 Z X C V B N M）使用状态栏对应格的道具，Ctrl 使用0～5格里首个通过状态/持有判断的道具（被困时就是针），准备道具冷却另查；F8切换其他玩家头顶名字牌，本机始终显示原版箭头效果（`docs/nameplate-re.md`）；对局结束后回车再来一局，Esc 退出。对手只会随机走动和偶尔放泡。目前只支持普通规则（native rule 1）的地图，例如 211 景阳岗；踢炸弹、抢包子、比武等地图会被规则引擎拒绝（联网对战里夺宝、抢包子、雕像、踢炸弹、机器、箱子可以玩）。
+离线模式不连服务端，任何地图和规则都能打（普通、踢炸弹、抢包子、比武、夺宝、雕像、机器、箱子、糖客战、Boss 地图、探险路线）：每个座位一个客户端，本机做仲裁方，电脑座位由机器人或 rule-1 模型操作，本地裁判按服务端账本判胜负并显示原版结算画面（`docs/offline-ai-re.md`）。界面入口：大厅“新手练习”→“自由练习”打开离线练习房间（原版房间界面：选地图/模式、角色、队伍，点空座位加电脑，点开始）。
+
+方向键移动，空格放泡，1～7 键（或 Z X C V B N M）使用状态栏对应格的道具，Ctrl 使用0～5格里首个通过状态/持有判断的道具（被困时就是针），准备道具冷却另查；F8切换其他玩家头顶名字牌，本机始终显示原版箭头效果（`docs/nameplate-re.md`）；命令行开的对局结束后回车再来一局，Esc 退出。
 
 ### 联网对战
 

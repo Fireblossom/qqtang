@@ -72,7 +72,8 @@ func TestOfflineBench(t *testing.T) {
 				}
 			}
 			seed := uint32(1000 + index*7919)
-			hub, over := offlineRun(t, root, offlineInit{MapID: entry.ID, Players: players, SpawnSeed: seed, ItemSeed: seed ^ 0x5A5A}, 600_000)
+			hub, over := offlineRun(t, root, offlineInit{MapID: entry.ID, Players: players, SpawnSeed: seed, ItemSeed: seed ^ 0x5A5A,
+				Library: os.Getenv("QQTANG_TEST_ONNX_RUNTIME")}, 600_000)
 			winner := 0
 			for _, result := range over.Results {
 				if result.Result == game.GameResultWin {
