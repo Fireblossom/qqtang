@@ -270,6 +270,31 @@ class TextListScrollTest(unittest.TestCase):
         self.runtime.handle(pygame.event.Event(pygame.MOUSEWHEEL, x=0, y=1, flipped=False))
         self.assertEqual(self.list.list_offset, 88)
 
+    def key(self, key: int) -> int:
+        self.runtime.handle(pygame.event.Event(pygame.KEYDOWN, key=key, mod=0, unicode=""))
+        return self.list.list_offset
+
+    def test_keys_page_a_focused_list(self) -> None:
+        # 0x10023FF9: Up/Down by textsize, PageUp/PageDown by the client
+        # height (98 here); the page fix is the host's (scrollbar.list_key).
+        self.add(30)  # total 6 + 18 * 30 = 546, at most 448 px back
+        self.rows()
+        self.runtime.set_focus(self.thumb)  # the thumb hands keys to its bar, the bar to the list
+        self.assertEqual([self.key(pygame.K_UP), self.key(pygame.K_DOWN), self.key(pygame.K_DOWN)], [12, 0, 0])
+        self.assertEqual(self.key(pygame.K_UP), 12)
+        self.assertEqual([self.key(pygame.K_PAGEUP), self.key(pygame.K_PAGEUP), self.key(pygame.K_PAGEDOWN)], [196, 294, 196])
+        self.assertEqual(self.bar.scroll_pos, 11)  # ceil(196 / 18)
+        self.assertEqual([self.key(pygame.K_PAGEUP) for _ in range(4)][-1], 448)
+        self.assertEqual([self.key(pygame.K_PAGEDOWN) for _ in range(6)][-1], 0)
+
+    def test_keys_need_the_list_or_its_bar_focused(self) -> None:
+        self.add(30)
+        self.rows()
+        self.runtime.set_focus(self.runtime.find("UI.chatEdit"))
+        self.assertEqual(self.key(pygame.K_PAGEUP), 0)
+        self.runtime.set_focus(self.list)
+        self.assertEqual(self.key(pygame.K_PAGEUP), 98)
+
     def test_new_lines_keep_the_offset_from_the_bottom(self) -> None:
         self.add(10)
         self.rows()

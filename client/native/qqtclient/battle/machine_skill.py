@@ -197,6 +197,23 @@ POSE_AT = (-20, -65 - 20)
 CHARGE_AT = {MOVE_RIGHT: (5 - 20, -50 - 20), MOVE_LEFT: (-45 - 20, -50 - 20)}
 
 
+# 0x005FF2B8's effects play these through 0x005A0DBA -> 0x00530850
+# ("sound\\" + name, once), the PlaySound path, and only when the player is
+# ours (0x00534990): the charge (0x005FF3B2) x26_01.wav; throws
+# (0x005FF40C/0x005FF58E/0x005FF712) x27_01.wav before the arbitrator
+# check; kick or dodge (0x005FF896) x27_01.wav only when pose 6 or 7 is
+# set, so a dodge that cannot move is silent. The pose decides it all.
+CHARGE_SOUND, SKILL_SOUND = "x26_01.wav", "x27_01.wav"
+
+
+def pose_sound(pose: int) -> str | None:
+    if pose == SKILL_CHARGE:
+        return CHARGE_SOUND
+    if 0 <= pose < SKILL_CHARGE:
+        return SKILL_SOUND
+    return None
+
+
 def pose_image(pose: int) -> str:
     return f"object/misc/misc{POSE_IMAGES[pose]}_stand.img"
 
