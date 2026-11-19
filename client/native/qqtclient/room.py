@@ -553,6 +553,8 @@ def build_room_natives(runtime: UIRuntime, session: Session, avatars: AvatarCach
                           bool(state.snapshot.room_flag & room.PROPERTY_FREE_RULE), state.snapshot.game_type, wear, back_to_room)
         except Exception as error:  # noqa: BLE001 - keep the room usable
             log(f"[room] cannot start the practice match: {error}")
+            if runtime.current_screen != "room":
+                back_to_room()
             notify(f"无法开始练习：{error}")
 
     # Natives: lobby side -------------------------------------------------

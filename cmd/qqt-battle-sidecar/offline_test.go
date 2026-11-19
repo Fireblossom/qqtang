@@ -171,3 +171,38 @@ func TestOfflineNPCMessagesReachEverySeat(t *testing.T) {
 		}
 	}
 }
+
+// TestOfflineAISeatsDropSkillNotices: only the local view shows charged-skill
+// notices; an AI seat's are dropped each step instead of piling up.
+func TestOfflineAISeatsDropSkillNotices(t *testing.T) {
+	root := offlineClientRoot(t)
+	catalog, err := mapdata.LoadCatalog(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	entry, ok := offlineMapForRule(catalog, mapdata.CompetitiveRuleMachine, 2)
+	if !ok {
+		t.Skip("no machine map")
+	}
+	hub, err := newOfflineHub(root, offlineInit{MapID: entry.ID, Players: offlineTeams(1, 1, 2), SpawnSeed: 3, ItemSeed: 5, Policy: offlinePolicyBot, Quiet: !testing.Verbose()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(hub.close)
+	var ai *onlineMatch
+	for id, seat := range hub.seats {
+		if id != hub.local {
+			ai = seat
+		}
+	}
+	if ai == nil || ai.machine == nil {
+		t.Fatal("no machine state on the AI seat")
+	}
+	ai.machine.skill.notices = append(ai.machine.skill.notices, machineSkillNotice{Player: hub.local, Type: 1})
+	if _, err := hub.step(command{Cmd: "step", Ticks: 1}); err != nil {
+		t.Fatal(err)
+	}
+	if n := len(ai.machine.skill.notices); n != 0 {
+		t.Errorf("AI seat keeps %d skill notices", n)
+	}
+}
