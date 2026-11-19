@@ -107,7 +107,7 @@ def profile_path(uin: int) -> pathlib.Path:
 def load(uin: int) -> bytes:
     try:
         data = bytes.fromhex(profile_path(uin).read_text().strip())
-    except (OSError, ValueError):
+    except (OSError, ValueError, TypeError):  # TypeError: no UIN yet
         return DEFAULT_LAYOUT
     return data if len(data) == LAYOUT_SIZE else DEFAULT_LAYOUT
 

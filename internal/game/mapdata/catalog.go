@@ -388,11 +388,11 @@ func LoadCatalogWithMapRules(clientRoot, mapRulesPath string) (*Catalog, error) 
 		}
 		family := string(fields[2])
 		if family == "practice" && parsed != 0 {
-			entry, tutorialErr := loadTutorialMap(mapDirectory, competitiveElements, uint32(parsed), fields)
-			if tutorialErr != nil {
-				return nil, tutorialErr
+			// Only the native tutorial needs these; an unreadable stage must
+			// not stop the server or the training worker from loading.
+			if entry, tutorialErr := loadTutorialMap(mapDirectory, competitiveElements, uint32(parsed), fields); tutorialErr == nil {
+				catalog.tutorialMaps[entry.ID] = entry
 			}
-			catalog.tutorialMaps[entry.ID] = entry
 			continue
 		}
 		if parsed == 0 || family == "rand" || family == "pve" {
