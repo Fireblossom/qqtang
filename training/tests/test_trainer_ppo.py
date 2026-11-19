@@ -140,3 +140,29 @@ def test_update_moves_policy_towards_advantage(tmp_path):
     after = (mean_prob(1), mean_prob(2))
     assert m["samples"] == T * S and np.isfinite(m["loss"])
     assert after[0] > before[0] and after[1] < before[1]
+
+
+def test_value_warmup_leaves_the_policy_unchanged(tmp_path):
+    """During the value warm-up only the value head learns; the shared trunk
+    (and with it the deployed policy) stays as it was."""
+    cfg = mock_cfg(tmp_path, ppo={"epochs": 4, "minibatches": 2, "seq_len": 4, "lr": 3e-3, "lr_warmup_updates": 0,
+                                  "target_kl": 0.0, "value_warmup_updates": 2})
+    torch.manual_seed(0)
+    pol = StandInPolicy(4, 16)
+    T, S = 8, 6
+    st = RolloutStorage(T, S, torch.device("cpu"))
+    st.legal[:, :, :3] = True
+    st.scalars.normal_()
+    st.valid[1:] = True
+    st.train[1 : T + 1] = True
+    st.gtime[:] = np.arange(T + 2)[:, None]
+    st.reward[:] = 1.0
+    adv, ret = compute_gae(st, 0.0, 0.0)
+    ppo = PPO(pol, cfg, torch.device("cpu"))
+    trunk = {n: p.detach().clone() for n, p in pol.named_parameters() if "value_head" not in n}
+    head = {n: p.detach().clone() for n, p in pol.named_parameters() if "value_head" in n}
+    ppo.update(st, adv, ret, 0.0)
+    for n, p in pol.named_parameters():
+        if n in trunk:
+            torch.testing.assert_close(p, trunk[n], rtol=0, atol=0)
+    assert any(not torch.equal(p, head[n]) for n, p in pol.named_parameters() if n in head)

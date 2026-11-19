@@ -201,6 +201,7 @@ class Collector:
         self.last_row = np.full(S, -1, np.int64)
         self.slot_env = np.repeat(np.arange(E), P)
         self.env_opp = [LATEST] * E
+        self.league.in_use = lambda: set(self.env_opp)
         self.env_learner = np.zeros((E, 256), bool)  # learner team mask per env
         self.ep_return = np.zeros(S, np.float64)
         self.env_clock = np.zeros(E, np.float64)  # per env, in 100 ms decision units

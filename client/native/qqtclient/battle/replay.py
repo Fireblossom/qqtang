@@ -72,7 +72,7 @@ def recorded_wear(member: room_net.RoomPlayer, role: int, namespace: dict[str, A
 class ReplayBattle:
     def __init__(self, runtime: UIRuntime, renderer: Renderer, resources: Resources, path: pathlib.Path,
                  back: Callable[[], None]):
-        self.runtime, self.renderer, self.back = runtime, renderer, back
+        self.runtime, self.renderer, self.resources, self.back = runtime, renderer, resources, back
         self.recording = qbv.read(path)
         sidecar = ReplaySidecar()
         try:
@@ -81,6 +81,16 @@ class ReplayBattle:
             sidecar.close()
             raise
         self.sidecar = sidecar
+        try:
+            self._show(state, path)
+        except Exception:
+            # The sidecar process must not outlive a replay that never started.
+            sidecar.close()
+            renderer.underlay = renderer.overlay = None
+            raise
+
+    def _show(self, state: dict[str, Any], path: pathlib.Path) -> None:
+        runtime, renderer, resources, sidecar = self.runtime, self.renderer, self.resources, self.sidecar
         begin_info = state["begin"]
         members = {member.player_id: member for member in self.recording.players}
         players = []
@@ -242,6 +252,8 @@ def build_replay_natives(runtime: UIRuntime, renderer: Renderer, resources: Reso
             runtime.activity = ReplayBattle(runtime, renderer, resources, file, back)
         except Exception as error:  # noqa: BLE001 - a bad file must not break the lobby
             log(f"[replay] cannot play {file}: {error}")
+            if runtime.current_screen != screen:
+                back()
             runtime.show_msgbox(f"无法播放这个录像：{error}", "", 0, "UI.SysMsgbox", 0)
 
     def PausePlayRecord():

@@ -12,8 +12,11 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
 from qqtclient import room as room_host  # noqa: E402
 from qqtclient.battle.offline import offline_players, team_layout  # noqa: E402
 from qqtclient.battle.sidecar import DEFAULT_PATH, Sidecar  # noqa: E402
-from qqtclient.net import match, room  # noqa: E402
-from qqtclient.net.player import GameInfo  # noqa: E402
+from qqtclient.net import friend, match, room  # noqa: E402
+from qqtclient.net.player import GameInfo, ItemInfo  # noqa: E402
+
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+from test_protocol import room_vectors  # noqa: E402
 
 CLIENT_ROOT = pathlib.Path(os.environ.get("QQT_TEST_CLIENT_ROOT", "")) if os.environ.get("QQT_TEST_CLIENT_ROOT") else None
 
@@ -164,6 +167,93 @@ class PracticeRoomTest(unittest.TestCase):
         self.assertEqual(teams, [3, 4, 1, 2])
         click(2, 0)  # a teammate: the next click empties the seat
         self.assertEqual(ord(self.seat(2).seatStatus), room_host.NATIVE_SEAT_OPEN)
+
+
+HAT = ItemInfo(item_id=3001, quantity=1, status=2, role_id=4, effect=0, color=3, buy_time=0, available_period=0)
+LOOSE = ItemInfo(item_id=3002, quantity=1, status=1, role_id=0, effect=0, color=0, buy_time=0, available_period=0)
+
+
+class PracticeWearTest(unittest.TestCase):
+    """docs/offline-ai-re.md: our outfit in the practice room."""
+
+    def open(self, session):
+        runtime = FakeRuntime()
+        worn = []
+        runtime.namespace["useCommItem"] = lambda *args: worn.append(args)
+        natives, _draw = room_host.build_room_natives(runtime, session, avatars=None)
+        for name in ("ui_SetGameType", "ui_createRoomOK", "ui_NotifyRoomID", "NotifyRoomPropChange", "ui_NotifyRoomSeatChange",
+                     "ui_NotifyMapChange", "NotifyRoom"):
+            runtime.namespace[name] = lambda *args: None
+        natives["sc_openPracticeRoom"]()
+        natives["room_changePlayer"](0, 0, 4)
+        return natives, worn
+
+    def test_the_login_items_are_worn_and_cached(self):
+        session = FakeSession()
+        session.profile.items = [HAT, LOOSE]
+        _natives, worn = self.open(session)
+        self.assertEqual(worn, [(1, 3001, 0, 3)])
+        self.assertEqual(session.state[room_host.WEAR_CACHE_KEY], {"1000011": [[3001, 1, 2, 4, 0, 3, 0, 0]]})
+
+    def test_without_a_login_the_cached_outfit_is_used(self):
+        session = FakeSession()
+        session.profile = None
+        session.uin = 0
+        session.state.update(last_uin=1000011, **{room_host.WEAR_CACHE_KEY: {"1000011": [[3001, 1, 2, 4, 0, 3, 0, 0], ["bad"]]}})
+        _natives, worn = self.open(session)
+        self.assertEqual(worn, [(1, 3001, 0, 3)])
+
+    def test_nothing_known_wears_nothing(self):
+        session = FakeSession()
+        session.profile = None
+        _natives, worn = self.open(session)
+        self.assertEqual(worn, [])
+
+
+class SeatViewTest(unittest.TestCase):
+    """查看 on a room seat: UserClickSeatInRoom(seat, 1), QQTSection 0x1000CF2B."""
+
+    def setUp(self):
+        self.runtime, self.session = FakeRuntime(), FakeSession()
+        self.found, self.finds = [], []
+        self.session.show_found_player = self.found.append
+        self.session.uin = 1000002
+        self.session.section = types.SimpleNamespace(server_id=1, id=2)
+        self.runtime.namespace["FindFriend"] = self.finds.append
+        self.natives, _draw = room_host.build_room_natives(self.runtime, self.session, avatars=None)
+        for name in ("ui_SetGameType", "ui_createRoomOK", "ui_NotifyRoomID", "NotifyRoomPropChange", "ui_NotifyRoomSeatChange",
+                     "ui_NotifyMapChange", "NotifyRoom", "useCommItem"):
+            self.runtime.namespace[name] = lambda *args: None
+
+    def enter_online(self):
+        self.session.handlers[room.ENTER_ROOM_COMMAND](types.SimpleNamespace(payload=room_vectors()["enter"]))
+
+    def test_seat_record_shows_then_find_friend_asks(self):
+        self.enter_online()
+        self.natives["UserClickSeatInRoom"](0, 1)  # seat 1: 糖一
+        self.assertEqual(len(self.found), 1)
+        found = self.found[0]
+        self.assertEqual((found.result, found.uin, found.nickname, found.status), (0, 1000001, "糖一", friend.FIND_STATUS_IN_ROOM))
+        self.assertEqual((found.server_id, found.section_id, found.room_id), (1, 2, 4))
+        self.assertEqual((found.identity, found.game_info.role_id, len(found.items)), (0x2000, 7, 1))
+        self.assertEqual((found.kin_index, found.kin_name, found.kin_flag, found.honor), (0, "", bytes(8), 0))
+        self.assertEqual(self.finds, [1000001])
+        self.assertEqual(self.session.sent, [], "the seat view itself sends nothing; FindFriend does")
+
+    def test_empty_seat_and_hidden_identity_show_nothing(self):
+        self.enter_online()
+        self.natives["UserClickSeatInRoom"](1, 1)  # empty seat
+        member = room_host.practice_ai_member(5, 2, 1)
+        for identity, shown in ((0x400, False), (0x100, False), (0x300, True), (0x700, True), (0x2000, True)):
+            member.identity = identity
+            self.assertEqual(room_host.seat_found_player(member, 0, 0, 1, "") is not None, shown, hex(identity))
+        self.assertEqual((self.found, self.finds), ([], []))
+
+    def test_practice_room_shows_the_seat_only(self):
+        self.natives["sc_openPracticeRoom"]()
+        self.natives["UserClickSeatInRoom"](1, 1)
+        self.assertEqual([(found.uin, found.nickname) for found in self.found], [(10_002, "电脑1")])
+        self.assertEqual(self.finds, [])
 
 
 @unittest.skipUnless(CLIENT_ROOT and DEFAULT_PATH.is_file(), "needs QQT_TEST_CLIENT_ROOT and a built sidecar")

@@ -527,6 +527,10 @@ func (hub *offlineHub) step(step command) ([]battleengine.Event, error) {
 			}
 			if playerID == hub.local {
 				events = append(events, seatEvents...)
+			} else {
+				// Only the local view shows skill notices (stateView takes
+				// them); an AI seat's would pile up for the whole match.
+				hub.seats[playerID].takeMachineSkillNotices()
 			}
 		}
 	}

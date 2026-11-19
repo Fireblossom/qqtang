@@ -103,6 +103,10 @@ class PPO:
         self.opt = torch.optim.AdamW(
             policy.parameters(), lr=float(c["lr"]), eps=float(c["adam_eps"]), weight_decay=float(c["weight_decay"])
         )
+        # During the value warm-up only these learn: the value head sits on
+        # the shared temporal feature, and value gradients through the trunk
+        # would move the (deployed) policy with no KL check.
+        self.trunk_params = [p for name, p in policy.named_parameters() if "value_head" not in name]
         self.autocast = device.type == "cuda" and bool(c.get("bf16", True))
         if device.type == "cuda" and c.get("tf32", True):
             torch.backends.cuda.matmul.allow_tf32 = True
@@ -128,7 +132,9 @@ class PPO:
         n_samples = int(trainable.sum())
         if n_samples == 0:
             return {"samples": 0}
-        lr = lr_at(c, self.updates, progress)
+        # The learning-rate warm-up restarts when the policy loss switches on.
+        value_warmup = int(c.get("value_warmup_updates", 0))
+        lr = lr_at(c, self.updates - value_warmup if self.updates >= value_warmup else self.updates, progress)
         for g in self.opt.param_groups:
             g["lr"] = lr
         ent_coef = entropy_coef_at(c, progress)
@@ -210,6 +216,9 @@ class PPO:
                 )
                 self.opt.zero_grad(set_to_none=True)
                 loss.backward()
+                if warmup:
+                    for p in self.trunk_params:
+                        p.grad = None  # AdamW skips them: no step, no weight decay
                 gn = nn.utils.clip_grad_norm_(self.policy.parameters(), float(c["max_grad_norm"]))
                 self.opt.step()
                 info["loss"] = loss.detach()

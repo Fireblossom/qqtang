@@ -108,15 +108,16 @@ class OfflineBattle:
             seats = [dict(player, ai=True) for player in self.players] if self.autoplay else self.players
             state = self.sidecar.start_offline(self.resources.root, self.map_id, seats, 0 if self.autoplay else self.local_id, seed,
                                                (seed ^ 0x5A5A) or 1, self.free_rule, self.boss, self.policy)
-        except SidecarError:
-            self.sidecar.close()
-            self.sidecar = None
+            ai = (state.get("offline") or {}).get("ai") or {}
+            log(f"[offline] map {self.map_id} ({state['begin']['rule']}): " + ", ".join(
+                f"{player['id']}:{player.get('name')} team {player['team']}{' ' + ai.get(str(player['id']), '') if player.get('ai') else ''}"
+                for player in self.players))
+            self._show(state)
+        except Exception:
+            # Whatever failed, the sidecar process must not outlive the match.
+            self.close()
+            self.renderer.underlay = self.renderer.overlay = None
             raise
-        ai = (state.get("offline") or {}).get("ai") or {}
-        log(f"[offline] map {self.map_id} ({state['begin']['rule']}): " + ", ".join(
-            f"{player['id']}:{player.get('name')} team {player['team']}{' ' + ai.get(str(player['id']), '') if player.get('ai') else ''}"
-            for player in self.players))
-        self._show(state)
 
     def _show(self, state: dict[str, Any]) -> None:
         """Build the scene for a (new) GAME_BEGIN."""

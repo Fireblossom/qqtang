@@ -13,6 +13,10 @@ from .script import ScriptLoader, call_script, log
 from .widgets import TEXT_INPUT_TYPES, Widget, build
 from .ui_alpha import advance_alpha
 
+# WM_KEYDOWN virtual keys a focused TEXTLIST pages with (scrollbar.list_key).
+LIST_KEYS = {pygame.K_PAGEUP: scrollbar.VK_PRIOR, pygame.K_PAGEDOWN: scrollbar.VK_NEXT,
+             pygame.K_UP: scrollbar.VK_UP, pygame.K_DOWN: scrollbar.VK_DOWN}
+
 EDIT_NUMBER = 1
 EDIT_CHAR_NUMBER = 4
 # Win_SetValue channels used by fade effects (uiLogo): 41 sets the alpha step
@@ -593,6 +597,10 @@ class UIRuntime:
             # 0x1001491F answers every key itself, so a focused box keeps
             # Enter and Escape from the dialog.
             keylayout.keyedit_key(widget, event.key)
+            return
+        list_key = LIST_KEYS.get(event.key)
+        if list_key is not None and (target := scrollbar.key_list(widget)) is not None and target.enabled and target.shown():
+            scrollbar.list_key(target, list_key, self.call)
             return
         if event.key == pygame.K_BACKSPACE and widget is not None and widget.type in TEXT_INPUT_TYPES and widget.editable:
             widget.text = widget.text[:-1]
