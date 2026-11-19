@@ -86,7 +86,7 @@ func (engine *Engine) applyFlameHazardsMatching(accept func(*Actor) bool) []Even
 	}
 	for actorIndex := range engine.actors {
 		actor := &engine.actors[actorIndex]
-		if actor.State != ActorActive || engine.actorHarmProtected(actor) || (accept != nil && !accept(actor)) {
+		if actor.State != ActorActive || engine.actorHarmProtected(actor) || actor.flameImmune || (accept != nil && !accept(actor)) {
 			continue
 		}
 		for _, flame := range engine.flames {

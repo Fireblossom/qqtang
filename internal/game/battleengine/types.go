@@ -348,6 +348,11 @@ type Rules struct {
 	// BombResumeMS refills bubbles. NPC identities 30300..30399 (the
 	// battlefield loader numbers them 30300 + index, 0x005E7A33) are rule NPCs.
 	NativeAdventure bool
+	// NativeTutorial is native rule 9, the newbie tutorial's local game
+	// (docs/tutorial-re.md): it starts with the local player alone and its
+	// Task.txt controller adds the other actors (AddActor). The caller
+	// decides the result. Off by default.
+	NativeTutorial bool
 	// NativeSpecialElements enables the item-field map elements of
 	// docs/special-elements-re.md: explode stones break their 3x3 and kill
 	// for 500 ms (EliminateByMapElement), multi-life walls lose one life per
@@ -794,6 +799,8 @@ type Actor struct {
 	// Native 005ad322 retains the previous coordinate in actor +0x3a8/+0x3ac.
 	// 005f43b1 dispatches pickup/contact handlers only across that cell boundary.
 	nativePreviousPosition Position
+	// flameImmune: flames never trap this actor (SetFlameImmune, tutorial only).
+	flameImmune bool
 	// Adventure bubble refill (0x005B9F1C): the used count, the time since the
 	// last placement or refill, and the actor's live bubbles last tick.
 	// fieldLock is rule 12's battlefield lock (0x005B7C16): while the actor

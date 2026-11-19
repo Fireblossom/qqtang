@@ -9,9 +9,10 @@ import unittest
 from unittest import mock
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
-from qqtclient.battle import replay  # noqa: E402
-from qqtclient.battle.tutorial import (ASK_RECORDS, ASK_RECORDS_TEXT, TutorialFlow, build_tutorial_natives,  # noqa: E402
-                                       find_record, needs_first_tutorial)
+from qqtclient.battle import replay, tutorial_stage  # noqa: E402
+from qqtclient.battle.tutorial import (ASK_RECORDS, ASK_RECORDS_TEXT, STAGE_FAILED_TEXT, TutorialFlow,  # noqa: E402
+                                       build_tutorial_natives, find_record, needs_first_tutorial)
+from qqtclient.battle.tutorial_stage import HINT_TEXTS, TutorialSidecar, hint_box  # noqa: E402
 from qqtclient.net.player import GameInfo  # noqa: E402
 
 
@@ -33,6 +34,30 @@ class FakeRuntime:
 
     def show_msgbox(self, text, caption, kind, target, handle):
         self.boxes.append((text, kind, handle))
+        return True
+
+
+class FakeStage:
+    """tutorial_stage.TutorialBattle: started, then ended by the test."""
+    started = []
+    fail = False
+
+    def __init__(self, runtime, renderer, resources, on_leave):
+        self.on_leave, self.finished, self.closed = on_leave, False, False
+        FakeStage.started.append(self)
+
+    def start(self):
+        if FakeStage.fail:
+            raise RuntimeError("no sidecar")
+
+    def close(self):
+        self.closed = True
+
+    def end(self, runtime, ended=True):
+        """TutorialBattle._finish(): on_leave runs while still the activity."""
+        self.finished = True
+        self.on_leave(ended)
+        runtime.activity = None
 
 
 class FakeReplay:
@@ -65,15 +90,17 @@ class TutorialTest(unittest.TestCase):
             (root / f"Tutorial{index}.qbv").write_bytes(b"")
         self.flow = TutorialFlow(self.runtime, None, types.SimpleNamespace(root=root))
         FakeReplay.started = []
-        patcher = mock.patch.object(replay, "ReplayBattle", FakeReplay)
-        patcher.start()
-        self.addCleanup(patcher.stop)
+        FakeStage.started, FakeStage.fail = [], False
+        for patcher in (mock.patch.object(replay, "ReplayBattle", FakeReplay),
+                        mock.patch.object(tutorial_stage, "TutorialBattle", FakeStage)):
+            patcher.start()
+            self.addCleanup(patcher.stop)
         self.addCleanup(self.directory.cleanup)
 
-    def acknowledge_stage(self):
-        text, _kind, handle = self.runtime.boxes.pop(0)
-        self.assertIn("1501", text)
-        handle(True)
+    def finish_stage(self, ended=True):
+        stage = FakeStage.started[-1]
+        self.assertIs(self.runtime.activity, stage)
+        stage.end(self.runtime, ended)
         self.runtime.run_posted()
 
     def test_first_login_gate(self):
@@ -84,7 +111,7 @@ class TutorialTest(unittest.TestCase):
 
     def test_first_tutorial_ends_with_new_player_practice(self):
         self.flow.first_begin()
-        self.acknowledge_stage()
+        self.finish_stage()
         self.assertEqual(self.runtime.screens, ["selRoom"])
         self.assertIn(("NewPlayerPractice",), self.runtime.calls)
         self.assertEqual(self.runtime.boxes, [])
@@ -92,10 +119,54 @@ class TutorialTest(unittest.TestCase):
 
     def test_repeated_tutorial_asks_for_the_recordings(self):
         self.flow.begin()
-        self.acknowledge_stage()
+        self.finish_stage(ended=False)
         self.assertEqual(self.runtime.boxes, [(ASK_RECORDS_TEXT, 0, ASK_RECORDS)])
         self.assertIn(("ui_msgBox", 0), self.runtime.calls)
         self.assertNotIn(("NewPlayerPractice",), self.runtime.calls)
+
+    def test_busy_host_starts_nothing_and_drops_the_flags(self):
+        self.runtime.activity = object()
+        self.flow.first_begin()
+        self.assertEqual(FakeStage.started, [])
+        self.assertFalse(self.flow.first or self.flow.tutorial)
+
+    def test_missing_sidecar_leaves_the_tutorial(self):
+        FakeStage.fail = True
+        self.flow.begin()
+        self.assertIsNone(self.runtime.activity)
+        self.assertTrue(FakeStage.started[-1].closed)
+        text, _kind, handle = self.runtime.boxes.pop(0)
+        self.assertEqual(text, STAGE_FAILED_TEXT)
+        handle(True)
+        self.runtime.run_posted()
+        self.assertEqual(self.runtime.boxes, [(ASK_RECORDS_TEXT, 0, ASK_RECORDS)])
+
+    def test_missing_sidecar_without_a_message_box_still_leaves(self):
+        FakeStage.fail = True
+        self.runtime.show_msgbox = lambda *args: (self.runtime.boxes.append(args[:1]), False)[1]
+        self.flow.first_begin()
+        self.runtime.run_posted()
+        self.assertIn(("NewPlayerPractice",), self.runtime.calls)
+        self.assertFalse(self.flow.first or self.flow.tutorial)
+
+    def test_hint_texts_and_boxes(self):
+        """0x007F49C4 has 29 texts; 0x005AFA3E picks the box by GBK length."""
+        self.assertEqual(len(HINT_TEXTS), 29)
+        self.assertEqual(hint_box(HINT_TEXTS[0]), (3, 270, 190))
+        self.assertEqual(hint_box(HINT_TEXTS[11]), (2, 270, 155))  # 120 bytes
+        self.assertEqual(hint_box(HINT_TEXTS[13]), (2, 270, 155))  # 116 bytes
+        self.assertEqual(hint_box("x" * 201), (1, 270, 120))
+        self.assertEqual(len(HINT_TEXTS[28].encode("gbk")), 18)
+
+    def test_any_key_reaches_the_sidecar_once(self):
+        calls = []
+        sidecar = types.SimpleNamespace(step=lambda actions, ticks, tcp, any_key: calls.append(any_key) or {},
+                                        close=lambda: None)
+        wrapper = TutorialSidecar(sidecar)
+        wrapper.any_key = True
+        wrapper.step([], 1)
+        wrapper.step([], 1)
+        self.assertEqual(calls, [True, False])
 
     def test_cancel_plays_nothing(self):
         self.assertTrue(self.flow.on_msgbox_result(ASK_RECORDS, 0))

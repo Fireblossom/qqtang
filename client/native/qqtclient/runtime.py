@@ -623,11 +623,12 @@ class UIRuntime:
 
     # Message box ---------------------------------------------------------
 
-    def show_msgbox(self, text: str, caption: str, kind: int, target: str, handle: Any) -> None:
+    def show_msgbox(self, text: str, caption: str, kind: int, target: str, handle: Any) -> bool:
+        """False when there is no UI.SysMsgbox (the answer never comes)."""
         box = self.widgets.get("ui.sysmsgbox")
         if box is None:
             log(f"[msgbox] {text}")
-            return
+            return False
         label = self.widgets.get("ui.sysmsgbox.textlabel")
         if label is not None:
             label.text = str(text)
@@ -637,6 +638,7 @@ class UIRuntime:
             no_button.visible = kind != 0
         box.visible = True
         self.msgbox_target = (target, handle)
+        return True
 
     def _answer_msgbox(self, ok: bool) -> None:
         box = self.widgets.get("ui.sysmsgbox")

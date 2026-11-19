@@ -12,6 +12,9 @@
 // against the server (online.go): the engine follows the wall clock and every
 // step also exchanges the match's UDP traffic.
 //
+// With "tutorial" it plays the newbie tutorial's Task.txt stages
+// (tutorial.go); with "offline" a whole match against AI seats (offline.go).
+//
 // Offline practice supports native rule 1 (ordinary bubble battle) maps;
 // online matches also play rules 2, 3, 4, 5, 6 and 13 (see ruleOptions).
 package main
@@ -73,6 +76,8 @@ type command struct {
 	// Offline plays every rule against AI seats without a server
 	// (offline.go).
 	Offline *offlineInit `json:"offline"`
+	// Tutorial plays the newbie tutorial's stages (tutorial.go).
+	Tutorial *tutorialInit `json:"tutorial"`
 
 	// step
 	Ticks   int      `json:"ticks"`
@@ -81,6 +86,9 @@ type command struct {
 	TCP []tcpPacket `json:"tcp"`
 	// Scene clock a replay should reach (replay mode only).
 	ReplayMS uint32 `json:"replay_ms"`
+	// AnyKey: a key went down since the last step (tutorial mode: the story
+	// scroll and the task cards end on any key, 0x005A542E).
+	AnyKey bool `json:"any_key,omitempty"`
 }
 
 type action struct {
@@ -239,6 +247,9 @@ func run(input io.Reader, output io.Writer) error {
 	}
 	if init.Offline != nil {
 		return runOffline(init, lines, out)
+	}
+	if init.Tutorial != nil {
+		return runTutorial(init, lines, out)
 	}
 	runtime, err := newRuntime(init)
 	if err != nil {
@@ -444,7 +455,11 @@ func advance(runtime *battleengine.Runtime, step command) ([]battleengine.Event,
 }
 
 func view(runtime *battleengine.Runtime, events []battleengine.Event) stateView {
-	engine := runtime.EngineSnapshot()
+	return engineView(runtime.EngineSnapshot(), events)
+}
+
+// engineView is one engine's state and the events of the last step.
+func engineView(engine *battleengine.Engine, events []battleengine.Event) stateView {
 	state := stateView{Clock: engine.ElapsedMS(), Events: make([]eventView, 0, len(events))}
 	for _, event := range events {
 		state.Events = append(state.Events, eventView{

@@ -7,8 +7,9 @@ Client.exe keeps the state on its game manager (0x00806A78):
 
 - sc_beginTutorial (0x0048E690) sets +0x56EEF and asks QQTSection
   (0x1001C5A7) for a local GAME_BEGIN with only the local player on map 1501.
-  The stages 1501..1504 are run by a Task.txt interpreter (controller vtable
-  0x007A2348) that the host does not have yet; see docs/tutorial-re.md.
+  The stages 1501..1504 (then 311) are run by Task.txt's controller (vtable
+  0x007A2348), which the sidecar's tutorial mode ports; tutorial_stage.py
+  draws them. See docs/tutorial-re.md.
 - sc_firstBeginTutorial (0x0048E650) also sets +0x56EED. QQTSection runs it
   after the section login (0x1001BCD1) when the section mode is not 1 and
   the player has no win, loss or draw.
@@ -38,7 +39,7 @@ RECORDS = ("tutorial1.qbv", "tutorial2.qbv", "tutorial3.qbv")  # 0x0048C960
 ASK_RECORDS = (2 << 24) | 8  # module 2 (QQTSection 0x10023458), case 8
 ASK_RECORDS_TEXT = "您是否需要观看高手玩家录像？"  # 0x007F2378
 SECTION_MODE_NO_TUTORIAL = 1  # QQTSection +0xC768 == 1 (0x10029E3F) skips it
-STAGE_UNSUPPORTED_TEXT = "新手任务的关卡（地图 1501～1504）本客户端还不能运行，按原版中途离开任务处理。"
+STAGE_FAILED_TEXT = "新手任务没能开始（对战规则程序不可用），按原版中途离开任务处理。"
 
 
 def needs_first_tutorial(profile: Any) -> bool:
@@ -92,18 +93,38 @@ class TutorialFlow:
         self.start_stage()
 
     def start_stage(self) -> None:
-        """The local game on map 1501 and its Task.txt stages are not
-        implemented. Until they are, the host says so and continues as the
-        original does when the player leaves the tutorial at once
-        (0x005A26C1 -> 0x005A2C6D -> 0x005A4181)."""
-        log(f"[tutorial] stage map {TUTORIAL_MAP} not supported; leaving the tutorial")
+        """The local game on map 1501 with Task.txt's stages
+        (tutorial_stage.TutorialBattle). When another activity (a battle,
+        a recording) is running nothing starts and the flags are dropped
+        again, so a later tutorial ends on the right branch. When the
+        sidecar cannot start, the host says so and continues as the original
+        does when the player leaves the tutorial at once (0x005A26C1 ->
+        0x005A2C6D -> 0x005A4181)."""
         if self.runtime.activity is not None:
+            log("[tutorial] another activity is running; the tutorial does not start")
+            self.tutorial = self.first = False
             return
+        from .tutorial_stage import TutorialBattle
 
-        def acknowledged(_ok: bool) -> None:
-            self.runtime.post(self.leave)
+        battle = TutorialBattle(self.runtime, self.renderer, self.resources, self.stage_over)
+        try:
+            battle.start()
+        except Exception as error:  # noqa: BLE001 - a missing sidecar must not break the lobby
+            log(f"[tutorial] cannot start map {TUTORIAL_MAP}: {error}")
+            battle.close()
 
-        self.runtime.show_msgbox(STAGE_UNSUPPORTED_TEXT, "", 0, "UI.SysMsgbox", acknowledged)
+            def acknowledged(_ok: bool) -> None:
+                self.runtime.post(self.leave)
+
+            if not self.runtime.show_msgbox(STAGE_FAILED_TEXT, "", 0, "UI.SysMsgbox", acknowledged):
+                self.runtime.post(self.leave)  # no message box: nothing would answer
+            return
+        self.runtime.activity = battle
+
+    def stage_over(self, _ended: bool) -> None:
+        """The local game ended (0xFBB, after the result) or was left: both
+        go through 0x005A4181."""
+        self.leave()
 
     # Ending -------------------------------------------------------------------
 

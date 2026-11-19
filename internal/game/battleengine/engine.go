@@ -70,7 +70,7 @@ func (engine *Engine) Reset(config Config) error {
 	// A Boss round with the single-player Boss card, or a single-player
 	// adventure, has one participant.
 	minimum := 2
-	if config.Rules.NativeBossNPC || config.Rules.NativeAdventure {
+	if config.Rules.NativeBossNPC || config.Rules.NativeAdventure || config.Rules.NativeTutorial {
 		minimum = 1
 	}
 	if len(config.Participants) < minimum || len(config.Participants) > MaxParticipants {
@@ -144,7 +144,7 @@ func (engine *Engine) Reset(config Config) error {
 		participants[index] = participant
 	}
 	// A Boss overlay unifies every player into one cooperative team.
-	if len(teamSeen) < 2 && !((config.Rules.NativeBossNPC || config.Rules.NativeAdventure) && len(teamSeen) == 1) {
+	if len(teamSeen) < 2 && !((config.Rules.NativeBossNPC || config.Rules.NativeAdventure || config.Rules.NativeTutorial) && len(teamSeen) == 1) {
 		return fmt.Errorf("standard battle requires at least two teams")
 	}
 	pickups := append([]Pickup(nil), config.Pickups...)

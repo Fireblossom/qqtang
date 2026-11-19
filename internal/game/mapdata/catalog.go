@@ -348,6 +348,10 @@ type Catalog struct {
 	maps            map[uint32]AdventureMap
 	competitiveMaps map[uint32]CompetitiveMap
 	sequences       map[int32][]uint32
+	// The newbie tutorial's stages (mapDesc family "practice", native rule
+	// 9). They are never selectable and only the native client's tutorial
+	// (cmd/qqt-battle-sidecar tutorial mode) loads them.
+	tutorialMaps map[uint32]CompetitiveMap
 }
 
 func LoadCatalog(clientRoot string) (*Catalog, error) {
@@ -371,7 +375,7 @@ func LoadCatalogWithMapRules(clientRoot, mapRulesPath string) (*Catalog, error) 
 	}
 	catalog := &Catalog{
 		maps: make(map[uint32]AdventureMap), competitiveMaps: make(map[uint32]CompetitiveMap),
-		sequences: make(map[int32][]uint32),
+		sequences: make(map[int32][]uint32), tutorialMaps: make(map[uint32]CompetitiveMap),
 	}
 	competitiveElements, err := loadCompetitiveMapElements(filepath.Join(clientRoot, "object", "mapElem", "mapElem.py"))
 	if err != nil {
@@ -383,7 +387,15 @@ func LoadCatalogWithMapRules(clientRoot, mapRulesPath string) (*Catalog, error) 
 			return nil, fmt.Errorf("parse client map ID %q: %w", fields[1], parseErr)
 		}
 		family := string(fields[2])
-		if parsed == 0 || family == "rand" || family == "pve" || family == "practice" {
+		if family == "practice" && parsed != 0 {
+			entry, tutorialErr := loadTutorialMap(mapDirectory, competitiveElements, uint32(parsed), fields)
+			if tutorialErr != nil {
+				return nil, tutorialErr
+			}
+			catalog.tutorialMaps[entry.ID] = entry
+			continue
+		}
+		if parsed == 0 || family == "rand" || family == "pve" {
 			continue
 		}
 		playerLimit, parseErr := strconv.ParseUint(string(fields[4]), 10, 8)
@@ -1086,6 +1098,33 @@ func (catalog *Catalog) CompetitiveMap(id uint32) (CompetitiveMap, bool) {
 func (catalog *Catalog) CompetitiveMapMetadata(id uint32) (CompetitiveMap, bool) {
 	entry, ok := catalog.competitiveMaps[id]
 	return cloneCompetitiveMap(entry), ok
+}
+
+// TutorialMap returns one of the newbie tutorial's stages (1501..1504).
+func (catalog *Catalog) TutorialMap(id uint32) (CompetitiveMap, bool) {
+	entry, ok := catalog.tutorialMaps[id]
+	return cloneCompetitiveMap(entry), ok
+}
+
+// loadTutorialMap reads a mapDesc "practice" line like a competitive one.
+// The stages use native rule 9, which has no competitive rule kind.
+func loadTutorialMap(mapDirectory string, elements map[uint32]competitiveMapElement, id uint32, fields [][]byte) (CompetitiveMap, error) {
+	fileName := string(fields[5])
+	metadata, err := loadCompetitiveMapMetadata(mapDirectory, elements, id, fileName)
+	if err != nil {
+		return CompetitiveMap{}, err
+	}
+	playerLimit, err := strconv.ParseUint(string(fields[4]), 10, 8)
+	if err != nil || playerLimit == 0 || playerLimit > 8 {
+		return CompetitiveMap{}, fmt.Errorf("tutorial map %d player limit %q is outside 1..8", id, fields[4])
+	}
+	return CompetitiveMap{
+		ID: id, Family: string(fields[2]), Name: string(fields[3]), FileName: fileName, MapHash: metadata.mapHash,
+		PlayerLimit: byte(playerLimit), NativeRule: metadata.nativeRule, Rule: competitiveRuleForNativeID(metadata.nativeRule),
+		WallItemRules: metadata.wallItemRules, WallItemSource: CompetitiveWallItemsEmbedded, HiddenItemCells: metadata.hiddenItemCells,
+		SpawnGroupA: metadata.spawnGroupA, SpawnGroupB: metadata.spawnGroupB, ObjectiveCells: metadata.objectiveCells,
+		AirborneCells: metadata.airborneCells, Battlefield: metadata.battlefield,
+	}, nil
 }
 
 func cloneCompetitiveMap(entry CompetitiveMap) CompetitiveMap {

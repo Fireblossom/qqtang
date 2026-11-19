@@ -175,7 +175,9 @@ class AvatarCache:
                 continue
             pixels = tint(frame.pixels, color) if masked else frame.pixels
             # Some frames (e.g. the dying splash) reach past the canvas.
-            pixels = pixels[max(0, -frame.y):CANVAS - frame.y, max(0, -frame.x):CANVAS - frame.x]
+            # A frame wholly below or right of it (role 0x19's dying frames)
+            # must come out empty, not as a negative-index slice.
+            pixels = pixels[max(0, -frame.y):max(0, CANVAS - frame.y), max(0, -frame.x):max(0, CANVAS - frame.x)]
             height, width = pixels.shape[:2]
             if height <= 0 or width <= 0:
                 continue

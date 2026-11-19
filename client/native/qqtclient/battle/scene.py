@@ -327,6 +327,7 @@ class BattleScene:
     skill_poses: Any = types.MappingProxyType({})
     move_keys_down: tuple[int, ...] = ()
     bubble_keys_down: frozenset[int] = frozenset()
+    show_player_list = True
 
     def __init__(self, resources: Resources, sprites: SpriteCache, avatars: AvatarCache, sidecar: Sidecar,
                  map_id: int, players: list[dict[str, Any]], local_id: int, state: dict[str, Any], realtime: bool = False,
@@ -1658,7 +1659,9 @@ class BattleScene:
         controller's table and title."""
         if self.font is None:
             return
-        if self.rule != "adventure":  # ui_SetGameMode(1) hides the player list
+        # ui_SetGameMode(1) hides the player list; the tutorial draws its own
+        # panel there (tutorial_stage.py).
+        if self.rule != "adventure" and self.show_player_list:
             self._draw_player_list(screen)
         if self.rule in ("treasure", "wrestle"):
             self._draw_treasure(screen)

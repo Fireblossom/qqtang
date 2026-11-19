@@ -96,8 +96,21 @@ class Sidecar:
             "free_rule": free_rule, "boss": boss, "policy": policy,
         }})
 
-    def step(self, actions: list[dict[str, Any]], ticks: int = 1, tcp: list[tuple[int, bytes]] | None = None) -> dict[str, Any]:
+    def start_tutorial(self, client_root: pathlib.Path, local_id: int, role: int, seed: int,
+                       autoplay: bool = False) -> dict[str, Any]:
+        """The newbie tutorial (cmd/qqt-battle-sidecar/tutorial.go): Task.txt's
+        stages from map 1501. Every reply has a "tutorial" part (hint, arrow,
+        Kubi, scroll, task card, side panel and the result) and "begin" when
+        a stage starts."""
+        return self._call({"cmd": "init", "client_root": str(client_root), "tutorial": {
+            "local_id": local_id, "role": role, "seed": seed, "autoplay": autoplay,
+        }})
+
+    def step(self, actions: list[dict[str, Any]], ticks: int = 1, tcp: list[tuple[int, bytes]] | None = None,
+             any_key: bool = False) -> dict[str, Any]:
         command: dict[str, Any] = {"cmd": "step", "ticks": ticks, "actions": actions}
+        if any_key:
+            command["any_key"] = True
         if tcp:
             command["tcp"] = [{"cmd": cmd, "payload": payload.hex()} for cmd, payload in tcp]
         return self._call(command)
