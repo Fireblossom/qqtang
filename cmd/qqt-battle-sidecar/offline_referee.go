@@ -332,7 +332,10 @@ func (referee *offlineReferee) death(sender uint16, event game.GameEvent, now ui
 				itemIDs = append(itemIDs, item.ItemID)
 			}
 			_ = battle.RecordTreasureScatter(death.PlayerID, itemIDs)
-			if grace, _, graceErr := battle.RecordBossVictoryGraceDeath(death.PlayerID); graceErr == nil && grace {
+			if grace, allDead, graceErr := battle.RecordBossVictoryGraceDeath(death.PlayerID); graceErr == nil && grace {
+				if allDead && referee.result != nil && referee.dueAt > now {
+					referee.dueAt = now // the server ends the grace once everyone is dead
+				}
 				return
 			}
 			if resolution, err = battle.RecordDeath(death.PlayerID); err != nil {
@@ -379,6 +382,9 @@ func (referee *offlineReferee) due(now uint32) (game.GameOverData, bool) {
 			referee.result, referee.dueAt = &over, now
 			referee.hub.logf("time is up at %d ms (winner team %d)", now, resolution.WinnerTeamID)
 		}
+	}
+	if referee.result != nil && referee.roundMS > 0 && now >= referee.roundMS && referee.dueAt > now {
+		referee.dueAt = now // a pending boss victory ends with the round time
 	}
 	if referee.result == nil || now < referee.dueAt {
 		return game.GameOverData{}, false

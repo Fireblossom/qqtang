@@ -797,9 +797,11 @@ func (match *onlineMatch) step(step command) ([]battleengine.Event, error) {
 		tickEvents = append(tickEvents, match.takeAdventureEvents()...)
 		events = append(events, tickEvents...)
 	}
-	if match.replay != nil {
+	caughtUp := match.engine.ElapsedMS() >= target || match.engine.Terminal().Ended || match.machineFinishing() || match.boxFinishing()
+	if match.replay != nil && caughtUp {
 		// Messages recorded after the engine's own round end still play
-		// (results, emotions).
+		// (results, emotions); while the engine is still catching up they
+		// wait for its clock.
 		events = append(events, match.replayDue(match.replay.clock)...)
 	}
 	match.collectLooseDispatches()

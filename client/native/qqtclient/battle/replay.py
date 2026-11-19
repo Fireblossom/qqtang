@@ -35,7 +35,7 @@ from ..runtime import UIRuntime
 from ..script import call_script, log
 from .online import RESULT_SHOWN_MS, SKIP_KEYS, MatchMember, result_rows
 from .scene import BattleScene
-from .sidecar import Sidecar
+from .sidecar import Sidecar, SidecarError
 
 RECORD_DIR = "Record"
 RESULT_DELAY_MS = 1000  # after the last recorded message
@@ -147,7 +147,12 @@ class ReplayBattle:
         self.elapsed_ms += elapsed_ms
         if not self.paused:
             self.sidecar.clock_ms += elapsed_ms * self.speed
-        self.scene.tick(elapsed_ms)
+        try:
+            self.scene.tick(elapsed_ms)
+        except SidecarError as error:
+            log(f"[replay] sidecar failed: {error}")
+            self.finish()
+            return
         if self.finish_at is None and self.sidecar.clock_ms >= self.recording.duration_ms + RESULT_DELAY_MS:
             self.show_results()
         if self.finish_at is not None and self.elapsed_ms >= self.finish_at:

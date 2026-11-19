@@ -83,6 +83,7 @@ func offlineAdventureRulesPath() string {
 // on the cooperative team with its courage level, the stage's wall items.
 func (stage *offlineStage) begin(options offlineInit, arbitrator uint16, players []player) (game.GameBeginData, error) {
 	stage.rule, stage.hasRule = stage.rules.Stage(stage.current.ID)
+	stage.pveBoss = nil // a stage without a PVE boss must not resend the last one
 	var wall []game.GameItemType
 	if stage.hasRule {
 		selected, err := stage.rule.SelectWallItemInventory(options.ItemSeed)

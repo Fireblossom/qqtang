@@ -284,7 +284,11 @@ func (match *onlineMatch) queueNPC(outbox *[]boxNPCOutbound, author uint16, sche
 	*outbox = append(*outbox, boxNPCOutbound{author: author, message: game.BattleMessageData{Time: now, DataID: uint32(schema), Sequence: match.messageSeq, Data: body, GameTime: now}})
 }
 func (match *onlineMatch) flushNPC(outbox *[]boxNPCOutbound) {
-	if len(*outbox) == 0 || !match.presence || match.conn == nil {
+	if len(*outbox) == 0 || !match.presence {
+		return
+	}
+	if match.conn == nil && match.offline == nil {
+		*outbox = nil // a replay: the recording carries the NPC messages
 		return
 	}
 	if len(match.peerIDs()) == 0 {
