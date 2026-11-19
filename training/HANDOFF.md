@@ -41,7 +41,7 @@ bash repo/training/scripts/cluster_run.sh --stop                # 做完当前�
 ```
 
 - 一切持久数据都在 `/mlde/qqtang-rl/runs/<RUN>/`。容器被回收后重跑 `cluster_run.sh` 会自动续训（`run.resume = "auto"`）。
-- 想接着 Mac 的结果训练：设 `--set run.resume=/mlde/qqtang-rl/runs/mac-ft1/checkpoints/<最新>.pt`。
+- 想接着 Mac 的结果训练：第一次启动时设 `--set run.resume=/mlde/qqtang-rl/runs/mac-ft1/checkpoints/ckpt_000152.pt`。容器回收后重跑时**去掉这个参数**，否则会回到 Mac 的检查点，而不是本次 run 的最新检查点。
 - PyTorch 固定为 2.11.0：U2392 就是用它的导出器生成的。Linux 上通过 uv source 从 PyTorch cu126 索引安装，见 `pyproject.toml`。
 - 集群的连接方式（`ssh 42`、`42-up` 等）是用户的事。容器回收、换容器、输入密码都要先问用户。
 

@@ -15,8 +15,12 @@ learner loses to are played more. The baseline keeps a floor share of
 ``baseline_prob`` of the frozen games.
 
 To keep the number of distinct networks evaluated per environment step small,
-``resident`` frozen members are drawn once per rollout and kept on the device;
-environments that start an episode draw among ``latest`` + the resident set.
+``resident`` draws (with replacement) from the frozen distribution are made
+once per rollout and kept on the device; an environment that starts an
+episode picks ``latest`` or one of those draws uniformly, so each frozen
+member is played with exactly its ``frozen_probs`` share. A member still being
+played by some environment (``in_use``) keeps its network, and a snapshot
+evicted from the pool stays loadable until its last episode ends.
 Assignment is per environment and episode, by team: one team (chosen
 uniformly) is the learner, all other teams are played by the drawn opponent.
 """
@@ -81,8 +85,13 @@ class League:
         self.members: dict[str, Member] = {BASELINE: Member(BASELINE, "baseline")}
         if self.cfg.get("include_random"):
             self.members[RANDOM] = Member(RANDOM, "random")
-        self.resident: list[str] = []
+        self.resident: list[str] = []  # distinct members drawn for this rollout
+        self._resident_draws: dict[str, int] = {}
         self._models: dict[str, nn.Module] = {}
+        # Opponents of the episodes in flight (the collector sets it).
+        self.in_use: Callable[[], set[str]] = lambda: set()
+        # Evicted snapshots that episodes in flight still play.
+        self._retired: dict[str, Member] = {}
 
     # ------------------------------------------------------------------ pool
     def snapshots(self) -> list[Member]:
@@ -97,15 +106,24 @@ class League:
         os.replace(tmp, path)
         self.members[mid] = Member(mid, "snapshot", str(path), update)
         snaps = self.snapshots()
+        in_use = self.in_use()
         while len(snaps) > int(self.cfg["max_snapshots"]):
             old = snaps.pop(0)
             self.members.pop(old.id, None)
-            self._models.pop(old.id, None)
-            try:
-                Path(old.path).unlink()
-            except OSError:
-                pass
+            if self._resident_draws.pop(old.id, None):  # no new episodes against it
+                self.resident = sorted(self._resident_draws)
+            if old.id in in_use:
+                self._retired[old.id] = old
+            else:
+                self._drop(old)
         return mid
+
+    def _drop(self, member: Member) -> None:
+        self._models.pop(member.id, None)
+        try:
+            Path(member.path).unlink()
+        except OSError:
+            pass
 
     def frozen_probs(self) -> dict[str, float]:
         """Distribution over frozen members (PFSP with a baseline floor)."""
@@ -121,30 +139,38 @@ class League:
         return probs
 
     def choose_resident(self) -> list[str]:
-        """Draw the frozen members used during the next rollout (without replacement)."""
+        """Draw the frozen members used during the next rollout.
+
+        ``resident`` independent draws from ``frozen_probs``; a starting
+        episode then picks one draw uniformly, which plays every member with
+        its own probability (drawing distinct members and re-weighting by p
+        inside the set would sample roughly by p squared)."""
         probs = self.frozen_probs()
         ids = list(probs)
-        k = min(int(self.cfg["resident"]), len(ids))
-        if k <= 0:
-            self.resident = []
-        else:
+        k = int(self.cfg["resident"]) if ids else 0
+        self._resident_draws = {}
+        if k > 0:
             p = np.array([probs[i] for i in ids], dtype=np.float64)
             p /= p.sum()
-            pick = self.rng.choice(len(ids), size=k, replace=False, p=p)
-            self.resident = [ids[i] for i in sorted(pick)]
+            for i in self.rng.choice(len(ids), size=k, replace=True, p=p):
+                self._resident_draws[ids[i]] = self._resident_draws.get(ids[i], 0) + 1
+        self.resident = sorted(self._resident_draws)
+        keep = set(self.resident) | self.in_use() | {BASELINE}
         for mid in list(self._models):
-            if mid not in self.resident and mid != BASELINE:
+            if mid not in keep:
                 del self._models[mid]
+        for mid, member in list(self._retired.items()):
+            if mid not in keep:
+                del self._retired[mid]
+                self._drop(member)
         return self.resident
 
     def episode_probs(self) -> tuple[list[str], np.ndarray]:
         """Opponent choices for a starting episode: latest + resident members."""
         sp = float(self.cfg["self_play_prob"]) if self.resident else 1.0
-        probs = self.frozen_probs()
+        draws = sum(self._resident_draws.values())
         ids = [LATEST] + list(self.resident)
-        w = np.array([sp] + [probs[m] for m in self.resident], dtype=np.float64)
-        if len(ids) > 1:
-            w[1:] *= (1.0 - sp) / max(w[1:].sum(), 1e-12)
+        w = np.array([sp] + [(1.0 - sp) * self._resident_draws[m] / draws for m in self.resident], dtype=np.float64)
         return ids, w / w.sum()
 
     def sample_opponents(self, n: int) -> list[str]:
@@ -154,7 +180,7 @@ class League:
     def model(self, mid: str) -> nn.Module:
         if mid in self._models:
             return self._models[mid]
-        m = self.members[mid]
+        m = self.members.get(mid) or self._retired[mid]
         if m.kind == "baseline":
             net = self.baseline_loader()
         elif m.kind == "random":
@@ -223,7 +249,7 @@ class League:
             self.members[BASELINE] = Member(BASELINE, "baseline")
         self.rng.bit_generator.state = state["rng"]
         self._models = {k: v for k, v in self._models.items() if k == BASELINE}
-        self.resident = []
+        self.resident, self._resident_draws, self._retired = [], {}, {}
 
 
 def episode_teams(active: np.ndarray, reset: np.ndarray, team: np.ndarray) -> list[int]:

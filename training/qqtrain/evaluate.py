@@ -198,14 +198,17 @@ class Evaluator:
         self.best_score = float(state.get("best_score", -1.0))
         self.history = list(state.get("history", []))
 
-    def opponents(self) -> list[str]:
+    def opponents(self, update: int | None = None) -> list[str]:
+        """Evaluation opponents; snapshots taken at or after ``update`` hold
+        the learner's own weights and are left out before taking the last k."""
         out: list[str] = []
         for spec in self.ecfg["opponents"]:
             if spec == BASELINE:
                 out.append(BASELINE)
             elif spec.startswith("snapshots:"):
                 k = int(spec.split(":", 1)[1])
-                out += [m.id for m in self.league.snapshots()[-k:]]
+                snaps = [m for m in self.league.snapshots() if update is None or m.update < update]
+                out += [m.id for m in snaps[-k:]] if k > 0 else []
             elif spec in self.league.members:
                 out.append(spec)
         return list(dict.fromkeys(out))
@@ -228,9 +231,7 @@ class Evaluator:
         for mode, mcfg in self.modes().items():
             wc = {**base, **dict(mcfg.get("worker_config", {}))}
             report["modes"][mode] = {}
-            for opp in self.opponents():
-                if opp.startswith("snap_") and int(opp[5:]) >= update:
-                    continue  # the same weights as the learner
+            for opp in self.opponents(update):
                 configs = worker_configs(self.cfg, int(self.ecfg["num_workers"]), wc, seed=int(self.ecfg["seed"]))
                 pool = WorkerPool(
                     worker_command(self.cfg),

@@ -466,8 +466,9 @@ each slot's decisions are cut into chunks of `ppo.seq_len`, replayed with
 TF32 on CUDA; `model.compile` wraps the sequence forward in `torch.compile`
 (not yet tried on CUDA). `model.init_from_baseline` starts from U2392 and
 `ppo.value_warmup_updates` first trains only the new value head (policy loss
-and entropy off, no KL stop; the shared trunk still receives value
-gradients).
+and entropy off, no KL stop; the shared trunk gets no gradient, so the
+policy is exactly U2392 until PPO starts). The LR warm-up starts again when
+the policy loss switches on.
 
 Sampling: the learner samples from the full masked softmax (temperature 1),
 so the stored log-probabilities are exactly the behaviour policy. The server
@@ -487,8 +488,12 @@ Each environment draws its opponent when an episode starts: `latest` with
 `self_play_prob`, otherwise a frozen member with PFSP weight
 `(1 - score) ** pfsp_power` (score = the learner's decayed, smoothed score
 against it), the baseline keeping at least `baseline_prob` of those games.
-`resident` frozen members are drawn per rollout and kept on the device, so a
-step runs at most `1 + resident` networks, each batched over its slots. Roles
+Per rollout `resident` draws (with replacement) are made from that
+distribution and kept on the device; a starting episode takes one draw
+uniformly, so every frozen member is played with exactly its share, and a
+step runs `latest`, the resident members and whatever members episodes still
+in flight play (opponents are fixed per episode). A snapshot evicted while
+episodes still play it stays loadable until they end. Roles
 are per team: against a frozen member one team (uniformly chosen) is the
 learner and the others the opponent; against `latest` every team is trained
 (`train_both_sides`). Only learner entries are stored and trained. Results
