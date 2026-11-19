@@ -13,7 +13,7 @@ import pygame
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
 
 from qqtclient.battle.machine_skill import (COMBOS, KEY_DOWN, KEY_LEFT, KEY_RIGHT, SKILL_CHARGE, SkillInput,  # noqa: E402
-                                           SkillPose, held_move_keys, pose_image)
+                                           SkillPose, held_move_keys, pose_image, pose_sound)
 from qqtclient.battle.scene import BattleScene  # noqa: E402
 from qqtclient.battle.sidecar import MOVE_DOWN, MOVE_LEFT, MOVE_RIGHT, MOVE_UP  # noqa: E402
 from qqtclient.keylayout import DEFAULT_LAYOUT, BattleKeys  # noqa: E402
@@ -248,6 +248,22 @@ class SceneInputTest(unittest.TestCase):
         scene.skill_poses = {}
         scene._update_skill_poses({1: (100, 100)}, 20)
         self.assertEqual(scene.skill_poses, {})
+
+    def test_sounds_follow_our_own_poses(self) -> None:
+        # 0x005FF2B8: x26_01 for the charge, x27_01 for a throw, kick or a
+        # dodge that moved; only for our player (0x00534990).
+        scene = self.scene()
+        played = []
+        scene.runtime = types.SimpleNamespace(namespace={"PlaySound": lambda name, loops: played.append((name, loops))})
+        scene.sprites = types.SimpleNamespace(get=lambda path: [None] * 6)
+        notices = [(1, 8), (1, 0), (1, 7), (1, -1), (2, 4), (2, 8)]
+        for player, pose in notices:
+            scene.state["machine"]["skills"] = [{"player": player, "type": max(pose, 9), "pose": pose, "time": 6000}]
+            scene._update_skill_poses({}, 20)
+        self.assertEqual(played, [("x26_01.wav", 1), ("x27_01.wav", 1), ("x27_01.wav", 1)])
+        self.assertEqual((pose_sound(6), pose_sound(9), pose_sound(-1)), ("x27_01.wav", None, None))
+        scene.runtime = None
+        scene._update_skill_poses({}, 20)  # no UI: silent, no error
 
 
 if __name__ == "__main__":

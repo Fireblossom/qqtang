@@ -44,7 +44,7 @@ category,path_or_pattern,values,status,feature,evidence,reachable,severity,notes
 商城/装扮,object/eye/eye12_stand.img; object/eye/eye12_walk.img; res/uires/icon/eye/eye12.img,3767 08纪念·篮球,missing,装扮(眼部),itemCFG/commodityCFG 3767,是(商城在售),可见,,parent
 商城/装扮,object/frame/frame54_stand.img,1061 梦中情人边框,missing,名片边框,"itemCFG/commodityCFG 1061; uiRoom.py:282, uiShop.py:146",是(在售),可见,,parent
 商城/装扮,object/frame/frame55_stand.img,1062 大众情人边框,missing,名片边框,itemCFG/commodityCFG 1062,是(在售),可见,,parent
-商城/装扮,"object/namecardbound/namecardbound{1,2}_{stand,walk}.img; res/uires/icon/namecardbound/namecardbound{1,2}.img","12501 霓虹灯,12502 心心",misplaced,边框名片,"itemCFG/commodityCFG; uiShop.py:155, uiRoom.py:286; Client.exe 0x005e1c24",是(在售),可见,"文件实际在 object/namecard/namecardbound{1,2}_*.img 和 res/uires/icon/namecard/ 下（放错目录）；Client.exe 005e1c24 只请求 stand",parent
+商城/装扮,"object/namecardbound/namecardbound{1,2}_{stand,walk}.img; res/uires/icon/namecardbound/namecardbound{1,2}.img","12501 霓虹灯,12502 心心",misplaced,边框名片,"itemCFG/commodityCFG; uiShop.py:155, uiRoom.py:286; Client.exe 0x005e1c24",是(在售),可见,"文件实际在 object/namecard/namecardbound{1,2}_*.img 和 res/uires/icon/namecard/ 下（放错目录）；Client.exe 005e1c24 只请求 stand；2026-11-19 宿主已加路径别名（resources.py MISPLACED_FOLDERS）",parent
 商城/装扮,object/cloth/cloth112xx_*.img (角色12 ls 全部衣服),role 12,missing,角色12,object/player/player12.ini,否(房间不可选),死数据,,parent
 商城/装扮,object/ui/shop/charicon/.img; object/ui/room/char/icon_ls.img; icon_.img,角色10-12、17,missing,商城角色头像/对战玩家列表头像,uiShop.py:115/263; uiGame.py:148/211,否,死数据,,parent
 商城/装扮,"object/xeffect/xeffect<N>_{stand,walk,pre}.img",,missing,聊天气泡特效道具,uiSelRoom.py:367-542; uiShop.py:3012,否(itemCFG 无 xeffect 类道具),死代码,,parent

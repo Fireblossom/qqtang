@@ -22,7 +22,7 @@
 | 蓄力招式（规则 7 机械） | 不缺：招式姿势图是 misc470～475，包里都有；招式属于机械模式，不属于比武（见 `wrestle-skills-re.md`） | 0 |
 | 新手教程 | 4 | 1 |
 | 对战通用 | 约 30（Halo_Excite.eff、底栏道具图标 item30020/30027/30028/30030/30100/30101、元素炸毁动画等） | 约 26 |
-| 商城/装扮 | eye12（3767 篮球）、frame54/55；另有 namecardbound 两件放错目录 | 6 |
+| 商城/装扮 | eye12（3767 篮球）、frame54/55；另有 namecardbound 两件放错目录（宿主已加别名） | 6 |
 | 宠物 | 48 个宠物道具图标 pet<N>.img | 48 |
 | 大厅与任务 | taskSys 缺 5006.xml，两件任务奖励不在 itemCFG | 2 |
 | 婚礼 | dlg_marriageConfirm.img | 偶发 |
@@ -30,7 +30,7 @@
 
 ## 不用找旧客户端就能修的
 
-- 边框名片 12501/12502：文件在 `object/namecard/namecardbound{1,2}_*` 和 `res/uires/icon/namecard/`，程序找的却是 `object/NamecardBound/` 和 `res/uires/icon/namecardbound/`。宿主加一个路径别名即可。
+- 边框名片 12501/12502：文件在 `object/namecard/namecardbound{1,2}_*` 和 `res/uires/icon/namecard/`，程序找的却是 `object/NamecardBound/` 和 `res/uires/icon/namecardbound/`。**2026-11-19 已加宿主路径别名**（`resources.py` 的 `MISPLACED_FOLDERS`：所找目录下没有该文件时，用实际目录里同名的 `namecardbound*` 文件；客户端目录不改）。原版加载图片不检查文件，这两件在原版里不显示。验证：`tests/test_resources.py`；练习房间里给两个座位用 12501、12502，霓虹灯和心心边框都画出来，日志无缺图（截图 `/private/tmp/claude-501/-Users-cduan-qqtang/2d415321-6cf4-4bec-92d7-63a0de7d5ee6/scratchpad/live/namecard_zoom.png`）。
 - 旧文档说“名片缺 trigger 动作”不成立：原版代码只请求 stand，145 张都在。
 
 ## 找旧客户端时的优先顺序

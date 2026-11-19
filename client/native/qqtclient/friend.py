@@ -422,7 +422,12 @@ def build_friend_natives(runtime: UIRuntime, session: Session,
             log(f"[friend] pursuit of {found.uin} needs section {found.server_id}/{found.section_id}, room {found.room_id}")
 
     def on_find(packet) -> None:
-        found = friend.parse_find_friend(packet.payload)
+        show_found(friend.parse_find_friend(packet.payload))
+
+    def show_found(found: friend.FoundPlayer) -> None:
+        """The FIND_FRIEND answer handler (QQTSection 0x1001D126). The room
+        seat's 查看 (room.py, 0x1000CF2B) hands it a reply built from the
+        seat record too."""
         if found.result == friend.RESULT_SUCCESS and found.uin == state.pursuing:
             state.pursuing = 0
             pursue(found)
@@ -449,8 +454,9 @@ def build_friend_natives(runtime: UIRuntime, session: Session,
     })
     session.on_entered.append(state.reset)
     session.on_disconnected.append(state.reset)
+    session.show_found_player = show_found
 
-    excluded = ("script", "system_line", "shield", "pursue", "lobby_players", "lobby_player", "refresh", "message_box", "push", "request_list", "friend_info",
+    excluded = ("script", "show_found", "system_line", "shield", "pursue", "lobby_players", "lobby_player", "refresh", "message_box", "push", "request_list", "friend_info",
                 "section_names", "detail")
     return {name: value for name, value in locals().items()
             if callable(value) and name not in excluded and not name.startswith("on_") and name[0] != "_"}

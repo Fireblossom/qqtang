@@ -74,7 +74,21 @@
 
 - `widgets.py` 在构造 `SCROLLBAR`/`SPIN`/`TEXTLIST` 时调用 `scrollbar.init`/`init_list`；`natives.py` 的五个原生函数按上文实现；`runtime.py` 处理轨道按下、滑块拖动、`SPIN` 点击、按住连发和滚轮；`render.py` 的 `list_rows` 按原版公式排 `TEXTLIST` 并更新它的滚动条。
 - 推断/近似：原版只在脏标志置位时重排 `TEXTLIST`，宿主在总高、client 区或滚动条尺寸变化时重排（滚动条上没有脚本 `OnPosChange`，结果相同）。按住连发按宿主帧率（60 帧）每帧一次，原版帧率没有查。滚轮方向取 SDL 的 `y`（macOS 的“自然滚动”已由系统换算），一格算 120。
-- 未改：`TEXTLIST` 折行宽度仍是宿主原来的 client 宽 − 16，没有 clientrect 时仍退回 captionrect（原版用整个控件）；这两点属于聊天排版，留给 `TEXTLIST` 的专项核对。`TEXTLIST` 的键盘翻页（`0x10023FF9`：PageUp/PageDown 按页、上下键按 textsize）、`LISTBOX` 的滚动都没做（焦点几乎不会落在聊天记录上，脚本也没用 `LISTBOX`）。
+- 未改：`TEXTLIST` 折行宽度仍是宿主原来的 client 宽 − 16，没有 clientrect 时仍退回 captionrect（原版用整个控件）；这两点属于聊天排版，留给 `TEXTLIST` 的专项核对。`LISTBOX` 的滚动没做（脚本没用 `LISTBOX`）。
+
+## TEXTLIST 键盘翻页（2026-11-19）
+
+[静态] `TEXTLIST` 虚表 `0x1003EA1C` 的 `+0x28`（按键）是 `0x10023FF9`，参数是虚拟键码：
+
+- `VK_UP` 0x26：偏移加 textsize（`+0x17C`，`0x100253B5`），往旧记录看；`VK_DOWN` 0x28：减 textsize。
+- `VK_PRIOR` 0x21 / `VK_NEXT` 0x22：页号 `+0x29C` 减 1 / 加 1 后交给 `0x10025449`：先夹到 `[0, 页数 +0x298 − 1]`，再设偏移为 client 高（`+0x22C`）× 页号（`0x100253C8` 再夹一次）。页号在每次设偏移时更新为 `ceil(|偏移| / client 高)`。
+- 其他键交给基类 `0x1002AD34`：Tab/Enter/Escape 先找自己的回调，其余直接交给父控件的 `+0x28`。`SCROLLBAR`（虚表 `0x1003D3CC`）、`BUTTON`（`0x1003C500`，滑块）、`SPIN`（`0x1003C6B8`）的 `+0x28` 都是这个基类函数，所以焦点在聊天栏的滚动条或滑块上时，这四个键也会传到 `TEXTLIST`。
+
+**原版 bug**：页数 `+0x298` 只在构造函数里写成 0（`0x10023BA8`；`grep_insn` 在 `TEXTLIST` 代码段里没找到别的写入），所以 PageUp、PageDown 都把页号夹成 0，跳回最新一行；而且 PageUp 是页号减 1（往新记录），与上下键方向相反。按用户决定修正：PageUp 往旧记录翻一页（页号 + 1），PageDown 往新记录翻一页（页号 − 1，最小 0），只保留 `0x100253C8` 的偏移夹取。
+
+宿主：`scrollbar.key_list`（从焦点沿 `SCROLLBAR`/`BUTTON`/`SPIN` 往上找 `TEXTLIST`，别的控件类型不跟，因为没查它们的 `+0x28`）和 `scrollbar.list_key`；`runtime._key` 在 Tab/Enter 等之前处理这四个键。房间里方向键同时仍交给人物走动（事件钩子不吃掉按键），与原版是否同时走动没核对。
+
+验证：`tests/test_scrollbar.py` 两项（经滑块焦点的上下键/翻页与夹取、焦点在输入框时不翻）。本地测试服实跑：建房后写入 40 行聊天，点聊天栏滑块，PageUp 两次、下键一次，截图拼在 `/private/tmp/claude-501/-Users-cduan-qqtang/2d415321-6cf4-4bec-92d7-63a0de7d5ee6/scratchpad/live/tl_strip.png`（依次为写入后、点滑块、PageUp、PageUp、下键）。
 
 ## 验证
 

@@ -28,6 +28,11 @@ WGTSTYLE_SELF_YMOVE = 0x1000
 EXTEND_RESIZE_BLOCK = 1  # +0x290 & 1: SetRange resizes the thumb
 EXTEND_FLIP = 2  # +0x290 & 2: flips the axis (TVScroll's default)
 WHEEL_DELTA = 120  # one notch of WM_MOUSEWHEEL
+VK_PRIOR, VK_NEXT, VK_UP, VK_DOWN = 0x21, 0x22, 0x26, 0x28  # the keys TEXTLIST handles (0x10023FF9)
+# Classes whose key method (vtable +0x28) is the base 0x1002AD34, which
+# passes these keys to the parent: SCROLLBAR (vtable 0x1003D3CC), BUTTON
+# (0x1003C500, the thumb) and SPIN (0x1003C6B8).
+KEY_PASSING_TYPES = ("SCROLLBAR", "BUTTON", "SPIN")
 REPEAT_DELAY_S = 0.4  # 0x3FD99999A0000000 in both constructors
 CHANNEL_CLIENTRECT = 35
 
@@ -356,3 +361,40 @@ def wheel(target: Widget | None, notches: int, call: Call) -> None:
             list_scroll_to(widget, widget.list_offset + notches * WHEEL_DELTA, call)
             return
         widget = widget.parent
+
+
+def key_list(focus: Widget | None) -> Widget | None:
+    """The TEXTLIST a key on the focused widget reaches: the list itself,
+    or the list above a focused scroll bar, thumb or spin, which hand the
+    key to their parent (0x1002AD34). Other classes are not followed."""
+    widget = focus
+    while widget is not None:
+        if widget.type == "TEXTLIST":
+            return widget
+        if widget.type not in KEY_PASSING_TYPES:
+            return None
+        widget = widget.parent
+    return None
+
+
+def list_key(widget: Widget, key: int, call: Call) -> bool:
+    """TEXTLIST's key method 0x10023FF9. Up/Down move the offset by
+    textsize (+0x17C) toward older/newer lines (0x100253B5). PageUp/PageDown
+    go through 0x10025449 with the page (+0x29C, ceil(offset / client
+    height)) minus/plus one, clamped below the page count +0x298; that
+    count is only ever set to 0 (constructor 0x10023BA8), so in the
+    original both keys jump back to the newest line. Host fix (原版 bug，
+    已修正): PageUp shows the older page, PageDown the newer one, and only
+    the offset clamp of 0x100253C8 applies. Returns False for other keys,
+    which the original passes on to the base method."""
+    _, _, _, height = list_client_rect(widget)
+    if key in (VK_UP, VK_DOWN):
+        step_px = widget.text_size if key == VK_UP else -widget.text_size
+        list_scroll_to(widget, widget.list_offset + step_px, call)
+        return True
+    if key in (VK_PRIOR, VK_NEXT) and height > 0:
+        page = -(-abs(widget.list_offset) // height)  # ceil(abs(offset) / height), as +0x29C
+        page += 1 if key == VK_PRIOR else -1
+        list_scroll_to(widget, max(page, 0) * height, call)
+        return True
+    return False

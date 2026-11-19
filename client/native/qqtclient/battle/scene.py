@@ -24,7 +24,7 @@ from . import mapfile, prepared
 from .bomb_animation import BombAnimation
 from .effect import EffectPlayer
 from .machine_projectile import MachineGateAnimation
-from .machine_skill import SkillInput, SkillPose, held_move_keys, pose_image, vertical
+from .machine_skill import SkillInput, SkillPose, held_move_keys, pose_image, pose_sound, vertical
 from .result import ResultDisplay, scene_game_type
 from .result_portrait import ResultPortrait
 from .sculpture_animation import StatueAnimation
@@ -733,6 +733,7 @@ class BattleScene:
         for notice in (self.state.get("machine") or {}).get("skills") or ():
             if notice["player"] == self.local_id:
                 self.skill_input.notice()
+                self._play_sound(pose_sound(notice["pose"]))
             if notice["pose"] >= 0:
                 frames = len(self.sprites.get(pose_image(notice["pose"])) or ()) or 1
                 self.skill_poses[notice["player"]] = SkillPose.start(notice["pose"], self.clock, frames)
@@ -742,6 +743,13 @@ class BattleScene:
             moved = actor is not None and previous.get(player) != (actor["x"], actor["y"])
             if actor is None or not pose.advance(self.clock, elapsed_ms) or (pose.offset(actor["facing"]) is None and (moved or vertical(actor["facing"]))):
                 del self.skill_poses[player]
+
+    def _play_sound(self, name: str | None) -> None:
+        """A battle sound through the UI's PlaySound (sound/<name>, once),
+        so the sound switch of the settings applies."""
+        play = self.runtime.namespace.get("PlaySound") if self.runtime is not None else None
+        if name and callable(play):
+            play(name, 1)
 
     def _apply(self, event: dict[str, Any]) -> None:
         kind, cell = event["kind"], event["cell"]

@@ -528,6 +528,19 @@ class FriendHostTest(unittest.TestCase):
         self.assertEqual((self.natives["GetPlayerNickNamebyUin"](1000003, 0), self.natives["GetPlayerNickNamebyUin"](1000004, 0)), ("糖三", "1000004"))
 
 
+    def test_room_seat_view_uses_the_find_answer_path(self) -> None:
+        # room.py hands a reply built from the seat (0x1000CF2B -> +0x60).
+        found = friend.FoundPlayer(result=0, uin=1000004, nickname="糖四", gender=1, status=friend.FIND_STATUS_IN_ROOM,
+                                   room_id=4, room_name="一起来玩吧", kin_flag=bytes(8),
+                                   game_info=friend.GameInfo(1, 2, 3, 0, 100, 0, 0, 1, 0, 0, 0, 0, 0))
+        self.session.show_found_player(found)
+        detail = self.natives["GetPlayerDetail"]()
+        self.assertEqual((detail.m_dwFriendUin, detail.m_szPlayerName, detail.m_bStatus, detail.m_sRoomUIID, detail.m_szRoomName),
+                         (1000004, "糖四", 2, 4, "一起来玩吧"))
+        self.assertEqual(self.calls[-2:], [("go2playerInfo", 1000004, 0), ("ui_getPlayerDetail",)])
+        self.assertEqual(self.sent, [])
+
+
 class ConversionTest(unittest.TestCase):
     def convert(self, source: str) -> str:
         tree = prepare_ui.Python2Semantics().visit(ast.parse(source))

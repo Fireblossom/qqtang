@@ -18,8 +18,8 @@ import pygame
 
 from .avatar import AvatarCache
 from .lobby import native_game_info
-from .net import pet, room
-from .net.player import GameInfo
+from .net import friend, pet, room
+from .net.player import GameInfo, ItemInfo
 from .runtime import UIRuntime
 from .roomwalk import RoomPet, RoomWalk
 from .script import call_script, log
@@ -46,6 +46,13 @@ PRACTICE_AI_UIN = 10_000  # AI seat UINs: this plus the seat
 PRACTICE_AI_ROLES = 8  # AIs pick among the eight ordinary roles
 PRACTICE_MAX_AI_TEAM = 4  # clicking an AI seat cycles its team 2, 3, 4, 1, then frees the seat
 WEDDING_ROOM_FLAG = 2  # RoomFlag of a wedding chat room (docs/wedding-re.md §4)
+# 0x1000CF2B shows a seat's profile only for these identities: none of
+# 0x700, or both 0x100 and 0x200 (the meaning of the bits is not known).
+SEAT_VIEW_IDENTITY_MASK = 0x700
+SEAT_VIEW_IDENTITY_BOTH = 0x300
+# state.json key: {uin: [ItemInfo fields...]}, the last outfit the server
+# reported, for the practice room when no login is at hand (host addition).
+WEAR_CACHE_KEY = "practice_wear"
 
 
 @dataclasses.dataclass
@@ -101,6 +108,46 @@ def native_room_player(member: room.RoomPlayer | None) -> types.SimpleNamespace:
         m_bTermAndSeat=member.team << 4 | member.seat, m_bStatus=member.status, m_bGender=member.gender,
         m_dwIdentity=member.identity, m_stGameInfo=native_game_info(member.game_info),
         m_dwKinIndex=member.kin_index, m_szKinName=member.kin_name, m_stKinFlagID=types.SimpleNamespace(m_iFlagID=flag_index),
+    )
+
+
+def worn_items(items: list[ItemInfo]) -> list[ItemInfo]:
+    """The items a room avatar can wear: room_changePlayer only applies
+    those whose role byte is the seat's role, so role 0 never shows."""
+    return [item for item in items if item.role_id]
+
+
+def cached_wear(state: dict[str, Any], uin: int) -> list[ItemInfo]:
+    rows = (state.get(WEAR_CACHE_KEY) or {}).get(str(uin)) or []
+    items = []
+    for row in rows:
+        try:
+            items.append(ItemInfo(*(int(value) for value in row)))
+        except (TypeError, ValueError):
+            continue
+    return items
+
+
+def seat_found_player(member: room.RoomPlayer, server_id: int, section_id: int, room_id: int,
+                      room_name: str) -> friend.FoundPlayer | None:
+    """The FIND_FRIEND reply QQTSection 0x1000CF2B builds from a seat for
+    UserClickSeatInRoom(seat, 1): UIN, name, PlayerID, gender, icon,
+    identity, GAME_INFO and items from the seat record; server, section,
+    room and room name are our own; kin and honor stay zero (the 0x2463
+    byte struct is memset). None when the original shows nothing."""
+    identity = member.identity
+    if not member.uin or not (identity & SEAT_VIEW_IDENTITY_MASK == 0
+                              or identity & SEAT_VIEW_IDENTITY_BOTH == SEAT_VIEW_IDENTITY_BOTH):
+        return None
+    # Status from the room module's state (+4 via 0x1000274D): 1 -> 2,
+    # 2 -> 3, otherwise 1. The button only exists on the room screen, so
+    # this is taken as state 1, 在房间 (inferred, like FIND_STATUS_IN_ROOM).
+    return friend.FoundPlayer(
+        result=friend.RESULT_SUCCESS, uin=member.uin, nickname=member.nickname, player_id=member.player_id,
+        gender=member.gender, icon_id=member.icon_id, identity=identity, server_id=server_id, dialog_id=0,
+        section_id=section_id, room_id=room_id, room_name=room_name, status=friend.FIND_STATUS_IN_ROOM,
+        game_info=dataclasses.replace(member.game_info), items=list(member.items),
+        kin_index=0, kin_name="", kin_flag=bytes(8), honor=0,
     )
 
 
@@ -192,6 +239,8 @@ def build_room_natives(runtime: UIRuntime, session: Session, avatars: AvatarCach
         state.password = state.pending_password
         state.members = {member.seat: member for member in snapshot.players}
         state.avatars = [SeatAvatar() for _ in range(room.MAX_SEATS)]
+        if not state.offline and (mine := state.members.get(snapshot.local_seat)) is not None and mine.uin == session.uin:
+            remember_wear(session.uin, mine.items)
         walk.reset_scene()
         log(f"[room] entered room {snapshot.room_id} ({len(snapshot.players)} players, map {snapshot.map_id}, type {snapshot.game_type})")
         log(f"[room] owner {snapshot.owner_id} local seat {snapshot.local_seat} seats {snapshot.seat_status} members "
@@ -407,8 +456,35 @@ def build_room_natives(runtime: UIRuntime, session: Session, avatars: AvatarCach
         state.snapshot, state.members, state.offline = None, {}, False
 
     session.on_disconnected.append(on_disconnected)
+    if hasattr(session, "on_entered"):
+        # Entering a section: the login items are our outfit (cache it).
+        session.on_entered.append(lambda: remember_wear(session.uin, getattr(session.profile, "items", None) or []))
 
     # The offline practice room ------------------------------------------
+
+    def remember_wear(uin: int, items: list[ItemInfo]) -> None:
+        """Keep the server's word on our outfit for a later practice room."""
+        if not uin:
+            return
+        rows = [list(dataclasses.astuple(item)) for item in worn_items(items)]
+        cache = dict(session.state.get(WEAR_CACHE_KEY) or {})
+        if cache.get(str(uin)) == rows:
+            return
+        cache[str(uin)] = rows
+        session.save_state(**{WEAR_CACHE_KEY: cache})
+
+    def practice_wear() -> list[ItemInfo]:
+        """Our seat's items in the practice room. Online the room record
+        brings them (the server copies the login items, enter_room.go
+        PlayerInfoInRoomOldFromProfile); here they come from the login
+        profile, kept up to date by the item updates, else from the copy
+        cached at the last login or room entry (host addition)."""
+        uin = session.uin or int(session.state.get("last_uin", 0) or 0)
+        items = getattr(session.profile, "items", None)
+        if items is not None:
+            remember_wear(uin, items)
+            return worn_items(items)
+        return cached_wear(session.state, uin)
 
     def open_practice_room() -> None:
         """Enter the practice room: the local player on seat 1 (team 1) and
@@ -419,7 +495,7 @@ def build_room_natives(runtime: UIRuntime, session: Session, avatars: AvatarCach
         player_id = 1
         mine = room.RoomPlayer(uin=session.uin, nickname=session.nickname or "我", player_id=player_id, team=1, seat=1, status=0,
                                gender=session.gender, icon_id=0, identity=profile.identity if profile else 0, game_info=info,
-                               items=[], kin_index=0, kin_name="", kin_flag=b"", pet=b"")
+                               items=practice_wear(), kin_index=0, kin_name="", kin_flag=b"", pet=b"")
         snapshot = room.RoomSnapshot(result=0, room_id=PRACTICE_ROOM_ID, room_name=PRACTICE_ROOM_NAME, local_team=1, local_seat=1,
                                      map_id=PRACTICE_DEFAULT_MAP, room_flag=0, owner_id=player_id,
                                      seat_status=[room.SEAT_OPEN] * room.MAX_SEATS,
@@ -602,11 +678,36 @@ def build_room_natives(runtime: UIRuntime, session: Session, avatars: AvatarCach
             state.snapshot.game_type = int(game_type)
             session.game_type = int(game_type)
 
+    def view_seat(seat: int) -> None:
+        """UserClickSeatInRoom(seat, 1), 查看 (QQTSection 0x1000CF2B): the
+        seat's own record goes to the FIND_FRIEND answer handler at once
+        (XSection +0x60, friend.py show_found), then XSection +0xF0, the
+        same call as FindFriend(uin): 0x107 marriage record and 0x67
+        FindFriend, whose answer refreshes the dialog. The practice room
+        has no server, so only the seat record shows."""
+        member = state.members.get(seat)
+        show = getattr(session, "show_found_player", None)
+        if member is None or state.snapshot is None or show is None:
+            return
+        section = getattr(session, "section", None)
+        found = seat_found_player(member, section.server_id if section else 0, section.id if section else 0,
+                                  state.room_id, state.name or state.snapshot.room_name)
+        if found is None:
+            return
+        show(found)
+        if not state.offline and callable(find := runtime.namespace.get("FindFriend")):
+            find(member.uin)
+
     def UserClickSeatInRoom(index, button):
         """Button 0: the owner kicks the seat's player or opens/locks an empty
-        seat. Button 1 (view profile) needs no server request."""
+        seat. Button 1: 查看, the seat's profile (view_seat)."""
         seat = int(index) + 1
-        if int(button) != 0 or state.snapshot is None or not am_owner() or not 1 <= seat <= room.MAX_SEATS:
+        if not 1 <= seat <= room.MAX_SEATS:
+            return
+        if int(button) == 1:
+            view_seat(seat)
+            return
+        if int(button) != 0 or state.snapshot is None or not am_owner():
             return
         if state.offline:
             click_practice_seat(seat)
@@ -763,7 +864,7 @@ def build_room_natives(runtime: UIRuntime, session: Session, avatars: AvatarCach
 
     excluded = {"script", "notify", "in_room_screen", "me", "am_owner", "role_id", "refresh_seat", "refresh_all_seats",
                 "add_chat", "enter", "leave_to_lobby", "member_update", "ignore", "draw_players", "walk", "room_view", "seat_pet", "pair_couple",
-                "click_practice_seat", "start_practice", "practice_ai_member", "practice_players"}
+                "click_practice_seat", "start_practice", "practice_ai_member", "practice_players", "view_seat", "remember_wear", "practice_wear"}
     natives = {name: value for name, value in locals().items()
                if callable(value) and name not in excluded and not name.startswith("on_") and name != "open_practice_room"}
     natives["sc_openPracticeRoom"] = open_practice_room  # host addition, called by sc_beginFreePractice

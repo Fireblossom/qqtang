@@ -10,6 +10,19 @@ import zlib
 ARCHIVE_VERSION = 100
 ARCHIVE_HEADER_SIZE = 16
 
+# Files the release put in the wrong folder (docs/missing-assets.md): the
+# program asks for the first path, the client holds the file under the
+# second. Each entry is (wanted folder, actual folder, file-name prefix);
+# a wanted file that exists for real is never replaced. The original
+# client simply drew nothing (it does not check that an image exists).
+MISPLACED_FOLDERS = (
+    # 边框名片 12501/12502: uiShop/uiRoom ask for object/NamecardBound/…
+    # and the card icons res/uires/icon/namecardbound/… (itemCFG type
+    # 'namecardbound'), but these two sit with the plain name cards.
+    ("object/namecardbound", "object/namecard", "namecardbound"),
+    ("res/uires/icon/namecardbound", "res/uires/icon/namecard", "namecardbound"),
+)
+
 
 def normalize(path: str) -> str:
     return path.strip().replace("\\", "/").lstrip("/").lower()
@@ -54,6 +67,22 @@ class ObjectArchive:
         return data
 
 
+def add_folder_aliases(files: dict[str, pathlib.Path]) -> dict[str, str]:
+    """Map each misplaced file to the path the program asks for (host
+    addition). Returns {wanted: actual} for the log and the tests."""
+    aliases: dict[str, str] = {}
+    for wanted, actual, prefix in MISPLACED_FOLDERS:
+        for path in [key for key in files if key.startswith(actual + "/")]:
+            name = path[len(actual) + 1:]
+            if "/" in name or not name.startswith(prefix):
+                continue
+            target = f"{wanted}/{name}"
+            if target not in files:
+                files[target] = files[path]
+                aliases[target] = path
+    return aliases
+
+
 class Resources:
     """Case-insensitive lookup: loose files first, then data/object.pkg."""
 
@@ -64,6 +93,7 @@ class Resources:
             for name in names:
                 full = pathlib.Path(directory) / name
                 self.files[normalize(full.relative_to(client_root).as_posix())] = full
+        self.aliases = add_folder_aliases(self.files)
         self.archive = ObjectArchive(client_root)
 
     def read(self, path: str) -> bytes | None:
