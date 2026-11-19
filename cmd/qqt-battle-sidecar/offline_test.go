@@ -133,3 +133,41 @@ func offlineMapForRule(catalog *mapdata.Catalog, rule mapdata.CompetitiveRuleKin
 }
 
 var _ = battleengine.NativeRoundStartClockMS
+
+// TestOfflineNPCMessagesReachEverySeat: the arbitrator's NPC messages go
+// through the hub, so every seat sees the adventure NPCs and the outbox
+// drains (flushNPC once returned early without a connection).
+func TestOfflineNPCMessagesReachEverySeat(t *testing.T) {
+	root := offlineClientRoot(t)
+	catalog, err := mapdata.LoadCatalog(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ids := catalog.SelectableIDs()
+	if len(ids) == 0 {
+		t.Skip("no adventure stages")
+	}
+	players := []player{{ID: 1, Role: 1, Team: 1, AI: true, ExtPoint: 3000}, {ID: 2, Role: 2, Team: 1, AI: true, ExtPoint: 3000}}
+	hub, err := newOfflineHub(root, offlineInit{MapID: ids[0], Players: players, SpawnSeed: 5, ItemSeed: 6, Policy: offlinePolicyBot, Quiet: !testing.Verbose()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(hub.close)
+	for hub.over == nil && hub.link.clock < 30_000 {
+		if _, err := hub.step(command{Cmd: "step", Ticks: 10}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	arbitrator := hub.seats[hub.order[0]]
+	if arbitrator.adventure == nil || len(arbitrator.adventure.npcs) == 0 {
+		t.Skip("the stage has no NPCs by now")
+	}
+	if n := len(arbitrator.adventure.outbox); n > 64 {
+		t.Errorf("arbitrator NPC outbox holds %d messages", n)
+	}
+	for _, id := range hub.order[1:] {
+		if seat := hub.seats[id]; seat.adventure == nil || len(seat.adventure.npcs) == 0 {
+			t.Errorf("seat %d sees no NPCs (arbitrator has %d)", id, len(arbitrator.adventure.npcs))
+		}
+	}
+}

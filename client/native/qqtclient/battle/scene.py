@@ -536,15 +536,16 @@ class BattleScene:
                     self.name_key_down = True
                     if self.runtime is not None:
                         self.runtime.names_flag = self.names_flag
-            elif event.key in EMOTION_KEYS:
-                chat_open = self.runtime is not None and self.runtime.namespace["Win_IsVisible"]("UI.game.chat")
-                if not chat_open and not self.over:
-                    self.emotion_pressed = EMOTION_KEYS[event.key]
-                    if not self.realtime and self.clock >= 2000 and (self.practice_emotion is None or self.clock - self.practice_emotion["since"] >= 2000):
-                        self.practice_emotion = {"player": self.local_id, "id": self.emotion_pressed, "since": self.clock}
             else:
                 # The native table is polled slot by slot, so a key bound to
-                # several actions triggers each of them.
+                # several actions triggers each of them, the fixed emotion
+                # keys T-P included.
+                if event.key in EMOTION_KEYS:
+                    chat_open = self.runtime is not None and self.runtime.namespace["Win_IsVisible"]("UI.game.chat")
+                    if not chat_open and not self.over:
+                        self.emotion_pressed = EMOTION_KEYS[event.key]
+                        if not self.realtime and self.clock >= 2000 and (self.practice_emotion is None or self.clock - self.practice_emotion["since"] >= 2000):
+                            self.practice_emotion = {"player": self.local_id, "id": self.emotion_pressed, "since": self.clock}
                 keys = self.keys
                 if event.key in keys.page:
                     chat_open = self.runtime is not None and self.runtime.namespace["Win_IsVisible"]("UI.game.chat")

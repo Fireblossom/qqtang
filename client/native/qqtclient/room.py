@@ -230,7 +230,10 @@ def build_room_natives(runtime: UIRuntime, session: Session, avatars: AvatarCach
 
     # Entering ------------------------------------------------------------
 
-    def enter(snapshot: room.RoomSnapshot) -> None:
+    def enter(snapshot: room.RoomSnapshot, offline: bool = False) -> None:
+        # A server room after the practice room (an invitation, a reconnect)
+        # must not keep the offline flag.
+        state.offline = offline
         state.snapshot = snapshot
         state.name = snapshot.room_name or state.name
         state.password = state.pending_password
@@ -449,7 +452,10 @@ def build_room_natives(runtime: UIRuntime, session: Session, avatars: AvatarCach
                     room.SET_SEAT_STATUS_COMMAND, room.ROOM_CHAT_COMMAND):
         handlers[command] = ignore
     session.handlers.update(handlers)
-    session.on_disconnected.append(lambda: setattr(state, "snapshot", None))
+    def on_disconnected() -> None:
+        state.snapshot, state.members, state.offline = None, {}, False
+
+    session.on_disconnected.append(on_disconnected)
     if hasattr(session, "on_entered"):
         # Entering a section: the login items are our outfit (cache it).
         session.on_entered.append(lambda: remember_wear(session.uin, getattr(session.profile, "items", None) or []))
@@ -496,8 +502,7 @@ def build_room_natives(runtime: UIRuntime, session: Session, avatars: AvatarCach
                                      players=[mine, practice_ai_member(2, 2, info.role_id % PRACTICE_AI_ROLES + 1)], game_type=0)
         snapshot.seat_status[0] = snapshot.seat_status[1] = room.SEAT_OCCUPIED
         state.pending_password = ""
-        state.offline = True
-        enter(snapshot)
+        enter(snapshot, offline=True)
         add_chat("练习房间：点空座位加电脑对手，点电脑换队伍（2→3→4→1 队友→移走），点开始。", SYSTEM_CHAT_COLOR)
 
     def click_practice_seat(seat: int) -> None:
@@ -506,9 +511,11 @@ def build_room_natives(runtime: UIRuntime, session: Session, avatars: AvatarCach
         if member is not None:
             if member.uin == session.uin:
                 return
-            # An AI joins as an opponent (team 2) and each click moves it on:
-            # 2, 3, 4, 1 (a teammate of team 1), then the seat empties.
-            if member.team == 1:
+            # An AI joins as an opponent (the team after the player's) and
+            # each click moves it on, 2, 3, 4, 1 for a player in team 1; once
+            # it is the player's teammate the next click empties the seat.
+            mine = me()
+            if member.team == (mine.team if mine is not None else 1):
                 del state.members[seat]
                 snapshot.seat_status[seat - 1] = room.SEAT_OPEN
             else:
@@ -521,7 +528,7 @@ def build_room_natives(runtime: UIRuntime, session: Session, avatars: AvatarCach
             mine = me()
             mine_team = mine.team if mine is not None else 1
             role = (seat * 3) % PRACTICE_AI_ROLES + 1
-            state.members[seat] = practice_ai_member(seat, 2 if mine_team == 1 else 1, role)
+            state.members[seat] = practice_ai_member(seat, mine_team % PRACTICE_MAX_AI_TEAM + 1, role)
             snapshot.seat_status[seat - 1] = room.SEAT_OCCUPIED
         refresh_seat(seat)
 

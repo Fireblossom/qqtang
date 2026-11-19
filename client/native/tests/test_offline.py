@@ -6,6 +6,7 @@ import pathlib
 import sys
 import types
 import unittest
+from unittest import mock
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
 from qqtclient import room as room_host  # noqa: E402
@@ -134,6 +135,38 @@ class PracticeRoomTest(unittest.TestCase):
         self.assertEqual(self.runtime.current_screen, "selRoom")
         self.assertEqual(self.session.sent, [])
         self.assertIsNone(self.natives["GetSeatInfo"](0).player.m_dwUin or None)
+
+    def test_a_server_room_after_the_practice_room_is_online(self):
+        # An invitation accepted in the practice room enters a server room:
+        # it must not stay offline.
+        player = lambda uin, player_id, seat: room.RoomPlayer(
+            uin=uin, nickname="x", player_id=player_id, team=seat, seat=seat, status=0, gender=0, icon_id=0, identity=0,
+            game_info=room_host.empty_game_info(), items=[], kin_index=0, kin_name="", kin_flag=b"", pet=b"")
+        snapshot = room.RoomSnapshot(result=0, room_id=77, room_name="online", local_team=1, local_seat=1, map_id=1, room_flag=0,
+                                     owner_id=5, seat_status=[room.SEAT_OPEN] * room.MAX_SEATS,
+                                     players=[player(self.session.uin, 5, 1), player(42, 6, 2)], game_type=0)
+        with mock.patch.object(room, "parse_enter_room_response", lambda payload, join=False: snapshot):
+            self.session.handlers[room.ENTER_ROOM_COMMAND](types.SimpleNamespace(payload=b"", command=room.ENTER_ROOM_COMMAND))
+        self.natives["LeaveRoom"]()
+        self.assertEqual(self.started, [])
+        self.assertIn(room.LEAVE_ROOM_COMMAND, self.session.sent)
+
+    def test_a_disconnect_closes_the_practice_room(self):
+        for listener in list(self.session.on_disconnected):
+            listener()
+        self.assertIsNone(self.natives["GetSeatInfo"](1).player.m_dwUin or None)
+
+    def test_ai_teams_cycle_from_the_players_team(self):
+        click = self.natives["UserClickSeatInRoom"]
+        self.natives["UserSelTeamInRoom"](True, 2)  # the player moves to team 2
+        click(2, 0)  # a new AI joins team 3
+        teams = [self.seat(2).player.m_bTermAndSeat >> 4]
+        for _ in range(3):
+            click(2, 0)
+            teams.append(self.seat(2).player.m_bTermAndSeat >> 4)
+        self.assertEqual(teams, [3, 4, 1, 2])
+        click(2, 0)  # a teammate: the next click empties the seat
+        self.assertEqual(ord(self.seat(2).seatStatus), room_host.NATIVE_SEAT_OPEN)
 
 
 HAT = ItemInfo(item_id=3001, quantity=1, status=2, role_id=4, effect=0, color=3, buy_time=0, available_period=0)
